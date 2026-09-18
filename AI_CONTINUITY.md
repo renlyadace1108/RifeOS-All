@@ -184,3 +184,4 @@ d:\MyProjects\VS\RIFEOS
 | **Milestone 7** | **AI 跨账号连续协同体系与实时状态同步**：建立 `GEMINI.md`（自动加载）、`AGENTS.md` 与 `AI_CONTINUITY.md`，确立实时同步状态机制，实现随时断随时接。 | `AI_CONTINUITY.md`, `GEMINI.md`, `AGENTS.md` |
 | **Milestone 8** | **飞书风格日程系统 (Feishu-Style Calendar App)**：打造原汁原味飞书多维日历，含周视图时间轴（08:00~20:00）、实时系统时钟红线指示器、日/月/日程清单视图、左侧迷你月历、多分类标签过滤、新建日程模态弹窗与详情 Popover；完美适配 Obsidian 黑曜石深色模式与浅色模式。 | `src/app_calendar.h`, `src/app_calendar.c`, `src/app_manifest.c`, `CMakeLists.txt` |
 | **Milestone 9** | **多窗口焦点置顶与点击防穿透隔离**：彻底修复多窗口同时开启时的画面重叠串色与点击穿透冲突；引入分层双 Pass 渲染保证活动窗口（`active_win_idx`）始终置顶；Dock 与应用抽屉点击支持智能平滑切换（打开新应用自动闭合其他窗口，再次点击已激活应用收起）；为设置窗口添加不透明底板防止背景透光。 | `src/main.c`, `src/app_settings.c` |
+| **Milestone 10** | **宿主工作区初始尺寸扩展与应用窗口自适应防越界**：将 RifeOS 桌面宿主窗口默认尺寸从原受限的 `680x480` 扩展至 `1240x780`（动态依据 `SM_CXSCREEN / SM_CYSCREEN` 智能居中与钳制），为飞书日程等生产力应用提供开阔舒展的桌面工作区；在宿主端加入窗口防越界安全几何约束，杜绝负坐标与边缘裁切；重构飞书日程顶栏自适应排版（侧边栏 190px，顶栏 46px，右靠齐多段切换胶囊与新建日程按钮），消除控件重合与文字遮挡。 | `src/main.c`, `src/app_calendar.c` |

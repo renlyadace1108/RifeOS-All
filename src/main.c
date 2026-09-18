@@ -1425,8 +1425,13 @@ bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, 
 
     int screen_w = GetSystemMetrics(SM_CXSCREEN);
     int screen_h = GetSystemMetrics(SM_CYSCREEN);
-    int init_x = (screen_w > width) ? (screen_w - width) / 2 : 100;
-    int init_y = (screen_h > height) ? (screen_h - height) / 2 : 100;
+    if (width > screen_w - 40) width = screen_w - 40;
+    if (height > screen_h - 70) height = screen_h - 70;
+    plat->win_width = width;
+    plat->win_height = height;
+
+    int init_x = (screen_w > width) ? (screen_w - width) / 2 : 20;
+    int init_y = (screen_h > height) ? (screen_h - height) / 2 : 35;
 
     plat->hwnd = CreateWindowExA(WS_EX_APPWINDOW | WS_EX_ACCEPTFILES, wc.lpszClassName, title,
         WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_POPUP,
@@ -1829,8 +1834,14 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                         if (!win->inited) {
                             win->w = win->plugin->default_w;
                             win->h = win->plugin->default_h;
+                            if (win->w > ww - 48.0f) win->w = ww - 48.0f;
+                            if (win->h > wh - 110.0f) win->h = wh - 110.0f;
+                            if (win->w < 360.0f) win->w = 360.0f;
+                            if (win->h < 260.0f) win->h = 260.0f;
                             win->x = (ww - win->w) * 0.5f;
-                            win->y = (wh - win->h) * 0.45f;
+                            if (win->x < 16.0f) win->x = 16.0f;
+                            win->y = (wh - win->h) * 0.44f;
+                            if (win->y < 46.0f) win->y = 46.0f;
                             win->restore_x = win->x;
                             win->restore_y = win->y;
                             win->restore_w = win->w;
@@ -1896,12 +1907,17 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                         win->inst = win->plugin->create(core);
                     }
                     win->is_open = true;
-                    win->anim = 0.0f;
                     if (!win->inited) {
                         win->w = win->plugin->default_w;
                         win->h = win->plugin->default_h;
+                        if (win->w > ww - 48.0f) win->w = ww - 48.0f;
+                        if (win->h > wh - 110.0f) win->h = wh - 110.0f;
+                        if (win->w < 360.0f) win->w = 360.0f;
+                        if (win->h < 260.0f) win->h = 260.0f;
                         win->x = (ww - win->w) * 0.5f;
-                        win->y = (wh - win->h) * 0.45f;
+                        if (win->x < 16.0f) win->x = 16.0f;
+                        win->y = (wh - win->h) * 0.44f;
+                        if (win->y < 46.0f) win->y = 46.0f;
                         win->restore_x = win->x;
                         win->restore_y = win->y;
                         win->restore_w = win->w;
@@ -1951,7 +1967,7 @@ int main(void) {
     static Win32Platform plat;
 
     if (!rife_core_init(&core, 1024 * 1024, 256 * 1024, 60)) return 1;
-    if (!rife_platform_init(&core, &plat, "RifeOS Workspace Host", 680, 480)) {
+    if (!rife_platform_init(&core, &plat, "RifeOS Workspace Host", 1240, 780)) {
         rife_core_shutdown(&core);
         return 1;
     }
