@@ -1,0 +1,29 @@
+# Visual Studio & VS Code artifacts
+.vs/
+.vscode/
+*.sln.docstates
+
+# Build outputs & caches
+out/
+build/
+bin/
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.lib
+*.log
+CMakeUserPresets.json
+
+# RifeOS dynamic runtime storage records
+*.bin
+*.bin.tmp
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
