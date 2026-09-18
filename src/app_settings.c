@@ -184,6 +184,23 @@ static void settings_update(void* inst, RifeCore* core, const RifeInput* input, 
             float px = chips_x + (float)p * 60.0f;
             if (mx >= px && mx <= px + 56.0f && my >= chips_y && my <= chips_y + 28.0f) {
                 cfg->palette = (AuraPaletteType)p;
+                // 光场流体色彩设置改变时，流体云跟随变色
+                if (p == PALETTE_GEMINI) {
+                    cfg->breath_color = BREATH_COLOR_CYAN;
+                    cfg->cloud_color = CLOUD_COLOR_TRANSLUCENT;
+                }
+                else if (p == PALETTE_OBSIDIAN) {
+                    cfg->breath_color = BREATH_COLOR_VIOLET;
+                    cfg->cloud_color = CLOUD_COLOR_OBSIDIAN;
+                }
+                else if (p == PALETTE_SUNSET) {
+                    cfg->breath_color = BREATH_COLOR_AMBER;
+                    cfg->cloud_color = CLOUD_COLOR_VIOLET;
+                }
+                else if (p == PALETTE_CYBER) {
+                    cfg->breath_color = BREATH_COLOR_AZURE;
+                    cfg->cloud_color = CLOUD_COLOR_AZURE;
+                }
                 rife_request_redraw(core);
                 return;
             }

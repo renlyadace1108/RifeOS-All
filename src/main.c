@@ -443,7 +443,7 @@ void rife_render_gemini_light_field(RifeCore* core, Win32Platform* plat, const R
     }
 }
 
-void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, float gw, float gh, float radius, float glass_alpha, bool highlight, bool specular_rim) {
+void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, float gw, float gh, float radius, float glass_alpha, bool highlight, bool specular_rim, uint32_t tint_rgb) {
     if (!plat || !plat->pixels) return;
     int x0 = (int)floorf(gx);
     int y0 = (int)floorf(gy);
@@ -457,6 +457,9 @@ void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, fl
     float alpha = highlight ? (glass_alpha + 0.08f) : glass_alpha;
     alpha = rife_clampf(alpha, 0.0f, 0.96f);
     int width = plat->win_width;
+    float tr = (float)((tint_rgb >> 16) & 0xFF);
+    float tg = (float)((tint_rgb >> 8) & 0xFF);
+    float tb = (float)(tint_rgb & 0xFF);
 
     float half_w = gw * 0.5f;
     float half_h = gh * 0.5f;
@@ -502,9 +505,9 @@ void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, fl
             float og = (float)((orig >> 8) & 0xFF);
             float or_ = (float)((orig >> 16) & 0xFF);
 
-            float r = rife_lerpf(or_, 255.0f, blend_alpha) + specular;
-            float g = rife_lerpf(og, 255.0f, blend_alpha) + specular;
-            float b = rife_lerpf(ob, 255.0f, blend_alpha) + specular;
+            float r = rife_lerpf(or_, tr, blend_alpha) + specular;
+            float g = rife_lerpf(og, tg, blend_alpha) + specular;
+            float b = rife_lerpf(ob, tb, blend_alpha) + specular;
 
             if (dist <= -1.6f) {
                 line[x] = ((uint32_t)rife_clampf(r, 0.0f, 255.0f) << 16) |
@@ -682,7 +685,7 @@ void rife_render_flush(RifeCore* core) {
     float my = core->input.mouse_y;
 
     if (plat->snap_preview) {
-        rife_draw_subpixel_liquid_glass(plat, 8.0f, 8.0f, ww - 16.0f, wh - 16.0f, 16.0f, 0.40f, true, true);
+        rife_draw_subpixel_liquid_glass(plat, 8.0f, 8.0f, ww - 16.0f, wh - 16.0f, 16.0f, 0.40f, true, true, 0xFFFFFF);
     }
 
     float col_size = 22.0f;
@@ -705,9 +708,24 @@ void rife_render_flush(RifeCore* core) {
         float c_alpha = 0.82f;
         if (cfg->cloud_color == CLOUD_COLOR_AZURE) c_alpha = 0.88f;
         else if (cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) c_alpha = 0.94f;
-        rife_draw_subpixel_liquid_glass(plat, cloud_x, cloud_y, cloud_w, cloud_h, cloud_r, c_alpha, cloud_hvr || plat->cloud_expanded, specular_rim);
 
-        // 仿生非对称呼吸灯
+        // 根据光场流体色彩设置联动流体云材质底色 (Paletted Glass Substrate)
+        uint32_t cloud_tint = 0xFFFFFF;
+        if (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) {
+            cloud_tint = 0xEADCF8; // 曜石晶紫暗晶
+        }
+        else if (cfg->palette == PALETTE_SUNSET || cfg->cloud_color == CLOUD_COLOR_VIOLET) {
+            cloud_tint = 0xFFEADB; // 日落暖橙金
+        }
+        else if (cfg->palette == PALETTE_CYBER || cfg->cloud_color == CLOUD_COLOR_AZURE) {
+            cloud_tint = 0xD9EFFF; // 极客霓虹冰蓝
+        }
+        else {
+            cloud_tint = 0xDEFAF8; // 双子星极光晶白青
+        }
+        rife_draw_subpixel_liquid_glass(plat, cloud_x, cloud_y, cloud_w, cloud_h, cloud_r, c_alpha, cloud_hvr || plat->cloud_expanded, specular_rim, cloud_tint);
+
+        // 仿生非对称呼吸灯 (与光场色彩预设同步联动)
         if (plat->cloud_anim < 0.25f) {
             float cx = cloud_x + cloud_w * 0.5f;
             float cy = cloud_y + cloud_h * 0.5f;
@@ -718,7 +736,14 @@ void rife_render_flush(RifeCore* core) {
 
             uint32_t fill_col, border_col;
             float target_r, target_g, target_b;
-            switch (cfg->breath_color) {
+
+            BreathColorType bc = cfg->breath_color;
+            if (cfg->palette == PALETTE_OBSIDIAN) bc = BREATH_COLOR_VIOLET;
+            else if (cfg->palette == PALETTE_SUNSET) bc = BREATH_COLOR_AMBER;
+            else if (cfg->palette == PALETTE_CYBER) bc = BREATH_COLOR_AZURE;
+            else if (cfg->palette == PALETTE_GEMINI && cfg->breath_color == BREATH_COLOR_EMERALD) bc = BREATH_COLOR_CYAN;
+
+            switch (bc) {
             case BREATH_COLOR_CYAN:
                 fill_col = 0x06B6D4; border_col = 0x67E8F9;
                 target_r = 6.0f; target_g = 182.0f; target_b = 212.0f; break;
@@ -808,9 +833,9 @@ void rife_render_flush(RifeCore* core) {
                             float b = (float)(pix & 0xFF);
                             float g = (float)((pix >> 8) & 0xFF);
                             float r = (float)((pix >> 16) & 0xFF);
-                            r += (255.0f - r) * factor;
-                            g += (255.0f - g) * factor * 0.92f;
-                            b += (255.0f - b) * factor * 0.85f;
+                            r += (target_r - r) * factor;
+                            g += (target_g - g) * factor;
+                            b += (target_b - b) * factor;
                             rline[rx] = ((uint32_t)rife_clampf(r, 0.0f, 255.0f) << 16) |
                                         ((uint32_t)rife_clampf(g, 0.0f, 255.0f) << 8) |
                                         (uint32_t)rife_clampf(b, 0.0f, 255.0f);
@@ -845,7 +870,7 @@ void rife_render_flush(RifeCore* core) {
         float cur_dw_h = rife_lerpf(col_size, dw_h, ease);
         float cur_dw_r = rife_lerpf(col_size * 0.5f, 22.0f, ease);
 
-        rife_draw_subpixel_liquid_glass(plat, cur_dw_x, cur_dw_y, cur_dw_w, cur_dw_h, cur_dw_r, 0.90f, false, specular_rim);
+        rife_draw_subpixel_liquid_glass(plat, cur_dw_x, cur_dw_y, cur_dw_w, cur_dw_h, cur_dw_r, 0.90f, false, specular_rim, 0xFFFFFF);
     }
 
     // 3. 应用窗口：从顶部流体云双向缩放展开/缩回
@@ -867,14 +892,14 @@ void rife_render_flush(RifeCore* core) {
         float cur_h = rife_lerpf(col_size, target_h, ease);
         float cur_r = rife_lerpf(col_size * 0.5f, target_r, ease);
 
-        rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, 0.94f, false, specular_rim);
+        rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, 0.94f, false, specular_rim, 0xFFFFFF);
     }
 
     // 4. 桌面快捷方式
     for (size_t i = 0; i < plat->shortcut_count; i++) {
         DesktopShortcut* sc = &plat->shortcuts[i];
         bool hvr = (mx >= sc->x && mx <= sc->x + 76.0f && my >= sc->y && my <= sc->y + 80.0f);
-        rife_draw_subpixel_liquid_glass(plat, sc->x, sc->y, 76.0f, 80.0f, 16.0f, glass_alpha, hvr, specular_rim);
+        rife_draw_subpixel_liquid_glass(plat, sc->x, sc->y, 76.0f, 80.0f, 16.0f, glass_alpha, hvr, specular_rim, 0xFFFFFF);
     }
 
     // 5. 底部纤细修长 Dock 栏 (固定 44px 高度)
@@ -886,7 +911,7 @@ void rife_render_flush(RifeCore* core) {
     float dock_y = rife_lerpf(resting_y, active_y, plat->dock_anim);
     bool dock_hvr = (mx >= dock_x && mx <= dock_x + dock_w && my >= dock_y && my <= dock_y + 44.0f);
 
-    rife_draw_subpixel_liquid_glass(plat, dock_x, dock_y, dock_w, 44.0f, 16.0f, glass_alpha, dock_hvr, specular_rim);
+    rife_draw_subpixel_liquid_glass(plat, dock_x, dock_y, dock_w, 44.0f, 16.0f, glass_alpha, dock_hvr, specular_rim, 0xFFFFFF);
 
     GdiFlush();
     SetBkMode(plat->hdc_mem, TRANSPARENT);
@@ -1026,7 +1051,7 @@ void rife_render_flush(RifeCore* core) {
     bool all_hvr = (mx >= all_btn_x && mx <= all_btn_x + item_size && my >= all_btn_y - 3.0f && my <= all_btn_y + item_size + 3.0f);
     float all_off_y = all_hvr ? -3.0f : 0.0f;
 
-    rife_draw_subpixel_liquid_glass(plat, all_btn_x, all_btn_y + all_off_y, item_size, item_size, 10.0f, 0.82f, all_hvr || plat->drawer_open, specular_rim);
+    rife_draw_subpixel_liquid_glass(plat, all_btn_x, all_btn_y + all_off_y, item_size, item_size, 10.0f, 0.82f, all_hvr || plat->drawer_open, specular_rim, 0xFFFFFF);
 
     float dot_ox = all_btn_x + 8.5f;
     float dot_oy = all_btn_y + all_off_y + 8.5f;
