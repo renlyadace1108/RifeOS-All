@@ -351,6 +351,10 @@ static void settings_render(void* inst, RifeCore* core, float client_x, float cl
 
     float side_w = 175.0f;
 
+    // 0. 底板背景与侧边栏底色 (防止穿透)
+    rife_draw_rect(core, client_x, client_y, client_w, client_h, is_dark ? 0x161122FF : 0xFFFFFFFF);
+    rife_draw_rect(core, client_x, client_y, side_w, client_h, is_dark ? 0x1A1428FF : 0xF8FAFCFF);
+
     // 1. 侧边栏垂直细分割线
     rife_draw_rect(core, client_x + side_w, client_y, 1.0f, client_h, is_dark ? 0x2D2342FF : 0xE2E8F0FF);
 

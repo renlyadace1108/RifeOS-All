@@ -183,3 +183,4 @@ d:\MyProjects\VS\RIFEOS
 | **Milestone 6** | **根除控制台 CMD 黑窗口**：CMake 增加 `WIN32` 属性，主程序添加标准 `WinMain` GUI 入口桥接，启动完全纯净无黑窗。 | `CMakeLists.txt`, `src/main.c` |
 | **Milestone 7** | **AI 跨账号连续协同体系与实时状态同步**：建立 `GEMINI.md`（自动加载）、`AGENTS.md` 与 `AI_CONTINUITY.md`，确立实时同步状态机制，实现随时断随时接。 | `AI_CONTINUITY.md`, `GEMINI.md`, `AGENTS.md` |
 | **Milestone 8** | **飞书风格日程系统 (Feishu-Style Calendar App)**：打造原汁原味飞书多维日历，含周视图时间轴（08:00~20:00）、实时系统时钟红线指示器、日/月/日程清单视图、左侧迷你月历、多分类标签过滤、新建日程模态弹窗与详情 Popover；完美适配 Obsidian 黑曜石深色模式与浅色模式。 | `src/app_calendar.h`, `src/app_calendar.c`, `src/app_manifest.c`, `CMakeLists.txt` |
+| **Milestone 9** | **多窗口焦点置顶与点击防穿透隔离**：彻底修复多窗口同时开启时的画面重叠串色与点击穿透冲突；引入分层双 Pass 渲染保证活动窗口（`active_win_idx`）始终置顶；Dock 与应用抽屉点击支持智能平滑切换（打开新应用自动闭合其他窗口，再次点击已激活应用收起）；为设置窗口添加不透明底板防止背景透光。 | `src/main.c`, `src/app_settings.c` |

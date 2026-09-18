@@ -874,26 +874,31 @@ void rife_render_flush(RifeCore* core) {
         rife_draw_subpixel_liquid_glass(plat, cur_dw_x, cur_dw_y, cur_dw_w, cur_dw_h, cur_dw_r, is_obsidian ? 0.94f : 0.90f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
     }
 
-    // 3. 应用窗口：从顶部流体云双向缩放展开/缩回
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        ActiveWindow* win = &plat->windows[i];
-        if (!win->inst || win->anim < 0.01f) continue;
+    // 3. 应用窗口：从顶部流体云双向缩放展开/缩回 (活动窗口后绘制置顶)
+    for (int pass = 0; pass < 2; pass++) {
+        for (size_t i = 0; i < g_installed_app_count; i++) {
+            bool is_active = ((int)i == plat->active_win_idx);
+            if ((pass == 0 && is_active) || (pass == 1 && !is_active)) continue;
 
-        float target_x = win->is_maximized ? 0.0f : win->x;
-        float target_y = win->is_maximized ? 0.0f : win->y;
-        float target_w = win->is_maximized ? ww : win->w;
-        float target_h = win->is_maximized ? wh : win->h;
-        float target_r = win->is_maximized ? 0.0f : 22.0f;
+            ActiveWindow* win = &plat->windows[i];
+            if (!win->inst || win->anim < 0.01f) continue;
 
-        float ease = rife_smootherstep(win->anim);
+            float target_x = win->is_maximized ? 0.0f : win->x;
+            float target_y = win->is_maximized ? 0.0f : win->y;
+            float target_w = win->is_maximized ? ww : win->w;
+            float target_h = win->is_maximized ? wh : win->h;
+            float target_r = win->is_maximized ? 0.0f : 22.0f;
 
-        float cur_x = rife_lerpf(orig_x, target_x, ease);
-        float cur_y = rife_lerpf(orig_y, target_y, ease);
-        float cur_w = rife_lerpf(col_size, target_w, ease);
-        float cur_h = rife_lerpf(col_size, target_h, ease);
-        float cur_r = rife_lerpf(col_size * 0.5f, target_r, ease);
+            float ease = rife_smootherstep(win->anim);
 
-        rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, is_obsidian ? 0.96f : 0.94f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
+            float cur_x = rife_lerpf(orig_x, target_x, ease);
+            float cur_y = rife_lerpf(orig_y, target_y, ease);
+            float cur_w = rife_lerpf(col_size, target_w, ease);
+            float cur_h = rife_lerpf(col_size, target_h, ease);
+            float cur_r = rife_lerpf(col_size * 0.5f, target_r, ease);
+
+            rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, is_obsidian ? 0.96f : 0.94f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
+        }
     }
 
     // 4. 桌面快捷方式
@@ -1069,46 +1074,51 @@ void rife_render_flush(RifeCore* core) {
         }
     }
 
-    // 10. 活动应用窗口内容与三色控制灯 (自流体云膨胀与湮灭吞噬)
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        ActiveWindow* win = &plat->windows[i];
-        if (!win->inst || win->anim < 0.02f) continue;
+    // 10. 活动应用窗口内容与三色控制灯 (自流体云膨胀与湮灭吞噬，活动窗口后绘制置顶)
+    for (int pass = 0; pass < 2; pass++) {
+        for (size_t i = 0; i < g_installed_app_count; i++) {
+            bool is_active = ((int)i == plat->active_win_idx);
+            if ((pass == 0 && is_active) || (pass == 1 && !is_active)) continue;
 
-        float target_x = win->is_maximized ? 0.0f : win->x;
-        float target_y = win->is_maximized ? 0.0f : win->y;
-        float target_w = win->is_maximized ? ww : win->w;
-        float target_h = win->is_maximized ? wh : win->h;
+            ActiveWindow* win = &plat->windows[i];
+            if (!win->inst || win->anim < 0.02f) continue;
 
-        float ease = rife_smootherstep(win->anim);
+            float target_x = win->is_maximized ? 0.0f : win->x;
+            float target_y = win->is_maximized ? 0.0f : win->y;
+            float target_w = win->is_maximized ? ww : win->w;
+            float target_h = win->is_maximized ? wh : win->h;
 
-        float cur_x = rife_lerpf(orig_x, target_x, ease);
-        float cur_y = rife_lerpf(orig_y, target_y, ease);
-        float cur_w = rife_lerpf(col_size, target_w, ease);
-        float cur_h = rife_lerpf(col_size, target_h, ease);
+            float ease = rife_smootherstep(win->anim);
 
-        // 控制灯自微球中心向两翼平滑展开
-        float light_scale = rife_clampf(ease * 1.6f, 0.0f, 1.0f);
-        if (light_scale > 0.05f) {
-            float l_sz = 12.0f * light_scale;
-            float l_r = l_sz * 0.5f;
-            float l_y = cur_y + 14.0f * light_scale;
-            rife_draw_round_rect(core, cur_x + 16.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFF5F56FF, 0xE0443EFF);
-            rife_draw_round_rect(core, cur_x + 34.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFFBD2EFF, 0xDEA123FF);
-            rife_draw_round_rect(core, cur_x + 52.0f * light_scale, l_y, l_sz, l_sz, l_r, 0x27C93FFF, 0x1AAB29FF);
-        }
+            float cur_x = rife_lerpf(orig_x, target_x, ease);
+            float cur_y = rife_lerpf(orig_y, target_y, ease);
+            float cur_w = rife_lerpf(col_size, target_w, ease);
+            float cur_h = rife_lerpf(col_size, target_h, ease);
 
-        // 窗口标题：自流体云向右舒展
-        if (win->anim > 0.25f && cur_w > 160.0f) {
-            float title_alpha = rife_clampf((win->anim - 0.25f) / 0.75f, 0.0f, 1.0f);
-            float title_off = (1.0f - title_alpha) * 12.0f;
-            rife_draw_text_font(core, cur_x + 78.0f + title_off, cur_y + 10.0f, is_zh ? win->plugin->name_zh : win->plugin->name_en, is_obsidian ? 0xF8FAFCFF : 0x0F172AFF, 1);
-        }
+            // 控制灯自微球中心向两翼平滑展开
+            float light_scale = rife_clampf(ease * 1.6f, 0.0f, 1.0f);
+            if (light_scale > 0.05f) {
+                float l_sz = 12.0f * light_scale;
+                float l_r = l_sz * 0.5f;
+                float l_y = cur_y + 14.0f * light_scale;
+                rife_draw_round_rect(core, cur_x + 16.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFF5F56FF, 0xE0443EFF);
+                rife_draw_round_rect(core, cur_x + 34.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFFBD2EFF, 0xDEA123FF);
+                rife_draw_round_rect(core, cur_x + 52.0f * light_scale, l_y, l_sz, l_sz, l_r, 0x27C93FFF, 0x1AAB29FF);
+            }
 
-        // 插件界面内容：带动态流体裁剪框，自微球中心向四周铺展
-        if (win->plugin->render && cur_h > 46.0f && cur_w > 120.0f) {
-            rife_push_scissor(core, cur_x + 2.0f, cur_y + 36.0f, cur_w - 4.0f, cur_h - 38.0f);
-            win->plugin->render(win->inst, core, cur_x, cur_y + 36.0f, cur_w, cur_h - 36.0f);
-            rife_pop_scissor(core);
+            // 窗口标题：自流体云向右舒展
+            if (win->anim > 0.25f && cur_w > 160.0f) {
+                float title_alpha = rife_clampf((win->anim - 0.25f) / 0.75f, 0.0f, 1.0f);
+                float title_off = (1.0f - title_alpha) * 12.0f;
+                rife_draw_text_font(core, cur_x + 78.0f + title_off, cur_y + 10.0f, is_zh ? win->plugin->name_zh : win->plugin->name_en, is_obsidian ? 0xF8FAFCFF : 0x0F172AFF, 1);
+            }
+
+            // 插件界面内容：带动态流体裁剪框，自微球中心向四周铺展
+            if (win->plugin->render && cur_h > 46.0f && cur_w > 120.0f) {
+                rife_push_scissor(core, cur_x + 2.0f, cur_y + 36.0f, cur_w - 4.0f, cur_h - 38.0f);
+                win->plugin->render(win->inst, core, cur_x, cur_y + 36.0f, cur_w, cur_h - 36.0f);
+                rife_pop_scissor(core);
+            }
         }
     }
 
@@ -1644,12 +1654,12 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                 if (mx >= cur_x + 10.0f && mx <= cur_x + 28.0f) {
                     win->is_open = false;
                     rife_request_redraw(core);
-                    continue;
+                    return;
                 }
                 if (mx >= cur_x + 29.0f && mx <= cur_x + 47.0f) {
                     win->is_open = false;
                     rife_request_redraw(core);
-                    continue;
+                    return;
                 }
                 if (mx >= cur_x + 48.0f && mx <= cur_x + 68.0f) {
                     if (!win->is_maximized) {
@@ -1660,7 +1670,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                     }
                     win->is_maximized = !win->is_maximized;
                     rife_request_redraw(core);
-                    continue;
+                    return;
                 }
             }
 
@@ -1697,10 +1707,12 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
             }
 
             if (win->plugin->update && mx >= cur_x && mx <= cur_x + cur_w && my >= cur_y + 36.0f && my <= cur_y + cur_h) {
+                plat->active_win_idx = (int)i;
                 RifeInput client_input = *input;
                 client_input.mouse_x = mx - cur_x;
                 client_input.mouse_y = my - (cur_y + 36.0f);
                 win->plugin->update(win->inst, core, &client_input, cur_w, cur_h - 36.0f);
+                return;
             }
         }
     }
@@ -1803,8 +1815,15 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
 
                 if (mx >= ax && mx <= ax + card_w && my >= ay && my <= ay + card_h) {
                     ActiveWindow* win = &plat->windows[i];
-                    if (!win->inst) {
-                        win->inst = win->plugin->create(core);
+                    if (win->is_open && win->anim > 0.5f) {
+                        win->is_open = false;
+                    } else {
+                        for (size_t k = 0; k < g_installed_app_count; k++) {
+                            if (k != i) plat->windows[k].is_open = false;
+                        }
+                        if (!win->inst) {
+                            win->inst = win->plugin->create(core);
+                        }
                         win->is_open = true;
                         win->anim = 0.0f;
                         if (!win->inited) {
@@ -1818,8 +1837,10 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                             win->restore_h = win->h;
                             win->inited = true;
                         }
+                        plat->active_win_idx = (int)i;
                     }
                     plat->drawer_open = false;
+                    rife_request_redraw(core);
                     return;
                 }
             }
@@ -1865,8 +1886,15 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
 
             if (mx >= btn_x && mx <= btn_x + item_size && my >= btn_y - 3.0f && my <= btn_y + item_size + 3.0f) {
                 ActiveWindow* win = &plat->windows[i];
-                if (!win->inst) {
-                    win->inst = win->plugin->create(core);
+                if (win->is_open && win->anim > 0.5f) {
+                    win->is_open = false;
+                } else {
+                    for (size_t k = 0; k < g_installed_app_count; k++) {
+                        if (k != i) plat->windows[k].is_open = false;
+                    }
+                    if (!win->inst) {
+                        win->inst = win->plugin->create(core);
+                    }
                     win->is_open = true;
                     win->anim = 0.0f;
                     if (!win->inited) {
@@ -1880,7 +1908,9 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                         win->restore_h = win->h;
                         win->inited = true;
                     }
+                    plat->active_win_idx = (int)i;
                 }
+                rife_request_redraw(core);
                 return;
             }
             dock_idx++;
