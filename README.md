@@ -35,17 +35,28 @@
 - **编译工具链**：Visual Studio 2022 / 2026 + MSVC (`cl.exe`) + CMake + Ninja。
 - **交付目标**：单文件便携式 EXE（`/MT` 静态 C 运行时库链接，零依赖、无 `vcruntime140.dll` 缺失风险）。
 
-### 构建命令 (CMake + Ninja)
+### 构建与打包安装包 (Build & Package Installer)
 
 ```powershell
-# 配置 Release 预设
-cmake --preset x64-release
-
-# 编译生成单文件便携 EXE
+# 1. 编译 Release x64 二进制
 cmake --build --preset x64-release
+
+# 2. 一键打包 Windows 商业级安装包 (Inno Setup)
+.\scripts\build_installer.ps1
+# 或直接双击根目录 build_installer.bat
 ```
 
-编译产物位于：`out/build/x64-release/RIFEOS.exe`
+- **绿色单文件运行**：`out/build/x64-release/RIFEOS.exe`（~230 KB）
+- **Windows 原生安装包**：`dist/RifeOS_Setup_v1.0.0.exe`（~2.09 MB，支持中英向导、开机自启与免提权干净卸载）
+
+---
+
+## 🤖 AI 智能体跨账号协同指引 (AI Continuity)
+
+若在 Antigravity / Claude Code / AI 编程助手的不同账号或会话中继续迭代开发本项目，请查阅根目录专属交接规范：
+👉 **[AI_CONTINUITY.md](./AI_CONTINUITY.md)** 与 **[GEMINI.md](./GEMINI.md)**
+
+内含：完整代码地图、双 Arena 零堆抖动原则、暗晶玻璃设计令牌规范、MSVC 工具链路径、黑窗口规避方案与提交准则。
 
 ---
 
