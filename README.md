@@ -22,8 +22,9 @@
 
 4. **灵动流体云与物理交互动力学**
    - **灵动流体云（Fluid Cloud）**：常态收缩为 22px 极巧正圆液态微球，内部搭载 Apple 仿生生理呼吸动力学核晶，支持光标临场微感应（Cursor Proximity Resonance）；点击平滑展开为 50% 药丸胶囊。
-   - **双向流体吞吐（Two-Way Fluid Morphing）**：底栏点击九宫格抽屉，顶部流体云向下拉展为 1/3 视口液态抽屉；应用启闭以流体云微球为物理原点延展与吞噬湮灭。
-   - **修长底座与自由窗口**：44px 修长毛玻璃 Dock、6px 边缘暗晶箭头悬停提示、贴顶 Aero Snap 与 Windows 系统级全屏联动。
+   - **双向流体吞吐（Two-Way Fluid Morphing）**：底栏点击九宫格抽屉，顶部流体云向下拉展为 1/3 视口液态抽屉；应用卡片以喷泉抛物线（Fountain Parabolic Arc）自微球喷涌，搭载表面张力微果冻回弹（Quintic Elastic Step）与暗晶柔接触阴影（Soft AO Shadow）。
+   - **生命周期光子吞噬（Photonic Absorption Ripple）**：窗口关闭沿流体轨道收拢归回顶部微球，彻底吞噬湮灭瞬间激荡出暖白金色光子震荡波环。
+   - **修长底座与自由窗口**：44px 修长毛玻璃 Dock、鹅卵石晶莹顶面高光（Pebble Sheen）、6px 边缘暗晶箭头悬停提示、贴顶 Aero Snap 与 Windows 系统级全屏联动。
 
 ---
 
