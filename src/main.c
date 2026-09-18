@@ -83,6 +83,7 @@ typedef struct {
 
     bool cloud_expanded;
     float cloud_anim;
+    float absorption_ripple_t;
 
     int active_win_idx;
     int drag_mode;
@@ -115,6 +116,14 @@ static inline float rife_smootherstep(float t) {
     if (t <= 0.0f) return 0.0f;
     if (t >= 1.0f) return 1.0f;
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+static inline float rife_fluid_elastic_step(float t) {
+    if (t <= 0.0f) return 0.0f;
+    if (t >= 1.0f) return 1.0f;
+    float s = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+    float overshoot = 0.055f * sinf(3.14159265f * t) * (t * t) * (1.0f - t);
+    return s + overshoot;
 }
 
 static void rife_draw_text_u8(HDC hdc, int x, int y, const char* utf8_str) {
@@ -588,6 +597,11 @@ void rife_draw_procedural_icon_direct(HDC hdc, float x, float y, float size, uin
     SetDCBrushColor(hdc, RGB((col_top >> 24) & 0xFF, (col_top >> 16) & 0xFF, (col_top >> 8) & 0xFF));
     RoundRect(hdc, (int)(x + 1.0f), (int)(y + 1.0f), (int)(x + size - 1.0f), (int)(y + size * 0.48f), r - 2, r - 2);
 
+    // 顶部 1px 晶莹高光线 (Pebble Sheen)
+    SetDCPenColor(hdc, RGB(255, 255, 255));
+    MoveToEx(hdc, (int)(x + (float)r * 0.7f), (int)(y + 1.0f), NULL);
+    LineTo(hdc, (int)(x + size - (float)r * 0.7f), (int)(y + 1.0f));
+
     if (custom_icon) {
         DrawIconEx(hdc, (int)(x + (size - 24.0f) * 0.5f), (int)(y + (size - 24.0f) * 0.5f), custom_icon, 24, 24, 0, NULL, DI_NORMAL);
     }
@@ -764,6 +778,46 @@ void rife_render_flush(RifeCore* core) {
                 float white_r = (breath - 0.28f) * 2.5f;
                 rife_draw_subpixel_circle(plat, cx, cy - 0.4f, white_r, 0xFFFFFF, 0xFFFFFF);
             }
+
+            // 微球吞噬光子扩散波 (Photonic Absorption Ripple Ring)
+            if (plat->absorption_ripple_t > 0.01f) {
+                float rip_progress = 1.0f - plat->absorption_ripple_t;
+                float ring_r = 9.0f + rip_progress * 26.0f;
+                float ring_w = 2.4f;
+                float rip_alpha = plat->absorption_ripple_t * 0.75f;
+                int rx0 = (int)floorf(cx - ring_r - ring_w - 1.0f);
+                int ry0 = (int)floorf(cy - ring_r - ring_w - 1.0f);
+                int rx1 = (int)ceilf(cx + ring_r + ring_w + 1.0f);
+                int ry1 = (int)ceilf(cy + ring_r + ring_w + 1.0f);
+                if (rx0 < 0) rx0 = 0;
+                if (ry0 < 0) ry0 = 0;
+                if (rx1 > plat->win_width) rx1 = plat->win_width;
+                if (ry1 > plat->win_height) ry1 = plat->win_height;
+                for (int ry = ry0; ry < ry1; ry++) {
+                    float py = (float)ry + 0.5f;
+                    float dy = py - cy;
+                    uint32_t* rline = &plat->pixels[ry * plat->win_width];
+                    for (int rx = rx0; rx < rx1; rx++) {
+                        float px = (float)rx + 0.5f;
+                        float dx = px - cx;
+                        float dist = sqrtf(dx * dx + dy * dy);
+                        float delta = fabsf(dist - ring_r);
+                        if (delta < ring_w) {
+                            float factor = (1.0f - delta / ring_w) * rip_alpha;
+                            uint32_t pix = rline[rx];
+                            float b = (float)(pix & 0xFF);
+                            float g = (float)((pix >> 8) & 0xFF);
+                            float r = (float)((pix >> 16) & 0xFF);
+                            r += (255.0f - r) * factor;
+                            g += (255.0f - g) * factor * 0.92f;
+                            b += (255.0f - b) * factor * 0.85f;
+                            rline[rx] = ((uint32_t)rife_clampf(r, 0.0f, 255.0f) << 16) |
+                                        ((uint32_t)rife_clampf(g, 0.0f, 255.0f) << 8) |
+                                        (uint32_t)rife_clampf(b, 0.0f, 255.0f);
+                        }
+                    }
+                }
+            }
         }
 
         if (plat->cloud_anim > 0.35f) {
@@ -898,18 +952,27 @@ void rife_render_flush(RifeCore* core) {
             float phase_delay = (float)row * 0.08f + (float)col * 0.04f;
             float raw_card_t = (plat->drawer_anim - phase_delay) / (1.0f - phase_delay);
             float card_t = rife_clampf(raw_card_t, 0.0f, 1.0f);
-            float card_ease = rife_smootherstep(card_t);
+            float card_ease = rife_fluid_elastic_step(card_t);
 
             if (card_ease <= 0.02f) continue;
+
+            // 喷泉扇形抛物线微弧度
+            float fountain_arc = sinf(3.14159265f * card_ease) * (1.0f - card_ease) * 18.0f;
+            float col_offset = ((float)col - 1.0f) * fountain_arc;
 
             // 位置自微球中心向目标网格流展
             float cur_card_w = rife_lerpf(14.0f, card_w, card_ease);
             float cur_card_h = rife_lerpf(14.0f, card_h, card_ease);
-            float cur_ax = rife_lerpf(orig_cx - cur_card_w * 0.5f, target_ax, card_ease);
+            float cur_ax = rife_lerpf(orig_cx - cur_card_w * 0.5f, target_ax, card_ease) + col_offset;
             float cur_ay = rife_lerpf(orig_cy - cur_card_h * 0.5f, target_ay, card_ease);
 
-            bool app_hvr = (mx >= cur_ax && mx <= cur_ax + cur_card_w && my >= cur_ay && my <= cur_ay + cur_card_h);
+            // 卡片暗晶柔接触阴影 (Soft AO Shadow)
             SetDCPenColor(plat->hdc_mem, RGB(226, 232, 240));
+            SetDCBrushColor(plat->hdc_mem, RGB(226, 232, 240));
+            RoundRect(plat->hdc_mem, (int)cur_ax, (int)(cur_ay + 2.0f), (int)(cur_ax + cur_card_w), (int)(cur_ay + cur_card_h + 2.0f), (int)(14.0f * card_ease), (int)(14.0f * card_ease));
+
+            bool app_hvr = (mx >= cur_ax && mx <= cur_ax + cur_card_w && my >= cur_ay && my <= cur_ay + cur_card_h);
+            SetDCPenColor(plat->hdc_mem, RGB(241, 245, 249));
             SetDCBrushColor(plat->hdc_mem, app_hvr ? RGB(255, 255, 255) : RGB(248, 250, 252));
             RoundRect(plat->hdc_mem, (int)cur_ax, (int)cur_ay, (int)(cur_ax + cur_card_w), (int)(cur_ay + cur_card_h), (int)(14.0f * card_ease), (int)(14.0f * card_ease));
 
@@ -1291,6 +1354,7 @@ bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, 
 
     plat->cloud_expanded = false;
     plat->cloud_anim = 0.0f;
+    plat->absorption_ripple_t = 0.0f;
     plat->active_win_idx = -1;
     plat->drag_mode = 0;
     plat->resize_dir = 0;
@@ -1425,6 +1489,12 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
     plat->cloud_anim = rife_fluid_decay(plat->cloud_anim, target_cloud, 14.0f, dt_sec);
     if (fabsf(plat->cloud_anim - target_cloud) < 0.001f) plat->cloud_anim = target_cloud;
 
+    // 微球吞噬光子扩散衰减
+    if (plat->absorption_ripple_t > 0.0f) {
+        plat->absorption_ripple_t -= dt_sec * 4.5f;
+        if (plat->absorption_ripple_t < 0.0f) plat->absorption_ripple_t = 0.0f;
+    }
+
     // 2. 抽屉自顶部流体云展开动画
     float target_drawer = plat->drawer_open ? 1.0f : 0.0f;
     plat->drawer_anim = rife_fluid_decay(plat->drawer_anim, target_drawer, 12.0f, dt_sec);
@@ -1530,6 +1600,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
             win->plugin->destroy(win->inst);
             win->inst = NULL;
             if (plat->active_win_idx == (int)i) plat->active_win_idx = -1;
+            plat->absorption_ripple_t = 1.0f; // 触发微球吞噬光子扩散波
             rife_request_redraw(core);
             continue;
         }
@@ -1621,6 +1692,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
     bool is_animating = (fabsf(plat->dock_anim - target_dock) > 0.001f) ||
         (fabsf(plat->drawer_anim - target_drawer) > 0.001f) ||
         (fabsf(plat->cloud_anim - target_cloud) > 0.001f) ||
+        (plat->absorption_ripple_t > 0.001f) ||
         (plat->cloud_anim < 0.25f) ||
         (plat->hover_resize_dir > 0) ||
         cfg->aura_animated || plat->drag_mode != 0;
