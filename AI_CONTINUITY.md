@@ -143,4 +143,41 @@ d:\MyProjects\VS\RIFEOS
 4. **即时同步 GitHub**：
    - 完成功能并通过构建后，必须使用清晰的语义化提交规范（如 `feat(...)`, `fix(...)`）执行 `git commit` 并 `git push origin main`；
 5. **对话态度**：
-   - 与 Renly 对话保持温暖亲切（用户习惯称呼“宝贝”），以热情、专业、极致的技术追求共同打造卓越的产品体验。
+   - 与 Renly 对话保持温暖亲切（用户习惯称呼“宝贝”），以热情、专业、极致的技术追求共同打造卓越的产品体验；
+6. **⚠️ 强制要求：每次更新必须同步本文件 (Continuity Sync)**：
+   - 无论做了任何改动，提交代码时**必须同时更新本文件下方的【当前实时系统状态快照】与【版本迭代足迹】**；
+   - 确保万一会话因额度耗尽随时中断，接手的新账号 AI 只要一读本文件，就能“随时断、随时接”，完全零缝隙恢复！
+
+---
+
+## 🔄 七、 动态状态快照与版本演进日志 (Live State Snapshot & Changelog - 随时断随时接)
+
+> **⚠️ 给所有接班 AI 的工作协议 (Handover Protocol)**：  
+> 每当你为项目增加新特性、修复 bug 或重构某模块，请在**完成该项任务时顺手更新下方的快照与记录**。这是我们在不同账号间延续高品质合作的生命线！
+
+### 1. 当前实时系统状态快照 (Live System Snapshot - 最新状态)
+- **工程版本**：`v1.0.0 Pro`
+- **Git 远端状态**：已完全同步至 `origin/main`（主分支保持最新发布状态）。
+- **编译健康度**：MSVC 14.51 (VS 2026) `/W4 /utf-8 /O2 /fp:fast /MT` 全静态链接，**0 错误、0 警告**。
+- **可执行文件**：`out/build/x64-release/RIFEOS.exe`（~229 KB），WIN32 纯 GUI 子系统，无黑窗口，内嵌 256x256 高清多分辨率黑曜石图标与 PE 版本元数据。
+- **安装包状态**：`dist/RifeOS_Setup_v1.0.0.exe`（~2.09 MB）就绪，支持免管理员提权安装、桌面/开始菜单快捷方式、开机自启与标准卸载。
+- **当前核心特性就绪度清单**：
+  - [x] 光场流体调色板联动（Gemini/Obsidian/Sunset/Cyber 同步微球呼吸灯、流体云玻璃透射底色与光子吞噬波纹）；
+  - [x] Obsidian 黑曜石深色液态玻璃全面适配（抽屉底座、Dock栏、九宫格按钮、桌面快捷方式高对比度文字）；
+  - [x] 设置窗口黑曜石深色暗晶化（消除原刺眼白底色块，采用 `0x201832` 暗晶底板 + `0x382B54` 紫晶边框）；
+  - [x] Windows 纯 GUI 无黑窗口原生安装向导套件（Inno Setup 6 + `build_installer.bat` 一键打包）；
+  - [x] 跨账号无缝交接与自动状态同步机制（`GEMINI.md` + `AI_CONTINUITY.md`）。
+
+---
+
+### 2. 版本迭代演进足迹 (Historical Evolution Milestones)
+
+| 阶段 / Commit | 变更内容与核心技术改进 | 影响文件 |
+| :--- | :--- | :--- |
+| **Milestone 1** | **微内核流体动力学与动画细腻化**：引入多相位错落级联抛物线下落（Fountain Arc）、五次微弹性回弹（Elastic Step）、光子吞噬震荡环（Photonic Shockwave Ring）。 | `src/main.c`, `src/rife_core.c` |
+| **Milestone 2** | **光场流体色彩全维度联动**：切换预设时，流体云玻璃材质底色（`cloud_tint`）、呼吸灯核晶主色（Cyan/Violet/Amber/Azure）及吞噬波光色无缝协同。 | `src/main.c`, `src/app_settings.c` |
+| **Milestone 3** | **Obsidian 黑曜石深色模式全面升级**：流体云、抽屉底座、Dock 栏、快捷方式背板全面熏黑暗晶化（`0x161122`），重绘高对比度银白文字与高亮九宫格。 | `src/main.c` |
+| **Milestone 4** | **设置窗口刺眼白色方块暗晶化重构**：重构 `draw_settings_card` 与各个控件，使用 `0x201832` 暗晶底板与紫晶浮雕，彻底消除黑底白方块反差感。 | `src/app_settings.c` |
+| **Milestone 5** | **Windows 原生商业级安装包与图标**：使用 .NET 绘制 256x256 高清多分辨率 `rifeos.ico`；编写 `resources/rifeos.rc`；引入 Inno Setup 6 编写 `RifeOS_Setup.iss` 与 `build_installer.bat`。 | `resources/`, `assets/`, `installer/`, `scripts/` |
+| **Milestone 6** | **根除控制台 CMD 黑窗口**：CMake 增加 `WIN32` 属性，主程序添加标准 `WinMain` GUI 入口桥接，启动完全纯净无黑窗。 | `CMakeLists.txt`, `src/main.c` |
+| **Milestone 7** | **AI 跨账号连续协同体系与实时状态同步**：建立 `GEMINI.md`（自动加载）、`AGENTS.md` 与 `AI_CONTINUITY.md`，确立实时同步状态机制，实现随时断随时接。 | `AI_CONTINUITY.md`, `GEMINI.md`, `AGENTS.md` |
