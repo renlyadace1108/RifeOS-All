@@ -673,6 +673,7 @@ void rife_render_flush(RifeCore* core) {
     float glass_alpha = cfg->glass_alpha;
     bool force_native_ico = (cfg->icon_style == ICON_STYLE_NATIVE_ICO);
     bool is_zh = (cfg->language == LANG_ZH_CN);
+    bool is_obsidian = (cfg->palette == PALETTE_OBSIDIAN);
 
     apply_desktop_mode(plat, cfg->desktop_mode);
 
@@ -706,13 +707,13 @@ void rife_render_flush(RifeCore* core) {
         bool cloud_hvr = (mx >= cloud_x && mx <= cloud_x + cloud_w && my >= cloud_y && my <= cloud_y + cloud_h);
 
         float c_alpha = 0.82f;
-        if (cfg->cloud_color == CLOUD_COLOR_AZURE) c_alpha = 0.88f;
-        else if (cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) c_alpha = 0.94f;
+        if (is_obsidian || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) c_alpha = 0.92f;
+        else if (cfg->cloud_color == CLOUD_COLOR_AZURE) c_alpha = 0.88f;
 
         // 根据光场流体色彩设置联动流体云材质底色 (Paletted Glass Substrate)
         uint32_t cloud_tint = 0xFFFFFF;
-        if (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) {
-            cloud_tint = 0xEADCF8; // 曜石晶紫暗晶
+        if (is_obsidian || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) {
+            cloud_tint = 0x161122; // 深度曜石暗晶黑紫 (Deep Smoked Obsidian Dark Glass)
         }
         else if (cfg->palette == PALETTE_SUNSET || cfg->cloud_color == CLOUD_COLOR_VIOLET) {
             cloud_tint = 0xFFEADB; // 日落暖橙金
@@ -870,7 +871,7 @@ void rife_render_flush(RifeCore* core) {
         float cur_dw_h = rife_lerpf(col_size, dw_h, ease);
         float cur_dw_r = rife_lerpf(col_size * 0.5f, 22.0f, ease);
 
-        rife_draw_subpixel_liquid_glass(plat, cur_dw_x, cur_dw_y, cur_dw_w, cur_dw_h, cur_dw_r, 0.90f, false, specular_rim, 0xFFFFFF);
+        rife_draw_subpixel_liquid_glass(plat, cur_dw_x, cur_dw_y, cur_dw_w, cur_dw_h, cur_dw_r, is_obsidian ? 0.94f : 0.90f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
     }
 
     // 3. 应用窗口：从顶部流体云双向缩放展开/缩回
@@ -892,14 +893,14 @@ void rife_render_flush(RifeCore* core) {
         float cur_h = rife_lerpf(col_size, target_h, ease);
         float cur_r = rife_lerpf(col_size * 0.5f, target_r, ease);
 
-        rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, 0.94f, false, specular_rim, 0xFFFFFF);
+        rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, is_obsidian ? 0.96f : 0.94f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
     }
 
     // 4. 桌面快捷方式
     for (size_t i = 0; i < plat->shortcut_count; i++) {
         DesktopShortcut* sc = &plat->shortcuts[i];
         bool hvr = (mx >= sc->x && mx <= sc->x + 76.0f && my >= sc->y && my <= sc->y + 80.0f);
-        rife_draw_subpixel_liquid_glass(plat, sc->x, sc->y, 76.0f, 80.0f, 16.0f, glass_alpha, hvr, specular_rim, 0xFFFFFF);
+        rife_draw_subpixel_liquid_glass(plat, sc->x, sc->y, 76.0f, 80.0f, 16.0f, is_obsidian ? 0.88f : glass_alpha, hvr, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
     }
 
     // 5. 底部纤细修长 Dock 栏 (固定 44px 高度)
@@ -911,7 +912,7 @@ void rife_render_flush(RifeCore* core) {
     float dock_y = rife_lerpf(resting_y, active_y, plat->dock_anim);
     bool dock_hvr = (mx >= dock_x && mx <= dock_x + dock_w && my >= dock_y && my <= dock_y + 44.0f);
 
-    rife_draw_subpixel_liquid_glass(plat, dock_x, dock_y, dock_w, 44.0f, 16.0f, glass_alpha, dock_hvr, specular_rim, 0xFFFFFF);
+    rife_draw_subpixel_liquid_glass(plat, dock_x, dock_y, dock_w, 44.0f, 16.0f, is_obsidian ? 0.90f : glass_alpha, dock_hvr, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
 
     GdiFlush();
     SetBkMode(plat->hdc_mem, TRANSPARENT);
@@ -920,7 +921,7 @@ void rife_render_flush(RifeCore* core) {
 
     // 6. 右下角水印
     SelectObject(plat->hdc_mem, plat->hfont_caption);
-    SetTextColor(plat->hdc_mem, RGB(148, 163, 184));
+    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(167, 139, 250) : RGB(148, 163, 184));
     rife_draw_text_u8(plat->hdc_mem, (int)(ww - 88.0f), (int)(wh - 14.0f), "Made by Renly");
 
     // 7. 桌面快捷方式文字
@@ -935,7 +936,7 @@ void rife_render_flush(RifeCore* core) {
         if (strlen(sc->name) > 8) {
             disp[7] = '.'; disp[8] = '.'; disp[9] = '.'; disp[10] = '\0';
         }
-        SetTextColor(plat->hdc_mem, RGB(15, 23, 42));
+        SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
         rife_draw_text_u8(plat->hdc_mem, (int)(sc->x + 10.0f), (int)(sc->y + 54.0f), disp);
     }
 
@@ -957,7 +958,7 @@ void rife_render_flush(RifeCore* core) {
             float title_x = rife_lerpf(orig_cx - 40.0f, cur_dw_x + 24.0f, title_ease);
             float title_y = rife_lerpf(orig_cy, cur_dw_y + 18.0f, title_ease);
             SelectObject(plat->hdc_mem, plat->hfont_title);
-            SetTextColor(plat->hdc_mem, RGB(15, 23, 42));
+            SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
             rife_draw_text_u8(plat->hdc_mem, (int)title_x, (int)title_y, is_zh ? "应用程序抽屉" : "Applications");
         }
 
@@ -992,13 +993,16 @@ void rife_render_flush(RifeCore* core) {
             float cur_ay = rife_lerpf(orig_cy - cur_card_h * 0.5f, target_ay, card_ease);
 
             // 卡片暗晶柔接触阴影 (Soft AO Shadow)
-            SetDCPenColor(plat->hdc_mem, RGB(226, 232, 240));
-            SetDCBrushColor(plat->hdc_mem, RGB(226, 232, 240));
+            COLORREF shadow_col = is_obsidian ? RGB(10, 8, 18) : RGB(226, 232, 240);
+            SetDCPenColor(plat->hdc_mem, shadow_col);
+            SetDCBrushColor(plat->hdc_mem, shadow_col);
             RoundRect(plat->hdc_mem, (int)cur_ax, (int)(cur_ay + 2.0f), (int)(cur_ax + cur_card_w), (int)(cur_ay + cur_card_h + 2.0f), (int)(14.0f * card_ease), (int)(14.0f * card_ease));
 
             bool app_hvr = (mx >= cur_ax && mx <= cur_ax + cur_card_w && my >= cur_ay && my <= cur_ay + cur_card_h);
-            SetDCPenColor(plat->hdc_mem, RGB(241, 245, 249));
-            SetDCBrushColor(plat->hdc_mem, app_hvr ? RGB(255, 255, 255) : RGB(248, 250, 252));
+            COLORREF border_col = is_obsidian ? RGB(68, 56, 92) : RGB(241, 245, 249);
+            COLORREF body_col = is_obsidian ? (app_hvr ? RGB(45, 38, 62) : RGB(28, 23, 40)) : (app_hvr ? RGB(255, 255, 255) : RGB(248, 250, 252));
+            SetDCPenColor(plat->hdc_mem, border_col);
+            SetDCBrushColor(plat->hdc_mem, body_col);
             RoundRect(plat->hdc_mem, (int)cur_ax, (int)cur_ay, (int)(cur_ax + cur_card_w), (int)(cur_ay + cur_card_h), (int)(14.0f * card_ease), (int)(14.0f * card_ease));
 
             // 图标与文字跟随卡片中心自然膨胀展现
@@ -1012,7 +1016,7 @@ void rife_render_flush(RifeCore* core) {
 
                 if (icon_scale > 0.45f) {
                     SelectObject(plat->hdc_mem, plat->hfont_sm);
-                    SetTextColor(plat->hdc_mem, RGB(15, 23, 42));
+                    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(241, 245, 249) : RGB(15, 23, 42));
                     rife_draw_text_u8(plat->hdc_mem, (int)(cur_ax + 14.0f), (int)(cur_ay + 48.0f), is_zh ? app->name_zh : app->name_en);
                 }
             }
@@ -1051,13 +1055,13 @@ void rife_render_flush(RifeCore* core) {
     bool all_hvr = (mx >= all_btn_x && mx <= all_btn_x + item_size && my >= all_btn_y - 3.0f && my <= all_btn_y + item_size + 3.0f);
     float all_off_y = all_hvr ? -3.0f : 0.0f;
 
-    rife_draw_subpixel_liquid_glass(plat, all_btn_x, all_btn_y + all_off_y, item_size, item_size, 10.0f, 0.82f, all_hvr || plat->drawer_open, specular_rim, 0xFFFFFF);
+    rife_draw_subpixel_liquid_glass(plat, all_btn_x, all_btn_y + all_off_y, item_size, item_size, 10.0f, is_obsidian ? 0.88f : 0.82f, all_hvr || plat->drawer_open, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
 
     float dot_ox = all_btn_x + 8.5f;
     float dot_oy = all_btn_y + all_off_y + 8.5f;
     for (int r = 0; r < 3; r++) {
         for (int c = 0; c < 3; c++) {
-            COLORREF tile_col = (r == 1 && c == 1) ? RGB(56, 189, 248) : RGB(15, 23, 42);
+            COLORREF tile_col = (r == 1 && c == 1) ? RGB(168, 85, 247) : (is_obsidian ? RGB(226, 232, 240) : RGB(15, 23, 42));
             SetDCPenColor(plat->hdc_mem, tile_col);
             SetDCBrushColor(plat->hdc_mem, tile_col);
             RoundRect(plat->hdc_mem, (int)(dot_ox + (float)c * 5.5f), (int)(dot_oy + (float)r * 5.5f),
@@ -1097,7 +1101,7 @@ void rife_render_flush(RifeCore* core) {
         if (win->anim > 0.25f && cur_w > 160.0f) {
             float title_alpha = rife_clampf((win->anim - 0.25f) / 0.75f, 0.0f, 1.0f);
             float title_off = (1.0f - title_alpha) * 12.0f;
-            rife_draw_text_font(core, cur_x + 78.0f + title_off, cur_y + 10.0f, is_zh ? win->plugin->name_zh : win->plugin->name_en, 0x0F172AFF, 1);
+            rife_draw_text_font(core, cur_x + 78.0f + title_off, cur_y + 10.0f, is_zh ? win->plugin->name_zh : win->plugin->name_en, is_obsidian ? 0xF8FAFCFF : 0x0F172AFF, 1);
         }
 
         // 插件界面内容：带动态流体裁剪框，自微球中心向四周铺展
