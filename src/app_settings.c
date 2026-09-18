@@ -22,6 +22,57 @@ static void settings_destroy(void* inst) {
     if (inst) free(inst);
 }
 
+// 绘制卡片容器
+static inline void draw_settings_card(RifeCore* core, float x, float y, float w, float h) {
+    rife_draw_round_rect(core, x, y, w, h, 10.0f, 0xFFFFFFFF, 0xE2E8F0FF);
+}
+
+// 绘制 iOS 风格滑动开关
+static inline void draw_toggle_switch(RifeCore* core, float rx, float row_y, float row_h, bool on) {
+    float sw_w = 46.0f;
+    float sw_h = 24.0f;
+    float sw_x = rx - sw_w;
+    float sw_y = row_y + (row_h - sw_h) * 0.5f;
+    if (on) {
+        rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 12.0f, 0x10B981FF, 0x059669FF);
+        rife_draw_round_rect(core, sw_x + 24.0f, sw_y + 2.0f, 20.0f, 20.0f, 10.0f, 0xFFFFFFFF, 0xE2E8F0FF);
+    }
+    else {
+        rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 12.0f, 0xE2E8F0FF, 0xCBD5E1FF);
+        rife_draw_round_rect(core, sw_x + 2.0f, sw_y + 2.0f, 20.0f, 20.0f, 10.0f, 0xFFFFFFFF, 0xE2E8F0FF);
+    }
+}
+
+// 绘制分段胶囊选择器
+static inline void draw_segmented_pills(RifeCore* core, float rx, float row_y, float row_h, float it_w, const char* items[], int count, int cur_idx) {
+    float seg_h = 28.0f;
+    float seg_w = (float)count * it_w + 4.0f;
+    float seg_x = rx - seg_w;
+    float seg_y = row_y + (row_h - seg_h) * 0.5f;
+
+    rife_draw_round_rect(core, seg_x, seg_y, seg_w, seg_h, 6.0f, 0xF1F5F9FF, 0xE2E8F0FF);
+    for (int k = 0; k < count; k++) {
+        float ix = seg_x + 2.0f + (float)k * it_w;
+        float iy = seg_y + 2.0f;
+        float iw = it_w;
+        float ih = seg_h - 4.0f;
+        bool active = (k == cur_idx);
+        if (active) {
+            rife_draw_round_rect(core, ix, iy, iw, ih, 5.0f, 0xFFFFFFFF, 0xCBD5E1FF);
+            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], 0x0284C7FF, 4);
+        }
+        else {
+            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], 0x64748BFF, 4);
+        }
+    }
+}
+
+// 绘制行文字信息
+static inline void draw_row_header(RifeCore* core, float card_x, float row_y, const char* title, const char* subtitle) {
+    rife_draw_text_font(core, card_x + 16.0f, row_y + 8.0f, title, 0x0F172AFF, 0);
+    rife_draw_text_font(core, card_x + 16.0f, row_y + 27.0f, subtitle, 0x94A3B8FF, 4);
+}
+
 static void settings_update(void* inst, RifeCore* core, const RifeInput* input, float client_w, float client_h) {
     (void)client_w; (void)client_h;
     SettingsState* state = (SettingsState*)inst;
@@ -31,133 +82,223 @@ static void settings_update(void* inst, RifeCore* core, const RifeInput* input, 
     float mx = input->mouse_x;
     float my = input->mouse_y;
 
-    float side_w = 140.0f;
+    float side_w = 175.0f;
+
+    // 侧边栏 Tab 点击测试 (5项)
     for (int i = 0; i < 5; i++) {
-        float tab_y = 10.0f + (float)i * 38.0f;
-        if (mx >= 8.0f && mx <= side_w && my >= tab_y && my <= tab_y + 32.0f) {
+        float tab_x = 10.0f;
+        float tab_y = 54.0f + (float)i * 42.0f;
+        float tab_w = side_w - 20.0f;
+        float tab_h = 36.0f;
+        if (mx >= tab_x && mx <= tab_x + tab_w && my >= tab_y && my <= tab_y + tab_h) {
             state->current_tab = i;
             rife_request_redraw(core);
             return;
         }
     }
 
-    float rx = side_w + 20.0f;
-    float ry = 10.0f;
+    float rx = side_w + 22.0f;
+    float rw = client_w - side_w - 44.0f;
+    float card_right = rx + rw - 16.0f;
+    float cy = 14.0f + 44.0f;
 
     if (state->current_tab == 0) {
-        for (int l = 0; l < 2; l++) {
-            float px = rx + (float)l * 150.0f;
-            if (mx >= px && mx <= px + 140.0f && my >= ry + 20.0f && my <= ry + 50.0f) {
-                cfg->language = (RifeLanguage)l;
+        // Tab 0: 通用与桌面
+        // Card 1
+        float c1_y = cy;
+        // Row 0: 语言 (2项, it_w = 76.0f)
+        float r0_y = c1_y;
+        float seg_w0 = 2.0f * 76.0f + 4.0f;
+        float seg_x0 = card_right - seg_w0;
+        float seg_y0 = r0_y + (50.0f - 28.0f) * 0.5f;
+        for (int k = 0; k < 2; k++) {
+            float ix = seg_x0 + 2.0f + (float)k * 76.0f;
+            if (mx >= ix && mx <= ix + 76.0f && my >= seg_y0 && my <= seg_y0 + 24.0f) {
+                cfg->language = (RifeLanguage)k;
                 rife_request_redraw(core);
                 return;
             }
         }
-        for (int sc = 0; sc < 3; sc++) {
-            float px = rx + (float)sc * 100.0f;
-            if (mx >= px && mx <= px + 92.0f && my >= ry + 76.0f && my <= ry + 106.0f) {
-                cfg->font_scale = (FontScaleType)sc;
+        // Row 1: 字号缩放 (3项, it_w = 54.0f)
+        float r1_y = c1_y + 50.0f;
+        float seg_w1 = 3.0f * 54.0f + 4.0f;
+        float seg_x1 = card_right - seg_w1;
+        float seg_y1 = r1_y + (50.0f - 28.0f) * 0.5f;
+        for (int k = 0; k < 3; k++) {
+            float ix = seg_x1 + 2.0f + (float)k * 54.0f;
+            if (mx >= ix && mx <= ix + 54.0f && my >= seg_y1 && my <= seg_y1 + 24.0f) {
+                cfg->font_scale = (FontScaleType)k;
                 rife_request_redraw(core);
                 return;
             }
         }
-        for (int m = 0; m < 2; m++) {
-            float px = rx + (float)m * 150.0f;
-            if (mx >= px && mx <= px + 140.0f && my >= ry + 134.0f && my <= ry + 164.0f) {
-                cfg->desktop_mode = (DesktopModeType)m;
+
+        // Card 2
+        float c2_y = c1_y + 100.0f + 12.0f;
+        // Row 0: 宿主层级 (2项, it_w = 76.0f)
+        float r2_0_y = c2_y;
+        float seg_w2_0 = 2.0f * 76.0f + 4.0f;
+        float seg_x2_0 = card_right - seg_w2_0;
+        float seg_y2_0 = r2_0_y + (50.0f - 28.0f) * 0.5f;
+        for (int k = 0; k < 2; k++) {
+            float ix = seg_x2_0 + 2.0f + (float)k * 76.0f;
+            if (mx >= ix && mx <= ix + 76.0f && my >= seg_y2_0 && my <= seg_y2_0 + 24.0f) {
+                cfg->desktop_mode = (DesktopModeType)k;
                 rife_request_redraw(core);
                 return;
             }
         }
-        if (mx >= rx + 260.0f && mx <= rx + 330.0f && my >= ry + 172.0f && my <= ry + 200.0f) {
+        // Row 1: 底栏常驻 (Toggle)
+        float r2_1_y = c2_y + 50.0f;
+        float sw_x2_1 = card_right - 46.0f;
+        float sw_y2_1 = r2_1_y + (50.0f - 24.0f) * 0.5f;
+        if (mx >= sw_x2_1 && mx <= sw_x2_1 + 46.0f && my >= sw_y2_1 && my <= sw_y2_1 + 24.0f) {
             cfg->dock_always_visible = !cfg->dock_always_visible;
             rife_request_redraw(core);
             return;
         }
-        for (int a = 0; a < 2; a++) {
-            float px = rx + (float)a * 150.0f;
-            if (mx >= px && mx <= px + 140.0f && my >= ry + 224.0f && my <= ry + 254.0f) {
-                cfg->dock_align = (DockAlignType)a;
+        // Row 2: 底栏停靠 (2项, it_w = 76.0f)
+        float r2_2_y = c2_y + 100.0f;
+        float seg_w2_2 = 2.0f * 76.0f + 4.0f;
+        float seg_x2_2 = card_right - seg_w2_2;
+        float seg_y2_2 = r2_2_y + (50.0f - 28.0f) * 0.5f;
+        for (int k = 0; k < 2; k++) {
+            float ix = seg_x2_2 + 2.0f + (float)k * 76.0f;
+            if (mx >= ix && mx <= ix + 76.0f && my >= seg_y2_2 && my <= seg_y2_2 + 24.0f) {
+                cfg->dock_align = (DockAlignType)k;
                 rife_request_redraw(core);
                 return;
             }
         }
     }
     else if (state->current_tab == 1) {
-        // 色彩预设
+        // Tab 1: 视觉与光场
+        // Card 1
+        float c1_y = cy;
+        // Row 0: 色彩预设 (4个色块芯片，每个宽 58px)
+        float r0_y = c1_y;
+        float chips_w = 4.0f * 60.0f;
+        float chips_x = card_right - chips_w;
+        float chips_y = r0_y + (52.0f - 28.0f) * 0.5f;
         for (int p = 0; p < 4; p++) {
-            float px = rx + (float)p * 94.0f;
-            if (mx >= px && mx <= px + 88.0f && my >= ry + 22.0f && my <= ry + 50.0f) {
+            float px = chips_x + (float)p * 60.0f;
+            if (mx >= px && mx <= px + 56.0f && my >= chips_y && my <= chips_y + 28.0f) {
                 cfg->palette = (AuraPaletteType)p;
                 rife_request_redraw(core);
                 return;
             }
         }
-        // 呼吸速率选择
+        // Row 1: 流动动画开关
+        float r1_y = c1_y + 52.0f;
+        float sw_x1 = card_right - 46.0f;
+        float sw_y1 = r1_y + (52.0f - 24.0f) * 0.5f;
+        if (mx >= sw_x1 && mx <= sw_x1 + 46.0f && my >= sw_y1 && my <= sw_y1 + 24.0f) {
+            cfg->aura_animated = !cfg->aura_animated;
+            rife_request_redraw(core);
+            return;
+        }
+
+        // Card 2
+        float c2_y = c1_y + 104.0f + 12.0f;
+        // Row 0: 呼吸节律 (3项, it_w = 64.0f)
+        float r2_0_y = c2_y;
+        float seg_w2 = 3.0f * 64.0f + 4.0f;
+        float seg_x2 = card_right - seg_w2;
+        float seg_y2 = r2_0_y + (52.0f - 28.0f) * 0.5f;
         for (int bs = 0; bs < 3; bs++) {
-            float px = rx + (float)bs * 105.0f;
-            if (mx >= px && mx <= px + 98.0f && my >= ry + 74.0f && my <= ry + 102.0f) {
+            float ix = seg_x2 + 2.0f + (float)bs * 64.0f;
+            if (mx >= ix && mx <= ix + 64.0f && my >= seg_y2 && my <= seg_y2 + 24.0f) {
                 cfg->breath_speed = (BreathSpeedType)bs;
                 rife_request_redraw(core);
                 return;
             }
         }
-        // 呼吸灯颜色选择
+        // Row 1: 呼吸灯色彩 (5个宝石圆点, 每个间隔 32px)
+        float r2_1_y = c2_y + 52.0f;
+        float dots_w = 5.0f * 32.0f;
+        float dots_x = card_right - dots_w;
+        float dots_y = r2_1_y + (52.0f - 24.0f) * 0.5f;
         for (int bc = 0; bc < 5; bc++) {
-            float px = rx + (float)bc * 72.0f;
-            if (mx >= px && mx <= px + 66.0f && my >= ry + 128.0f && my <= ry + 156.0f) {
+            float bx = dots_x + (float)bc * 32.0f;
+            if (mx >= bx && mx <= bx + 28.0f && my >= dots_y && my <= dots_y + 24.0f) {
                 cfg->breath_color = (BreathColorType)bc;
                 rife_request_redraw(core);
                 return;
             }
         }
-        // 流体云材质
+
+        // Card 3
+        float c3_y = c2_y + 104.0f + 12.0f;
+        // Row 0: 展开材质 (4项, it_w = 62.0f)
+        float r3_0_y = c3_y;
+        float seg_w3 = 4.0f * 62.0f + 4.0f;
+        float seg_x3 = card_right - seg_w3;
+        float seg_y3 = r3_0_y + (52.0f - 28.0f) * 0.5f;
         for (int c = 0; c < 4; c++) {
-            float px = rx + (float)c * 94.0f;
-            if (mx >= px && mx <= px + 88.0f && my >= ry + 182.0f && my <= ry + 210.0f) {
+            float ix = seg_x3 + 2.0f + (float)c * 62.0f;
+            if (mx >= ix && mx <= ix + 62.0f && my >= seg_y3 && my <= seg_y3 + 24.0f) {
                 cfg->cloud_color = (CloudColorType)c;
                 rife_request_redraw(core);
                 return;
             }
         }
-        // 动画开关
-        if (mx >= rx + 260.0f && mx <= rx + 330.0f && my >= ry + 218.0f && my <= ry + 246.0f) {
-            cfg->aura_animated = !cfg->aura_animated;
-            rife_request_redraw(core);
-            return;
-        }
-        // 1px 物理高光边框
-        if (mx >= rx + 260.0f && mx <= rx + 330.0f && my >= ry + 252.0f && my <= ry + 280.0f) {
+        // Row 1: 物理高光反射边框 (Toggle)
+        float r3_1_y = c3_y + 52.0f;
+        float sw_x3 = card_right - 46.0f;
+        float sw_y3 = r3_1_y + (52.0f - 24.0f) * 0.5f;
+        if (mx >= sw_x3 && mx <= sw_x3 + 46.0f && my >= sw_y3 && my <= sw_y3 + 24.0f) {
             cfg->specular_rim = !cfg->specular_rim;
             rife_request_redraw(core);
             return;
         }
     }
     else if (state->current_tab == 2) {
+        // Tab 2: 磁贴与渲染
+        // Card 1: 图标管道 (2项, it_w = 88.0f)
+        float c1_y = cy;
+        float seg_w1 = 2.0f * 88.0f + 4.0f;
+        float seg_x1 = card_right - seg_w1;
+        float seg_y1 = c1_y + (56.0f - 28.0f) * 0.5f;
         for (int s = 0; s < 2; s++) {
-            float px = rx + (float)s * 150.0f;
-            if (mx >= px && mx <= px + 140.0f && my >= ry + 28.0f && my <= ry + 64.0f) {
+            float ix = seg_x1 + 2.0f + (float)s * 88.0f;
+            if (mx >= ix && mx <= ix + 88.0f && my >= seg_y1 && my <= seg_y1 + 24.0f) {
                 cfg->icon_style = (IconStyleType)s;
                 rife_request_redraw(core);
                 return;
             }
         }
-        if (mx >= rx + 260.0f && mx <= rx + 330.0f && my >= ry + 82.0f && my <= ry + 114.0f) {
+        // Card 2: 磁贴网格吸附 (Toggle)
+        float c2_y = c1_y + 56.0f + 12.0f;
+        float sw_x2 = card_right - 46.0f;
+        float sw_y2 = c2_y + (56.0f - 24.0f) * 0.5f;
+        if (mx >= sw_x2 && mx <= sw_x2 + 46.0f && my >= sw_y2 && my <= sw_y2 + 24.0f) {
             cfg->shortcut_grid_align = !cfg->shortcut_grid_align;
             rife_request_redraw(core);
             return;
         }
     }
     else if (state->current_tab == 3) {
+        // Tab 3: 内核与性能
+        // Card 1
+        float c1_y = cy;
+        // Row 0: 刷新率目标 (3项, it_w = 72.0f)
+        float r0_y = c1_y;
+        float seg_w0 = 3.0f * 72.0f + 4.0f;
+        float seg_x0 = card_right - seg_w0;
+        float seg_y0 = r0_y + (52.0f - 28.0f) * 0.5f;
         for (int f = 0; f < 3; f++) {
-            float px = rx + (float)f * 94.0f;
-            if (mx >= px && mx <= px + 88.0f && my >= ry + 28.0f && my <= ry + 64.0f) {
+            float ix = seg_x0 + 2.0f + (float)f * 72.0f;
+            if (mx >= ix && mx <= ix + 72.0f && my >= seg_y0 && my <= seg_y0 + 24.0f) {
                 cfg->target_fps_idx = f;
                 rife_request_redraw(core);
                 return;
             }
         }
-        if (mx >= rx + 260.0f && mx <= rx + 330.0f && my >= ry + 82.0f && my <= ry + 114.0f) {
+        // Row 1: 后台降频休眠 (Toggle)
+        float r1_y = c1_y + 52.0f;
+        float sw_x1 = card_right - 46.0f;
+        float sw_y1 = r1_y + (52.0f - 24.0f) * 0.5f;
+        if (mx >= sw_x1 && mx <= sw_x1 + 46.0f && my >= sw_y1 && my <= sw_y1 + 24.0f) {
             cfg->background_throttle = !cfg->background_throttle;
             rife_request_redraw(core);
             return;
@@ -166,186 +307,287 @@ static void settings_update(void* inst, RifeCore* core, const RifeInput* input, 
 }
 
 static void settings_render(void* inst, RifeCore* core, float client_x, float client_y, float client_w, float client_h) {
-    (void)client_w;
     SettingsState* state = (SettingsState*)inst;
     if (!state) return;
 
     RifeSystemConfig* cfg = rife_get_system_config();
     bool is_zh = (cfg->language == LANG_ZH_CN);
 
-    float side_w = 140.0f;
-    rife_draw_rect(core, client_x + side_w, client_y + 6.0f, 1.0f, client_h - 12.0f, 0xE2E8F0FF);
+    float side_w = 175.0f;
 
-    const char* tabs_zh[5] = { "通用与语言", "视觉与光学", "应用与磁贴", "内核与遥测", "关于系统" };
-    const char* tabs_en[5] = { "General & Lang", "Optics", "Apps & Tiles", "Telemetry", "About RifeOS" };
+    // 1. 侧边栏垂直细分割线
+    rife_draw_rect(core, client_x + side_w, client_y, 1.0f, client_h, 0xE2E8F0FF);
+
+    // 2. 侧边栏顶部品牌与偏好标题
+    rife_draw_round_rect(core, client_x + 14.0f, client_y + 14.0f, 26.0f, 26.0f, 6.0f, 0x334155FF, 0x1E293BFF);
+    rife_draw_text_font(core, client_x + 22.0f, client_y + 17.0f, "*", 0xFFFFFFFF, 1);
+    rife_draw_text_font(core, client_x + 48.0f, client_y + 14.0f, is_zh ? "系统偏好设置" : "System Settings", 0x0F172AFF, 1);
+    rife_draw_text_font(core, client_x + 48.0f, client_y + 29.0f, "RifeOS Preferences", 0x94A3B8FF, 4);
+
+    // 3. 侧边栏导航 Tab 列表
+    const char* tabs_zh[5] = { "通用与语言", "视觉与光场", "磁贴与渲染", "内核与性能", "关于本系统" };
+    const char* tabs_en[5] = { "General & Lang", "Optics & Flow", "Tiles & Render", "Kernel & Perf", "About System" };
+    const char* tabs_icon[5] = { ">", "*", "#", "~", "i" };
+
     for (int i = 0; i < 5; i++) {
-        float tab_y = client_y + 10.0f + (float)i * 38.0f;
+        float tab_x = client_x + 10.0f;
+        float tab_y = client_y + 54.0f + (float)i * 42.0f;
+        float tab_w = side_w - 20.0f;
+        float tab_h = 36.0f;
         bool is_active = (state->current_tab == i);
+
         if (is_active) {
-            rife_draw_round_rect(core, client_x + 14.0f, tab_y, side_w - 24.0f, 30.0f, 8.0f, 0xE0F2FEFF, 0x0EA5E9FF);
-            rife_draw_text_font(core, client_x + 22.0f, tab_y + 7.0f, is_zh ? tabs_zh[i] : tabs_en[i], 0x0284C7FF, 0);
+            // 激活胶囊底色与左侧高光条
+            rife_draw_round_rect(core, tab_x, tab_y, tab_w, tab_h, 8.0f, 0xEFF6FFFF, 0xBAE6FDFF);
+            rife_draw_round_rect(core, tab_x + 3.0f, tab_y + 8.0f, 3.0f, 20.0f, 1.5f, 0x0284C7FF, 0x0284C7FF);
+            rife_draw_text_font(core, tab_x + 14.0f, tab_y + 9.0f, tabs_icon[i], 0x0284C7FF, 1);
+            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 9.0f, is_zh ? tabs_zh[i] : tabs_en[i], 0x0284C7FF, 1);
         }
         else {
-            rife_draw_text_font(core, client_x + 22.0f, tab_y + 7.0f, is_zh ? tabs_zh[i] : tabs_en[i], 0x475569FF, 0);
+            rife_draw_text_font(core, tab_x + 14.0f, tab_y + 9.0f, tabs_icon[i], 0x64748BFF, 0);
+            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 9.0f, is_zh ? tabs_zh[i] : tabs_en[i], 0x475569FF, 0);
         }
     }
 
-    float rx = client_x + side_w + 20.0f;
-    float ry = client_y + 10.0f;
+    // 4. 右侧内容区域
+    float rx = client_x + side_w + 22.0f;
+    float rw = client_w - side_w - 44.0f;
+    float card_right = rx + rw - 16.0f;
+    float ry = client_y + 14.0f;
+
+    // 分类 Header (Title + Subtitle)
+    const char* cat_titles_zh[5] = { "通用与桌面宿主", "光场光学与流体物理", "图标磁贴与渲染管道", "微内核调度与性能遥测", "关于 RifeOS 桌面工作空间" };
+    const char* cat_titles_en[5] = { "General & Desktop Host", "Optics, Lightfield & Flow", "Icons & Rendering Engine", "Microkernel & Telemetry", "About RifeOS Workspace" };
+    const char* cat_descs_zh[5] = {
+        "管理系统界面语言、字体缩放比例以及底层桌面渲染宿主层级模式",
+        "配置连续双线性流体色彩、五色复合简谐波场及顶部灵动微球参数",
+        "切换桌面图标渲染引擎管道与磁贴自动网格吸附交互",
+        "监控双 Arena 内存提交量，调节主循环硬件物理刷新率",
+        "查看系统发行版本、微内核架构规范与开发者信息"
+    };
+    const char* cat_descs_en[5] = {
+        "Configure language, font scale and desktop hosting substrate modes",
+        "Customize fluid colorways, multi-harmonic field and bionic breathing LED",
+        "Configure procedural vector pipelines and desktop shortcut snapping",
+        "Real-time dual-arena heap telemetry and hardware refresh target pacing",
+        "System release specs, pure C microkernel architecture and authorship"
+    };
+
+    rife_draw_text_font(core, rx, ry, is_zh ? cat_titles_zh[state->current_tab] : cat_titles_en[state->current_tab], 0x0F172AFF, 1);
+    rife_draw_text_font(core, rx, ry + 22.0f, is_zh ? cat_descs_zh[state->current_tab] : cat_descs_en[state->current_tab], 0x64748BFF, 4);
+
+    float cy = ry + 44.0f;
 
     if (state->current_tab == 0) {
-        rife_draw_text_font(core, rx, ry, is_zh ? "系统语言 / Language" : "Language / 系统语言", 0x0F172AFF, 1);
-        const char* langs[2] = { "简体中文 (ZH)", "English (US)" };
-        for (int l = 0; l < 2; l++) {
-            float px = rx + (float)l * 150.0f;
-            bool cur = (cfg->language == l);
-            rife_draw_round_rect(core, px, ry + 20.0f, 140.0f, 28.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 16.0f, ry + 26.0f, langs[l], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        // Tab 0: 通用与桌面
+        // Card 1: 语言与排版 (100px)
+        float c1_y = cy;
+        draw_settings_card(core, rx, c1_y, rw, 100.0f);
 
-        rife_draw_text_font(core, rx, ry + 56.0f, is_zh ? "界面文字缩放 / Text Scaling" : "Text Scaling / 文字缩放", 0x0F172AFF, 1);
-        const char* scales_zh[3] = { "100% 标准", "125% 适中", "150% 放大" };
-        const char* scales_en[3] = { "100% Small", "125% Medium", "150% Large" };
-        for (int sc = 0; sc < 3; sc++) {
-            float px = rx + (float)sc * 100.0f;
-            bool cur = (cfg->font_scale == sc);
-            rife_draw_round_rect(core, px, ry + 76.0f, 92.0f, 28.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 12.0f, ry + 82.0f, is_zh ? scales_zh[sc] : scales_en[sc], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        // Row 0: 语言
+        float r0_y = c1_y;
+        draw_row_header(core, rx, r0_y, is_zh ? "系统显示语言" : "Display Language", is_zh ? "控制微内核与所有系统组件的语言环境" : "Select UI language for kernel & apps");
+        const char* lang_items[2] = { "简体中文", "English" };
+        draw_segmented_pills(core, card_right, r0_y, 50.0f, 76.0f, lang_items, 2, (int)cfg->language);
 
-        rife_draw_text_font(core, rx, ry + 114.0f, is_zh ? "桌面层级宿主模式" : "Desktop Layer Mode", 0x0F172AFF, 1);
-        const char* md_zh[2] = { "独立悬浮窗口", "WorkerW 壁纸嵌入" };
-        const char* md_en[2] = { "Floating Window", "WorkerW Wallpaper" };
-        for (int m = 0; m < 2; m++) {
-            float px = rx + (float)m * 150.0f;
-            bool cur = (cfg->desktop_mode == m);
-            rife_draw_round_rect(core, px, ry + 134.0f, 140.0f, 28.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 12.0f, ry + 140.0f, is_zh ? md_zh[m] : md_en[m], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        // 分割线
+        rife_draw_rect(core, rx + 16.0f, c1_y + 50.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
 
-        rife_draw_text_font(core, rx, ry + 174.0f, is_zh ? "底栏永久保持可见" : "Dock Always Visible", 0x475569FF, 0);
-        float sw_btn_x = rx + 270.0f;
-        bool vis = cfg->dock_always_visible;
-        rife_draw_round_rect(core, sw_btn_x, ry + 172.0f, 50.0f, 24.0f, 12.0f, vis ? 0x10B981FF : 0xE2E8F0FF, 0xCBD5E1FF);
-        rife_draw_round_rect(core, vis ? (sw_btn_x + 28.0f) : (sw_btn_x + 3.0f), ry + 175.0f, 18.0f, 18.0f, 9.0f, 0xFFFFFFFF, 0xFFFFFFFF);
+        // Row 1: 字号缩放
+        float r1_y = c1_y + 50.0f;
+        draw_row_header(core, rx, r1_y, is_zh ? "界面排版缩放" : "UI Font Scale", is_zh ? "调节窗口标题与控件标签的相对比例" : "Adjust text scale for labels and titles");
+        const char* scale_items[3] = { "100%", "125%", "150%" };
+        draw_segmented_pills(core, card_right, r1_y, 50.0f, 54.0f, scale_items, 3, (int)cfg->font_scale);
 
-        rife_draw_text_font(core, rx, ry + 204.0f, is_zh ? "底栏停靠位置排版" : "Dock Screen Alignment", 0x0F172AFF, 1);
-        const char* aln_zh[2] = { "屏幕居中 (macOS)", "靠右停靠 (ZUI)" };
-        const char* aln_en[2] = { "Centered Dock", "Pinned Right (ZUI)" };
-        for (int a = 0; a < 2; a++) {
-            float px = rx + (float)a * 150.0f;
-            bool cur = (cfg->dock_align == a);
-            rife_draw_round_rect(core, px, ry + 224.0f, 140.0f, 28.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 12.0f, ry + 230.0f, is_zh ? aln_zh[a] : aln_en[a], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        // Card 2: 桌面与底栏 (150px)
+        float c2_y = c1_y + 100.0f + 12.0f;
+        draw_settings_card(core, rx, c2_y, rw, 150.0f);
+
+        // Row 0: 宿主层级
+        float r2_0_y = c2_y;
+        draw_row_header(core, rx, r2_0_y, is_zh ? "桌面层级宿主模式" : "Desktop Host Mode", is_zh ? "切换桌面层级：悬浮窗口或嵌入系统壁纸" : "Floating window or WorkerW desktop embed");
+        const char* host_items[2] = { "独立悬浮", "壁纸嵌入" };
+        draw_segmented_pills(core, card_right, r2_0_y, 50.0f, 76.0f, host_items, 2, (int)cfg->desktop_mode);
+
+        rife_draw_rect(core, rx + 16.0f, c2_y + 50.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 1: 底栏常驻可见 (Toggle)
+        float r2_1_y = c2_y + 50.0f;
+        draw_row_header(core, rx, r2_1_y, is_zh ? "底栏永久保持可见" : "Dock Always Visible", is_zh ? "关闭后在光标靠近屏幕底部时自动浮现" : "Auto-hides Dock until mouse hovers bottom edge");
+        draw_toggle_switch(core, card_right, r2_1_y, 50.0f, cfg->dock_always_visible);
+
+        rife_draw_rect(core, rx + 16.0f, c2_y + 100.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 2: 底栏停靠位置
+        float r2_2_y = c2_y + 100.0f;
+        draw_row_header(core, rx, r2_2_y, is_zh ? "底栏停靠位置排版" : "Dock Alignment", is_zh ? "底部 Dock 栏是停靠居中还是贴靠右侧" : "Align Dock to screen center or right corner");
+        const char* aln_items[2] = { "居中停靠", "右侧停靠" };
+        draw_segmented_pills(core, card_right, r2_2_y, 50.0f, 76.0f, aln_items, 2, (int)cfg->dock_align);
     }
     else if (state->current_tab == 1) {
-        // 色彩预设
-        rife_draw_text_font(core, rx, ry, is_zh ? "光场流体色彩预设" : "Aura Flow Palette", 0x0F172AFF, 1);
-        const char* pals[4] = { "Gemini", "Obsidian", "Sunset", "Cyber" };
+        // Tab 1: 视觉与光场
+        // Card 1: 色彩与动画 (104px)
+        float c1_y = cy;
+        draw_settings_card(core, rx, c1_y, rw, 104.0f);
+
+        // Row 0: 色彩预设 (Chips)
+        float r0_y = c1_y;
+        draw_row_header(core, rx, r0_y, is_zh ? "光场流体色彩预设" : "Aura Flow Palette", is_zh ? "五色连续双线性可分离流体色盘" : "Continuous dual-separable chromatic field");
+
+        const char* pal_names[4] = { "Gemini", "Obsidian", "Sunset", "Cyber" };
+        uint32_t pal_dot_colors[4] = { 0x00D2FFFF, 0x881C87FF, 0xF97316FF, 0x06B6D4FF };
+        float chips_w = 4.0f * 60.0f;
+        float chips_x = card_right - chips_w;
+        float chips_y = r0_y + (52.0f - 28.0f) * 0.5f;
+
         for (int p = 0; p < 4; p++) {
-            float px = rx + (float)p * 94.0f;
-            bool cur = (cfg->palette == p);
-            rife_draw_round_rect(core, px, ry + 22.0f, 88.0f, 26.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 14.0f, ry + 27.0f, pals[p], cur ? 0x0284C7FF : 0x475569FF, 4);
+            float px = chips_x + (float)p * 60.0f;
+            bool active = (cfg->palette == p);
+            rife_draw_round_rect(core, px, chips_y, 56.0f, 28.0f, 6.0f, active ? 0xEFF6FFFF : 0xF8FAFCFF, active ? 0x0284C7FF : 0xE2E8F0FF);
+            // 色彩圆点指示
+            rife_draw_round_rect(core, px + 6.0f, chips_y + 9.0f, 10.0f, 10.0f, 5.0f, pal_dot_colors[p], pal_dot_colors[p]);
+            rife_draw_text_font(core, px + 18.0f, chips_y + 6.0f, pal_names[p], active ? 0x0284C7FF : 0x475569FF, 4);
         }
 
-        // 流体云呼吸时间/速率选项
-        rife_draw_text_font(core, rx, ry + 54.0f, is_zh ? "流体云呼吸节律 (周期时长)" : "Breathing Period Interval", 0x0F172AFF, 1);
-        const char* bs_zh[3] = { "6.0s 极缓 (推荐)", "4.0s 舒缓", "2.5s 标准" };
-        const char* bs_en[3] = { "6.0s Ultra Calm", "4.0s Gentle", "2.5s Normal" };
-        for (int bs = 0; bs < 3; bs++) {
-            float px = rx + (float)bs * 105.0f;
-            bool cur = (cfg->breath_speed == bs);
-            rife_draw_round_rect(core, px, ry + 74.0f, 98.0f, 26.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 8.0f, ry + 79.0f, is_zh ? bs_zh[bs] : bs_en[bs], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        rife_draw_rect(core, rx + 16.0f, c1_y + 52.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
 
-        // 流体云呼吸灯色彩选项
-        rife_draw_text_font(core, rx, ry + 108.0f, is_zh ? "流体云呼吸灯色彩" : "Breathing Light Color", 0x0F172AFF, 1);
-        const char* bc_zh[5] = { "翡翠绿", "极光青", "冰川蓝", "琥珀金", "暮色紫" };
-        const char* bc_en[5] = { "Emerald", "Cyan", "Azure", "Amber", "Violet" };
+        // Row 1: 流动动画开关 (Toggle)
+        float r1_y = c1_y + 52.0f;
+        draw_row_header(core, rx, r1_y, is_zh ? "流动流体背景动画" : "Harmonic Motion Flow", is_zh ? "多频复合简谐扰动与光标临场感应" : "Multi-frequency compound wave harmonics");
+        draw_toggle_switch(core, card_right, r1_y, 52.0f, cfg->aura_animated);
+
+        // Card 2: 呼吸节律与呼吸灯 (104px)
+        float c2_y = c1_y + 104.0f + 12.0f;
+        draw_settings_card(core, rx, c2_y, rw, 104.0f);
+
+        // Row 0: 呼吸节律
+        float r2_0_y = c2_y;
+        draw_row_header(core, rx, r2_0_y, is_zh ? "微球生理呼吸节律" : "Breathing Pulse Cycle", is_zh ? "顶部正圆微球高斯光子核晶呼吸周期" : "Gaussian core breathing cycle interval");
+        const char* bs_items[3] = { "6.0s 极缓", "4.0s 舒缓", "2.5s 标准" };
+        draw_segmented_pills(core, card_right, r2_0_y, 52.0f, 64.0f, bs_items, 3, (int)cfg->breath_speed);
+
+        rife_draw_rect(core, rx + 16.0f, c2_y + 52.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 1: 呼吸灯核晶宝石色 (5个宝石圆点)
+        float r2_1_y = c2_y + 52.0f;
+        draw_row_header(core, rx, r2_1_y, is_zh ? "微球呼吸核晶色彩" : "Core LED Jewel Color", is_zh ? "流体云常态微球中心的仿生指示灯" : "Bionic photon LED jewel light at cloud core");
         uint32_t bc_colors[5] = { 0x22C55EFF, 0x06B6D4FF, 0x3B82F6FF, 0xF59E0BFF, 0xA855F7FF };
+        float dots_w = 5.0f * 32.0f;
+        float dots_x = card_right - dots_w;
+        float dots_y = r2_1_y + (52.0f - 24.0f) * 0.5f;
+
         for (int bc = 0; bc < 5; bc++) {
-            float px = rx + (float)bc * 72.0f;
-            bool cur = (cfg->breath_color == bc);
-            rife_draw_round_rect(core, px, ry + 128.0f, 66.0f, 26.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? bc_colors[bc] : 0xCBD5E1FF);
-            rife_draw_round_rect(core, px + 8.0f, ry + 135.0f, 12.0f, 12.0f, 6.0f, bc_colors[bc], bc_colors[bc]);
-            rife_draw_text_font(core, px + 24.0f, ry + 133.0f, is_zh ? bc_zh[bc] : bc_en[bc], cur ? 0x0284C7FF : 0x475569FF, 4);
+            float bx = dots_x + (float)bc * 32.0f;
+            bool active = (cfg->breath_color == bc);
+            if (active) {
+                rife_draw_round_rect(core, bx + 2.0f, dots_y, 24.0f, 24.0f, 12.0f, 0xFFFFFFFF, 0x0284C7FF);
+                rife_draw_round_rect(core, bx + 6.0f, dots_y + 4.0f, 16.0f, 16.0f, 8.0f, bc_colors[bc], bc_colors[bc]);
+            }
+            else {
+                rife_draw_round_rect(core, bx + 6.0f, dots_y + 4.0f, 16.0f, 16.0f, 8.0f, bc_colors[bc], 0xE2E8F0FF);
+            }
         }
 
-        // 流体云展开材质
-        rife_draw_text_font(core, rx, ry + 162.0f, is_zh ? "流体云展开材质配色" : "Expanded Cloud Tint", 0x475569FF, 0);
-        const char* cloud_zh[4] = { "通透晶白", "极光幽蓝", "暮色雾紫", "曜石暗影" };
-        const char* cloud_en[4] = { "Crystal", "Azure", "Violet", "Obsidian" };
-        for (int c = 0; c < 4; c++) {
-            float px = rx + (float)c * 94.0f;
-            bool cur = (cfg->cloud_color == c);
-            rife_draw_round_rect(core, px, ry + 182.0f, 88.0f, 26.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 12.0f, ry + 187.0f, is_zh ? cloud_zh[c] : cloud_en[c], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        // Card 3: 展开材质与高光边框 (104px)
+        float c3_y = c2_y + 104.0f + 12.0f;
+        draw_settings_card(core, rx, c3_y, rw, 104.0f);
 
-        // 光场动画开关与高光边框
-        rife_draw_text_font(core, rx, ry + 222.0f, is_zh ? "五色流动流体背景动画" : "Motion Flow Aura", 0x475569FF, 0);
-        float sw_btn_x = rx + 270.0f;
-        bool sw_on = cfg->aura_animated;
-        rife_draw_round_rect(core, sw_btn_x, ry + 220.0f, 50.0f, 22.0f, 11.0f, sw_on ? 0x10B981FF : 0xE2E8F0FF, 0xCBD5E1FF);
-        rife_draw_round_rect(core, sw_on ? (sw_btn_x + 30.0f) : (sw_btn_x + 2.0f), ry + 222.0f, 18.0f, 18.0f, 9.0f, 0xFFFFFFFF, 0xFFFFFFFF);
+        // Row 0: 展开材质
+        float r3_0_y = c3_y;
+        draw_row_header(core, rx, r3_0_y, is_zh ? "展开流体云材质" : "Expanded Cloud Tint", is_zh ? "点击微球展开为胶囊药丸时的玻璃底色" : "Glass substrate tint when expanded to pill");
+        const char* cloud_items[4] = { "晶白", "幽蓝", "雾紫", "暗影" };
+        draw_segmented_pills(core, card_right, r3_0_y, 52.0f, 62.0f, cloud_items, 4, (int)cfg->cloud_color);
 
-        rife_draw_text_font(core, rx, ry + 254.0f, is_zh ? "1px 物理高光反射边缘" : "Specular Reflection Rim", 0x475569FF, 0);
-        bool rim_on = cfg->specular_rim;
-        rife_draw_round_rect(core, sw_btn_x, ry + 252.0f, 50.0f, 22.0f, 11.0f, rim_on ? 0x10B981FF : 0xE2E8F0FF, 0xCBD5E1FF);
-        rife_draw_round_rect(core, rim_on ? (sw_btn_x + 30.0f) : (sw_btn_x + 2.0f), ry + 254.0f, 18.0f, 18.0f, 9.0f, 0xFFFFFFFF, 0xFFFFFFFF);
+        rife_draw_rect(core, rx + 16.0f, c3_y + 52.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 1: 物理高光边框 (Toggle)
+        float r3_1_y = c3_y + 52.0f;
+        draw_row_header(core, rx, r3_1_y, is_zh ? "1px 物理高光反射边缘" : "Specular Reflection Rim", is_zh ? "玻璃外壳顶部的晶莹边缘微反光" : "1px crystal specular rim highlight on glass");
+        draw_toggle_switch(core, card_right, r3_1_y, 52.0f, cfg->specular_rim);
     }
     else if (state->current_tab == 2) {
-        rife_draw_text_font(core, rx, ry, is_zh ? "图标渲染引擎管道" : "Icon Rendering Pipeline", 0x0F172AFF, 1);
-        const char* is_zh_arr[2] = { "自研微拟物矢量", "Windows 原生 ICO" };
-        const char* is_en_arr[2] = { "Procedural Vector", "Native Shell (.ico)" };
-        for (int s = 0; s < 2; s++) {
-            float px = rx + (float)s * 150.0f;
-            bool cur = (cfg->icon_style == s);
-            rife_draw_round_rect(core, px, ry + 32.0f, 140.0f, 30.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 10.0f, ry + 40.0f, is_zh ? is_zh_arr[s] : is_en_arr[s], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        // Tab 2: 磁贴与渲染
+        // Card 1: 图标渲染引擎 (56px)
+        float c1_y = cy;
+        draw_settings_card(core, rx, c1_y, rw, 56.0f);
+        draw_row_header(core, rx, c1_y, is_zh ? "应用图标渲染引擎" : "Icon Rendering Pipeline", is_zh ? "自研几何微拟物矢量 (带高光) 或 Windows 原生 .ico" : "Procedural vector with sheen or native shell icons");
+        const char* icon_items[2] = { "微拟物矢量", "原生 ICO" };
+        draw_segmented_pills(core, card_right, c1_y, 56.0f, 88.0f, icon_items, 2, (int)cfg->icon_style);
 
-        rife_draw_text_font(core, rx, ry + 88.0f, is_zh ? "桌面磁贴自动吸附网格 (6xN)" : "Snap Shortcuts to Grid (6xN)", 0x475569FF, 0);
-        float sw_btn_x = rx + 270.0f;
-        bool gr_on = cfg->shortcut_grid_align;
-        rife_draw_round_rect(core, sw_btn_x, ry + 86.0f, 50.0f, 24.0f, 12.0f, gr_on ? 0x10B981FF : 0xE2E8F0FF, 0xCBD5E1FF);
-        rife_draw_round_rect(core, gr_on ? (sw_btn_x + 28.0f) : (sw_btn_x + 3.0f), ry + 89.0f, 18.0f, 18.0f, 9.0f, 0xFFFFFFFF, 0xFFFFFFFF);
+        // Card 2: 磁贴网格吸附 (56px)
+        float c2_y = c1_y + 56.0f + 12.0f;
+        draw_settings_card(core, rx, c2_y, rw, 56.0f);
+        draw_row_header(core, rx, c2_y, is_zh ? "桌面磁贴网格吸附" : "Grid Snap Alignment", is_zh ? "拖动桌面图标与磁贴时自动对齐 6xN 网格" : "Automatically snaps shortcuts to a 6xN grid");
+        draw_toggle_switch(core, card_right, c2_y, 56.0f, cfg->shortcut_grid_align);
     }
     else if (state->current_tab == 3) {
-        rife_draw_text_font(core, rx, ry, is_zh ? "硬件物理刷新率目标" : "Display Refresh Target", 0x0F172AFF, 1);
-        const char* fps_opts_zh[3] = { "60 Hz 节能", "120 Hz 流畅", "144 Hz 电竞" };
-        const char* fps_opts_en[3] = { "60 Hz Eco", "120 Hz Pro", "144 Hz Max" };
-        for (int f = 0; f < 3; f++) {
-            float px = rx + (float)f * 94.0f;
-            bool cur = (cfg->target_fps_idx == f);
-            rife_draw_round_rect(core, px, ry + 32.0f, 88.0f, 30.0f, 8.0f, cur ? 0xE0F2FEFF : 0xFFFFFFFF, cur ? 0x0284C7FF : 0xCBD5E1FF);
-            rife_draw_text_font(core, px + 10.0f, ry + 40.0f, is_zh ? fps_opts_zh[f] : fps_opts_en[f], cur ? 0x0284C7FF : 0x475569FF, 4);
-        }
+        // Tab 3: 内核与性能
+        // Card 1: 刷新率与休眠 (104px)
+        float c1_y = cy;
+        draw_settings_card(core, rx, c1_y, rw, 104.0f);
 
-        rife_draw_text_font(core, rx, ry + 88.0f, is_zh ? "后台失焦动态休眠降频" : "Background Dynamic Throttle", 0x475569FF, 0);
-        float sw_btn_x = rx + 270.0f;
-        bool th_on = cfg->background_throttle;
-        rife_draw_round_rect(core, sw_btn_x, ry + 86.0f, 50.0f, 24.0f, 12.0f, th_on ? 0x10B981FF : 0xE2E8F0FF, 0xCBD5E1FF);
-        rife_draw_round_rect(core, th_on ? (sw_btn_x + 28.0f) : (sw_btn_x + 3.0f), ry + 89.0f, 18.0f, 18.0f, 9.0f, 0xFFFFFFFF, 0xFFFFFFFF);
+        // Row 0: 物理刷新率
+        float r0_y = c1_y;
+        draw_row_header(core, rx, r0_y, is_zh ? "硬件物理刷新率目标" : "Display Refresh Target", is_zh ? "微内核调度器的主循环目标垂直同步帧率" : "Microkernel tick loop target VSync frame rate");
+        const char* fps_items[3] = { "60 Hz 节能", "120 Hz 流畅", "144 Hz 电竞" };
+        draw_segmented_pills(core, card_right, r0_y, 52.0f, 72.0f, fps_items, 3, cfg->target_fps_idx);
 
+        rife_draw_rect(core, rx + 16.0f, c1_y + 52.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 1: 后台降频 (Toggle)
+        float r1_y = c1_y + 52.0f;
+        draw_row_header(core, rx, r1_y, is_zh ? "后台失焦动态休眠" : "Smart Idle Gating", is_zh ? "窗口失焦且无动画时主动降频压制功耗" : "Dynamically drops frame rate when inactive to save battery");
+        draw_toggle_switch(core, card_right, r1_y, 52.0f, cfg->background_throttle);
+
+        // Card 2: 微内核遥测看板 (132px)
+        float c2_y = c1_y + 104.0f + 12.0f;
+        draw_settings_card(core, rx, c2_y, rw, 132.0f);
+
+        // Row 0: 双 Arena 内存
+        float r2_0_y = c2_y;
         char mem_buf[64];
         size_t used = core->persistent_arena.offset + core->frame_arena.offset;
-        snprintf(mem_buf, sizeof(mem_buf), is_zh ? "Arena 内存分配: %zu KB (常驻 ~5MB)" : "Arena Commit: %zu KB (~5MB Working Set)", used / 1024);
-        rife_draw_text_font(core, rx, ry + 130.0f, mem_buf, 0x64748BFF, 0);
-        rife_draw_text_font(core, rx, ry + 156.0f, is_zh ? "微内核: 通用虚拟表插件总线架构" : "Kernel: Virtual Table Bus Architecture", 0x64748BFF, 0);
-        rife_draw_text_font(core, rx, ry + 182.0f, is_zh ? "运行状态: 零泄漏 / 动态析构生效中" : "Status: Zero Churn / Dynamic Teardown Active", 0x10B981FF, 0);
+        snprintf(mem_buf, sizeof(mem_buf), is_zh ? "当前内存提交: %zu KB (常驻 ~5MB)" : "Working Set Commit: %zu KB (~5MB)", used / 1024);
+        draw_row_header(core, rx, r2_0_y, is_zh ? "双 Arena 内存提交量" : "Dual Arena Commit", mem_buf);
+        rife_draw_round_rect(core, card_right - 100.0f, r2_0_y + 10.0f, 100.0f, 24.0f, 12.0f, 0xDCFCE7FF, 0x86EFACFF);
+        rife_draw_text_font(core, card_right - 88.0f, r2_0_y + 14.0f, "极度健康 5MB", 0x16A34AFF, 4);
+
+        rife_draw_rect(core, rx + 16.0f, c2_y + 44.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 1: 插件总线
+        float r2_1_y = c2_y + 44.0f;
+        draw_row_header(core, rx, r2_1_y, is_zh ? "插件总线分发协议" : "Plugin Bus Protocol", is_zh ? "纯 C 虚表总线 / 零侵入解耦应用挂载" : "Pure C vtable bus / zero-touch manifest architecture");
+        rife_draw_round_rect(core, card_right - 100.0f, r2_1_y + 10.0f, 100.0f, 24.0f, 12.0f, 0xE0F2FEFF, 0xBAE6FDFF);
+        rife_draw_text_font(core, card_right - 92.0f, r2_1_y + 14.0f, "VTable Active", 0x0284C7FF, 4);
+
+        rife_draw_rect(core, rx + 16.0f, c2_y + 88.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 2: 零堆开销
+        float r2_2_y = c2_y + 88.0f;
+        draw_row_header(core, rx, r2_2_y, is_zh ? "堆内存抖动监控" : "Zero Heap Churn", is_zh ? "全帧循环零 malloc/free / 彻底杜绝内存碎片" : "Strictly 0 frame allocs / prevents fragmentation");
+        rife_draw_round_rect(core, card_right - 100.0f, r2_2_y + 10.0f, 100.0f, 24.0f, 12.0f, 0xECFDF5FF, 0x6EE7B7FF);
+        rife_draw_text_font(core, card_right - 92.0f, r2_2_y + 14.0f, "0 Churn / 0 Frag", 0x059669FF, 4);
     }
     else if (state->current_tab == 4) {
-        rife_draw_round_rect(core, rx, ry, 360.0f, 170.0f, 16.0f, 0xFFFFFFFF, 0xE2E8F0FF);
-        rife_draw_text_font(core, rx + 24.0f, ry + 22.0f, "RifeOS Workspace Host", 0x0F172AFF, 1);
-        rife_draw_text_font(core, rx + 24.0f, ry + 52.0f, "Made by Renly", 0x0284C7FF, 1);
+        // Tab 4: 关于系统 (macOS 风格关于卡片)
+        float c_y = cy;
+        draw_settings_card(core, rx, c_y, rw, 240.0f);
 
-        rife_draw_text_font(core, rx + 24.0f, ry + 86.0f, is_zh ? "版本: v1.0.0 Micro Edition (x86_64)" : "Version: v1.0.0 Micro Edition (x86_64)", 0x64748BFF, 0);
-        rife_draw_text_font(core, rx + 24.0f, ry + 110.0f, is_zh ? "架构: 纯 C 双 Arena 微内核 + 液态玻璃 SDF" : "Arch: Pure C Dual Arena Microkernel + Liquid SDF", 0x64748BFF, 0);
-        rife_draw_text_font(core, rx + 24.0f, ry + 134.0f, is_zh ? "特性: 极缓呼吸微球 + 一体化折叠底座" : "Feat: Calm Breathing LED + Morphing Dock Shelf", 0x10B981FF, 0);
+        // 品牌徽标与名称
+        rife_draw_round_rect(core, rx + 24.0f, c_y + 20.0f, 48.0f, 48.0f, 12.0f, 0x334155FF, 0x0F172AFF);
+        rife_draw_text_font(core, rx + 41.0f, c_y + 28.0f, "R", 0xFFFFFFFF, 1);
+
+        rife_draw_text_font(core, rx + 84.0f, c_y + 22.0f, "RifeOS Workspace Host", 0x0F172AFF, 1);
+        rife_draw_text_font(core, rx + 84.0f, c_y + 46.0f, "Crafted with Passion by Renly (陈俊易)", 0x0284C7FF, 0);
+
+        rife_draw_rect(core, rx + 20.0f, c_y + 82.0f, rw - 40.0f, 1.0f, 0xF1F5F9FF);
+
+        // 详细规格列表
+        rife_draw_text_font(core, rx + 24.0f, c_y + 98.0f, is_zh ? "版本信息: v1.0.0 Pro Micro Edition (x86_64, Release)" : "Version: v1.0.0 Pro Micro Edition (x86_64, Release)", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 124.0f, is_zh ? "内核架构: 纯 C 双 Arena 微内核 + 亚像素液态玻璃 SDF 渲染器" : "Kernel: Pure C Dual Arena Microkernel + Liquid Glass SDF Renderer", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 150.0f, is_zh ? "动力特性: 灵动流体云 + 双向流体吞吐 + 表面张力回弹 + 光子湮灭环" : "Physics: Fluid Cloud + Two-Way Morphing + Elastic Step + Annihilation Ripple", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 176.0f, is_zh ? "编译链项: Visual Studio 2026 / MSVC /MT 静态链接 (零外部 DLL 依赖)" : "Toolchain: Visual Studio 2026 / MSVC /MT Static CRT (Zero external DLLs)", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 204.0f, is_zh ? "运行状态: 零泄漏 / 严苛控制物理工作集在 ~5MB 警戒线内" : "Status: Zero Leak / Strictly bounded within ~5MB working set", 0x10B981FF, 4);
     }
 }
 
@@ -357,8 +599,8 @@ const RifePluginApp g_settings_plugin_app = {
     .glyph = "*",
     .color_top = 0x475569FF,
     .color_bot = 0x334155FF,
-    .default_w = 580.0f,
-    .default_h = 390.0f,
+    .default_w = 680.0f,
+    .default_h = 470.0f,
     .pin_to_dock = true,
     .create = settings_create,
     .destroy = settings_destroy,
