@@ -10,9 +10,13 @@ add_executable(RIFEOS
     src/app_settings.h
     src/app_settings.c
     src/main.c
- "src/rife_app_api.h" "src/app_manifest.h" "src/app_manifest.c")
+    src/rife_app_api.h
+    src/app_manifest.h
+    src/app_manifest.c
+    resources/rifeos.rc
+)
 
-target_include_directories(RIFEOS PRIVATE src)
+target_include_directories(RIFEOS PRIVATE src resources assets)
 
 if(WIN32)
     target_link_libraries(RIFEOS PRIVATE 
