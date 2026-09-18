@@ -860,8 +860,8 @@ void rife_render_flush(RifeCore* core) {
         rife_draw_text_u8(plat->hdc_mem, (int)(sc->x + 10.0f), (int)(sc->y + 54.0f), disp);
     }
 
-    // 8. 抽屉内容渲染 (自顶部流体云展开时滑入)
-    if (plat->drawer_anim > 0.35f) {
+    // 8. 抽屉内容渲染 (自顶部流体云展开时错落倾泻下落)
+    if (plat->drawer_anim > 0.05f) {
         float dw_w = ww * 0.60f;
         if (dw_w < 360.0f) dw_w = 360.0f;
         float dw_h = wh * 0.56f;
@@ -869,12 +869,18 @@ void rife_render_flush(RifeCore* core) {
         float cur_dw_x = (ww - dw_w) * 0.5f;
         float cur_dw_y = (wh - dw_h) * 0.44f;
 
-        float content_progress = rife_clampf((plat->drawer_anim - 0.35f) / 0.65f, 0.0f, 1.0f);
-        float slide_in_offset = (1.0f - content_progress) * 18.0f;
+        float orig_cx = orig_x + col_size * 0.5f;
+        float orig_cy = orig_y + col_size * 0.5f;
 
-        SelectObject(plat->hdc_mem, plat->hfont_title);
-        SetTextColor(plat->hdc_mem, RGB(15, 23, 42));
-        rife_draw_text_u8(plat->hdc_mem, (int)(cur_dw_x + 24.0f), (int)(cur_dw_y + 18.0f + slide_in_offset), is_zh ? "应用程序抽屉" : "Applications");
+        if (plat->drawer_anim > 0.18f) {
+            float title_t = rife_clampf((plat->drawer_anim - 0.18f) / 0.82f, 0.0f, 1.0f);
+            float title_ease = rife_smootherstep(title_t);
+            float title_x = rife_lerpf(orig_cx - 40.0f, cur_dw_x + 24.0f, title_ease);
+            float title_y = rife_lerpf(orig_cy, cur_dw_y + 18.0f, title_ease);
+            SelectObject(plat->hdc_mem, plat->hfont_title);
+            SetTextColor(plat->hdc_mem, RGB(15, 23, 42));
+            rife_draw_text_u8(plat->hdc_mem, (int)title_x, (int)title_y, is_zh ? "应用程序抽屉" : "Applications");
+        }
 
         int cols = 3;
         float card_w = 110.0f;
@@ -885,20 +891,43 @@ void rife_render_flush(RifeCore* core) {
             const RifePluginApp* app = g_installed_apps[i];
             int col = (int)(i % cols);
             int row = (int)(i / cols);
-            float ax = cur_dw_x + 24.0f + (float)col * (card_w + gap_x);
-            float ay = cur_dw_y + 54.0f + (float)row * (card_h + 16.0f) + slide_in_offset;
+            float target_ax = cur_dw_x + 24.0f + (float)col * (card_w + gap_x);
+            float target_ay = cur_dw_y + 54.0f + (float)row * (card_h + 16.0f);
 
-            bool app_hvr = (mx >= ax && mx <= ax + card_w && my >= ay && my <= ay + card_h);
+            // 错落多相位级联：每行和每列微延迟
+            float phase_delay = (float)row * 0.08f + (float)col * 0.04f;
+            float raw_card_t = (plat->drawer_anim - phase_delay) / (1.0f - phase_delay);
+            float card_t = rife_clampf(raw_card_t, 0.0f, 1.0f);
+            float card_ease = rife_smootherstep(card_t);
+
+            if (card_ease <= 0.02f) continue;
+
+            // 位置自微球中心向目标网格流展
+            float cur_card_w = rife_lerpf(14.0f, card_w, card_ease);
+            float cur_card_h = rife_lerpf(14.0f, card_h, card_ease);
+            float cur_ax = rife_lerpf(orig_cx - cur_card_w * 0.5f, target_ax, card_ease);
+            float cur_ay = rife_lerpf(orig_cy - cur_card_h * 0.5f, target_ay, card_ease);
+
+            bool app_hvr = (mx >= cur_ax && mx <= cur_ax + cur_card_w && my >= cur_ay && my <= cur_ay + cur_card_h);
             SetDCPenColor(plat->hdc_mem, RGB(226, 232, 240));
             SetDCBrushColor(plat->hdc_mem, app_hvr ? RGB(255, 255, 255) : RGB(248, 250, 252));
-            RoundRect(plat->hdc_mem, (int)ax, (int)ay, (int)(ax + card_w), (int)(ay + card_h), 14, 14);
+            RoundRect(plat->hdc_mem, (int)cur_ax, (int)cur_ay, (int)(cur_ax + cur_card_w), (int)(cur_ay + cur_card_h), (int)(14.0f * card_ease), (int)(14.0f * card_ease));
 
-            rife_draw_procedural_icon_direct(plat->hdc_mem, ax + 14.0f, ay + 10.0f, 32.0f,
-                app->color_top, app->color_bot, app->glyph, NULL, false);
+            // 图标与文字跟随卡片中心自然膨胀展现
+            float icon_scale = rife_clampf((card_t - 0.20f) / 0.80f, 0.0f, 1.0f);
+            if (icon_scale > 0.05f) {
+                float icon_sz = 32.0f * icon_scale;
+                float icon_x = cur_ax + (cur_card_w - icon_sz) * 0.5f;
+                float icon_y = cur_ay + 8.0f * icon_scale;
+                rife_draw_procedural_icon_direct(plat->hdc_mem, icon_x, icon_y, icon_sz,
+                    app->color_top, app->color_bot, app->glyph, NULL, false);
 
-            SelectObject(plat->hdc_mem, plat->hfont_sm);
-            SetTextColor(plat->hdc_mem, RGB(15, 23, 42));
-            rife_draw_text_u8(plat->hdc_mem, (int)(ax + 14.0f), (int)(ay + 48.0f), is_zh ? app->name_zh : app->name_en);
+                if (icon_scale > 0.45f) {
+                    SelectObject(plat->hdc_mem, plat->hfont_sm);
+                    SetTextColor(plat->hdc_mem, RGB(15, 23, 42));
+                    rife_draw_text_u8(plat->hdc_mem, (int)(cur_ax + 14.0f), (int)(cur_ay + 48.0f), is_zh ? app->name_zh : app->name_en);
+                }
+            }
         }
     }
 
@@ -948,32 +977,46 @@ void rife_render_flush(RifeCore* core) {
         }
     }
 
-    // 10. 活动应用窗口内容与三色控制灯
+    // 10. 活动应用窗口内容与三色控制灯 (自流体云膨胀与湮灭吞噬)
     for (size_t i = 0; i < g_installed_app_count; i++) {
         ActiveWindow* win = &plat->windows[i];
-        if (!win->inst || win->anim < 0.25f) continue;
+        if (!win->inst || win->anim < 0.02f) continue;
 
         float target_x = win->is_maximized ? 0.0f : win->x;
         float target_y = win->is_maximized ? 0.0f : win->y;
         float target_w = win->is_maximized ? ww : win->w;
         float target_h = win->is_maximized ? wh : win->h;
 
-        float t = win->anim;
-        float ease = t * t * (3.0f - 2.0f * t);
+        float ease = rife_smootherstep(win->anim);
 
         float cur_x = rife_lerpf(orig_x, target_x, ease);
         float cur_y = rife_lerpf(orig_y, target_y, ease);
         float cur_w = rife_lerpf(col_size, target_w, ease);
         float cur_h = rife_lerpf(col_size, target_h, ease);
 
-        rife_draw_round_rect(core, cur_x + 16.0f, cur_y + 14.0f, 12.0f, 12.0f, 6.0f, 0xFF5F56FF, 0xE0443EFF);
-        rife_draw_round_rect(core, cur_x + 34.0f, cur_y + 14.0f, 12.0f, 12.0f, 6.0f, 0xFFBD2EFF, 0xDEA123FF);
-        rife_draw_round_rect(core, cur_x + 52.0f, cur_y + 14.0f, 12.0f, 12.0f, 6.0f, 0x27C93FFF, 0x1AAB29FF);
+        // 控制灯自微球中心向两翼平滑展开
+        float light_scale = rife_clampf(ease * 1.6f, 0.0f, 1.0f);
+        if (light_scale > 0.05f) {
+            float l_sz = 12.0f * light_scale;
+            float l_r = l_sz * 0.5f;
+            float l_y = cur_y + 14.0f * light_scale;
+            rife_draw_round_rect(core, cur_x + 16.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFF5F56FF, 0xE0443EFF);
+            rife_draw_round_rect(core, cur_x + 34.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFFBD2EFF, 0xDEA123FF);
+            rife_draw_round_rect(core, cur_x + 52.0f * light_scale, l_y, l_sz, l_sz, l_r, 0x27C93FFF, 0x1AAB29FF);
+        }
 
-        rife_draw_text_font(core, cur_x + 80.0f, cur_y + 10.0f, is_zh ? win->plugin->name_zh : win->plugin->name_en, 0x0F172AFF, 1);
+        // 窗口标题：自流体云向右舒展
+        if (win->anim > 0.25f && cur_w > 160.0f) {
+            float title_alpha = rife_clampf((win->anim - 0.25f) / 0.75f, 0.0f, 1.0f);
+            float title_off = (1.0f - title_alpha) * 12.0f;
+            rife_draw_text_font(core, cur_x + 78.0f + title_off, cur_y + 10.0f, is_zh ? win->plugin->name_zh : win->plugin->name_en, 0x0F172AFF, 1);
+        }
 
-        if (win->plugin->render) {
+        // 插件界面内容：带动态流体裁剪框，自微球中心向四周铺展
+        if (win->plugin->render && cur_h > 46.0f && cur_w > 120.0f) {
+            rife_push_scissor(core, cur_x + 2.0f, cur_y + 36.0f, cur_w - 4.0f, cur_h - 38.0f);
             win->plugin->render(win->inst, core, cur_x, cur_y + 36.0f, cur_w, cur_h - 36.0f);
+            rife_pop_scissor(core);
         }
     }
 
@@ -1010,6 +1053,15 @@ void rife_render_flush(RifeCore* core) {
             SetDCBrushColor(plat->hdc_mem, RGB(r, g, b));
             RECT rc = { (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h) };
             FillRect(plat->hdc_mem, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
+        }
+        else if (curr->type == CMD_SCISSOR_PUSH) {
+            SaveDC(plat->hdc_mem);
+            HRGN rgn = CreateRectRgn((int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h));
+            SelectClipRgn(plat->hdc_mem, rgn);
+            DeleteObject(rgn);
+        }
+        else if (curr->type == CMD_SCISSOR_POP) {
+            RestoreDC(plat->hdc_mem, -1);
         }
         curr = curr->next;
     }
