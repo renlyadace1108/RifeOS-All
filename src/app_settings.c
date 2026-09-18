@@ -356,21 +356,21 @@ static void settings_render(void* inst, RifeCore* core, float client_x, float cl
     float ry = client_y + 14.0f;
 
     // 分类 Header (Title + Subtitle)
-    const char* cat_titles_zh[5] = { "通用与桌面宿主", "光场光学与流体物理", "图标磁贴与渲染管道", "微内核调度与性能遥测", "关于 RifeOS 桌面工作空间" };
-    const char* cat_titles_en[5] = { "General & Desktop Host", "Optics, Lightfield & Flow", "Icons & Rendering Engine", "Microkernel & Telemetry", "About RifeOS Workspace" };
+    const char* cat_titles_zh[5] = { "通用与桌面宿主", "光场光学与流体物理", "图标磁贴与渲染管道", "微内核调度与性能遥测", "关于 RifeOS" };
+    const char* cat_titles_en[5] = { "General & Desktop Host", "Optics, Lightfield & Flow", "Icons & Rendering Engine", "Microkernel & Telemetry", "About RifeOS" };
     const char* cat_descs_zh[5] = {
         "管理系统界面语言、字体缩放比例以及底层桌面渲染宿主层级模式",
         "配置连续双线性流体色彩、五色复合简谐波场及顶部灵动微球参数",
         "切换桌面图标渲染引擎管道与磁贴自动网格吸附交互",
         "监控双 Arena 内存提交量，调节主循环硬件物理刷新率",
-        "查看系统发行版本、微内核架构规范与开发者信息"
+        "系统发行版本规格与开发者联络信息"
     };
     const char* cat_descs_en[5] = {
         "Configure language, font scale and desktop hosting substrate modes",
         "Customize fluid colorways, multi-harmonic field and bionic breathing LED",
         "Configure procedural vector pipelines and desktop shortcut snapping",
         "Real-time dual-arena heap telemetry and hardware refresh target pacing",
-        "System release specs, pure C microkernel architecture and authorship"
+        "Release specifications and developer contact information"
     };
 
     rife_draw_text_font(core, rx, ry, is_zh ? cat_titles_zh[state->current_tab] : cat_titles_en[state->current_tab], 0x0F172AFF, 1);
@@ -569,27 +569,53 @@ static void settings_render(void* inst, RifeCore* core, float client_x, float cl
         rife_draw_text_font(core, card_right - 92.0f, r2_2_y + 14.0f, "0 Churn / 0 Frag", 0x059669FF, 4);
     }
     else if (state->current_tab == 4) {
-        // Tab 4: 关于系统 (macOS 风格关于卡片)
-        float c_y = cy;
-        draw_settings_card(core, rx, c_y, rw, 258.0f);
+        // Tab 4: 关于系统 (商业发行版风格)
+        float c1_y = cy;
+        draw_settings_card(core, rx, c1_y, rw, 100.0f);
 
-        // 品牌徽标与名称
-        rife_draw_round_rect(core, rx + 24.0f, c_y + 18.0f, 48.0f, 48.0f, 12.0f, 0x334155FF, 0x0F172AFF);
-        rife_draw_text_font(core, rx + 41.0f, c_y + 26.0f, "R", 0xFFFFFFFF, 1);
+        // 1. 软件标识与版本 Hero 卡片
+        // 拟物图标：深色暗晶圆角徽标 + 白色 R 雕刻
+        rife_draw_round_rect(core, rx + 24.0f, c1_y + 22.0f, 56.0f, 56.0f, 14.0f, 0x1E293BFF, 0x0F172AFF);
+        rife_draw_text_font(core, rx + 44.0f, c1_y + 32.0f, "R", 0xFFFFFFFF, 1);
 
-        rife_draw_text_font(core, rx + 84.0f, c_y + 18.0f, "RifeOS Workspace Host", 0x0F172AFF, 1);
-        rife_draw_text_font(core, rx + 84.0f, c_y + 38.0f, "Crafted with Passion by Renly", 0x0284C7FF, 0);
-        rife_draw_text_font(core, rx + 84.0f, c_y + 56.0f, is_zh ? "邮箱: renly20061108@gmail.com  |  抖音: 陈连山" : "Email: renly20061108@gmail.com | Douyin: 陈连山", 0x64748BFF, 4);
+        // 软件名称与发行版标签
+        rife_draw_text_font(core, rx + 96.0f, c1_y + 24.0f, "RifeOS", 0x0F172AFF, 1);
+        rife_draw_text_font(core, rx + 96.0f, c1_y + 48.0f, is_zh ? "桌面工作空间专业版" : "Desktop Workspace Edition", 0x64748BFF, 4);
 
-        rife_draw_rect(core, rx + 20.0f, c_y + 80.0f, rw - 40.0f, 1.0f, 0xF1F5F9FF);
+        // 版本胶囊药丸 (Version Pill)
+        float ver_w = 96.0f;
+        float ver_h = 26.0f;
+        float ver_x = card_right - ver_w;
+        float ver_y = c1_y + 24.0f;
+        rife_draw_round_rect(core, ver_x, ver_y, ver_w, ver_h, 6.0f, 0xF1F5F9FF, 0xE2E8F0FF);
+        rife_draw_text_font(core, ver_x + 14.0f, ver_y + 5.0f, "v1.0.0 Pro", 0x475569FF, 4);
 
-        // 详细规格列表
-        rife_draw_text_font(core, rx + 24.0f, c_y + 96.0f, is_zh ? "版本信息: v1.0.0 Pro Micro Edition (x86_64, Release)" : "Version: v1.0.0 Pro Micro Edition (x86_64, Release)", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 122.0f, is_zh ? "内核架构: 纯 C 双 Arena 微内核 + 亚像素液态玻璃 SDF 渲染器" : "Kernel: Pure C Dual Arena Microkernel + Liquid Glass SDF Renderer", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 148.0f, is_zh ? "动力特性: 灵动流体云 + 双向流体吞吐 + 表面张力回弹 + 光子湮灭环" : "Physics: Fluid Cloud + Two-Way Morphing + Elastic Step + Annihilation Ripple", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 174.0f, is_zh ? "编译链项: Visual Studio 2026 / MSVC /MT 静态链接 (零外部 DLL 依赖)" : "Toolchain: Visual Studio 2026 / MSVC /MT Static CRT (Zero external DLLs)", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 200.0f, is_zh ? "开发者联络: renly20061108@gmail.com  (抖音: 陈连山)" : "Contact: renly20061108@gmail.com (Douyin: 陈连山)", 0x0284C7FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 226.0f, is_zh ? "运行状态: 零泄漏 / 严苛控制物理工作集在 ~5MB 警戒线内" : "Status: Zero Leak / Strictly bounded within ~5MB working set", 0x10B981FF, 4);
+        // 2. 开发者与联系方式卡片 (150px)
+        float c2_y = c1_y + 100.0f + 14.0f;
+        draw_settings_card(core, rx, c2_y, rw, 150.0f);
+
+        // Row 0: 开发者
+        float r0_y = c2_y;
+        draw_row_header(core, rx, r0_y, is_zh ? "系统开发者" : "Developer", is_zh ? "系统架构设计与工程实现" : "System Architecture & Engineering");
+        rife_draw_round_rect(core, card_right - 70.0f, r0_y + 13.0f, 70.0f, 24.0f, 6.0f, 0xEFF6FFFF, 0xBAE6FDFF);
+        rife_draw_text_font(core, card_right - 54.0f, r0_y + 17.0f, "Renly", 0x0284C7FF, 1);
+
+        rife_draw_rect(core, rx + 16.0f, c2_y + 50.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 1: 联络邮箱
+        float r1_y = c2_y + 50.0f;
+        draw_row_header(core, rx, r1_y, is_zh ? "联络邮箱" : "Email Address", is_zh ? "技术交流与问题反馈" : "Feedback & Inquiries");
+        rife_draw_text_font(core, card_right - 188.0f, r1_y + 16.0f, "renly20061108@gmail.com", 0x475569FF, 4);
+
+        rife_draw_rect(core, rx + 16.0f, c2_y + 100.0f, rw - 32.0f, 1.0f, 0xF1F5F9FF);
+
+        // Row 2: 抖音
+        float r2_y = c2_y + 100.0f;
+        draw_row_header(core, rx, r2_y, is_zh ? "官方抖音" : "Douyin Handle", is_zh ? "日常开发日志与作品更新" : "Development logs & updates");
+        rife_draw_text_font(core, card_right - 60.0f, r2_y + 16.0f, "陈连山", 0x0F172AFF, 1);
+
+        // 3. 底部商业版权微注 (Copyright Footer)
+        rife_draw_text_font(core, rx + 4.0f, c2_y + 166.0f, "Copyright (C) 2026 Renly. All rights reserved.", 0x94A3B8FF, 4);
     }
 }
 
