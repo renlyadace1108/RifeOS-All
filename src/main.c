@@ -105,6 +105,18 @@ static inline float rife_lerpf(float a, float b, float t) {
     return a + (b - a) * t;
 }
 
+static inline float rife_fluid_decay(float current, float target, float lambda, float dt) {
+    if (dt <= 0.0f) return current;
+    float t = 1.0f - expf(-lambda * dt);
+    return current + (target - current) * t;
+}
+
+static inline float rife_smootherstep(float t) {
+    if (t <= 0.0f) return 0.0f;
+    if (t >= 1.0f) return 1.0f;
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
 static void rife_draw_text_u8(HDC hdc, int x, int y, const char* utf8_str) {
     if (!utf8_str || !utf8_str[0]) return;
     wchar_t wbuf[256];
@@ -274,16 +286,16 @@ void rife_render_gemini_light_field(RifeCore* core, Win32Platform* plat, const R
     float my = core->input.mouse_y;
     float t = plat->aura_time;
 
-    float n1_x = ww * 0.18f + sinf(t * 0.70f) * (ww * 0.16f);
-    float n1_y = wh * 0.22f + cosf(t * 0.90f) * (wh * 0.14f);
-    float n2_x = ww * 0.52f + cosf(t * 0.85f) * (ww * 0.20f);
-    float n2_y = wh * 0.18f + sinf(t * 1.10f) * (wh * 0.12f);
-    float n3_x = ww * 0.82f + sinf(t * 0.60f) * (ww * 0.15f);
-    float n3_y = wh * 0.28f + cosf(t * 0.75f) * (wh * 0.16f);
-    float n4_x = ww * 0.35f + cosf(t * 0.95f) * (ww * 0.22f);
-    float n4_y = wh * 0.56f + sinf(t * 0.80f) * (wh * 0.18f);
-    float n5_x = ww * 0.72f + sinf(t * 1.05f) * (ww * 0.18f);
-    float n5_y = wh * 0.62f + cosf(t * 0.65f) * (wh * 0.16f);
+    float n1_x = ww * 0.18f + sinf(t * 0.70f) * (ww * 0.14f) + cosf(t * 1.35f) * (ww * 0.035f);
+    float n1_y = wh * 0.22f + cosf(t * 0.85f) * (wh * 0.12f) + sinf(t * 1.60f) * (wh * 0.025f);
+    float n2_x = ww * 0.52f + cosf(t * 0.80f) * (ww * 0.17f) + sinf(t * 1.45f) * (ww * 0.035f);
+    float n2_y = wh * 0.18f + sinf(t * 1.05f) * (wh * 0.10f) + cosf(t * 1.75f) * (wh * 0.025f);
+    float n3_x = ww * 0.82f + sinf(t * 0.58f) * (ww * 0.13f) + cosf(t * 1.20f) * (ww * 0.035f);
+    float n3_y = wh * 0.28f + cosf(t * 0.72f) * (wh * 0.14f) + sinf(t * 1.50f) * (wh * 0.025f);
+    float n4_x = ww * 0.35f + cosf(t * 0.90f) * (ww * 0.18f) + sinf(t * 1.65f) * (ww * 0.035f);
+    float n4_y = wh * 0.56f + sinf(t * 0.75f) * (wh * 0.15f) + cosf(t * 1.30f) * (wh * 0.025f);
+    float n5_x = ww * 0.72f + sinf(t * 1.00f) * (ww * 0.15f) + cosf(t * 1.85f) * (ww * 0.035f);
+    float n5_y = wh * 0.62f + cosf(t * 0.62f) * (wh * 0.14f) + sinf(t * 1.40f) * (wh * 0.025f);
 
     const float r1_sq = 300.0f * 300.0f, inv_r1 = 1.0f / 300.0f;
     const float r2_sq = 310.0f * 310.0f, inv_r2 = 1.0f / 310.0f;
@@ -452,7 +464,7 @@ void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, fl
         uint32_t* line = &plat->pixels[y * width];
         float qy = fabsf(py - center_y) - inner_h;
         float vert = (py - gy) / gh;
-        float specular = (specular_rim && py - gy < 3.0f) ? (1.0f - (py - gy) * 0.3f) * 35.0f : 0.0f;
+        float specular = (specular_rim && py - gy < 3.2f) ? (1.0f - (py - gy) * 0.28f) * 42.0f : 0.0f;
         float blend_alpha = alpha * (0.85f - vert * 0.15f);
 
         for (int x = x0; x < x1; x++) {
@@ -495,11 +507,11 @@ void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, fl
             if (specular_rim) {
                 float stroke_factor = rife_clampf(1.0f - fabsf(dist + 0.6f), 0.0f, 1.0f);
                 if (stroke_factor > 0.0f) {
-                    float rim = (vert < 0.3f) ? 1.0f : 0.65f;
+                    float rim = (vert < 0.22f) ? 1.25f : ((vert < 0.55f) ? 0.70f : 0.35f);
                     float s = stroke_factor * rim;
-                    r = rife_lerpf(r, 255.0f, s);
+                    r = rife_lerpf(r, 255.0f, s * 1.05f);
                     g = rife_lerpf(g, 255.0f, s);
-                    b = rife_lerpf(b, 255.0f, s);
+                    b = rife_lerpf(b, 255.0f, s * 0.95f);
                 }
             }
 
@@ -599,7 +611,8 @@ static void rife_draw_resize_arrow_hint(HDC hdc, float mx, float my, int dir) {
     SetDCBrushColor(hdc, RGB(15, 23, 42));
     RoundRect(hdc, (int)bx, (int)by, (int)(bx + bw), (int)(by + bh), 8, 8);
 
-    HPEN pen = CreatePen(PS_SOLID, 2, RGB(56, 189, 248));
+    HPEN pen = (HPEN)GetStockObject(DC_PEN);
+    SetDCPenColor(hdc, RGB(56, 189, 248));
     HPEN old_pen = (HPEN)SelectObject(hdc, pen);
 
     float cx = bx + 12.0f;
@@ -627,7 +640,6 @@ static void rife_draw_resize_arrow_hint(HDC hdc, float mx, float my, int dir) {
     }
 
     SelectObject(hdc, old_pen);
-    DeleteObject(pen);
 }
 
 void rife_render_flush(RifeCore* core) {
@@ -711,30 +723,33 @@ void rife_render_flush(RifeCore* core) {
                 target_r = 34.0f; target_g = 245.0f; target_b = 142.0f; break;
             }
 
-            float halo_r = 11.0f;
+            float halo_r = 12.0f;
             int h_x0 = (int)(cx - halo_r); if (h_x0 < 0) h_x0 = 0;
             int h_x1 = (int)(cx + halo_r + 1.0f); if (h_x1 > plat->win_width) h_x1 = plat->win_width;
             int h_y0 = (int)(cy - halo_r); if (h_y0 < 0) h_y0 = 0;
             int h_y1 = (int)(cy + halo_r + 1.0f); if (h_y1 > plat->win_height) h_y1 = plat->win_height;
 
-            float glow_intensity = 0.15f + 0.65f * breath;
+            float glow_intensity = 0.18f + 0.72f * breath;
+            float inv_halo_sq = 1.0f / (halo_r * halo_r);
             for (int gy = h_y0; gy < h_y1; gy++) {
                 uint32_t* line = &plat->pixels[gy * plat->win_width];
                 float py = (float)gy + 0.5f;
+                float dy = py - cy;
+                float dy_sq = dy * dy;
                 for (int gx = h_x0; gx < h_x1; gx++) {
                     float px = (float)gx + 0.5f;
-                    float d = sqrtf((px - cx) * (px - cx) + (py - cy) * (py - cy));
-                    if (d < halo_r) {
-                        float factor = (1.0f - d / halo_r);
-                        factor = factor * factor * glow_intensity;
+                    float dx = px - cx;
+                    float d_sq = dx * dx + dy_sq;
+                    if (d_sq < halo_r * halo_r) {
+                        float factor = expf(-3.2f * d_sq * inv_halo_sq) * glow_intensity;
                         uint32_t pix = line[gx];
                         float b = (float)(pix & 0xFF);
                         float g = (float)((pix >> 8) & 0xFF);
                         float r = (float)((pix >> 16) & 0xFF);
 
-                        r += (target_r - r) * factor * 0.35f;
-                        g += (target_g - g) * factor * 0.85f;
-                        b += (target_b - b) * factor * 0.40f;
+                        r += (target_r - r) * factor * 0.40f;
+                        g += (target_g - g) * factor * 0.88f;
+                        b += (target_b - b) * factor * 0.45f;
 
                         line[gx] = ((uint32_t)rife_clampf(r, 0, 255) << 16) |
                             ((uint32_t)rife_clampf(g, 0, 255) << 8) |
@@ -745,6 +760,10 @@ void rife_render_flush(RifeCore* core) {
 
             float core_r = 3.4f + 6.2f * breath;
             rife_draw_subpixel_circle(plat, cx, cy, core_r, fill_col, border_col);
+            if (breath > 0.28f) {
+                float white_r = (breath - 0.28f) * 2.5f;
+                rife_draw_subpixel_circle(plat, cx, cy - 0.4f, white_r, 0xFFFFFF, 0xFFFFFF);
+            }
         }
 
         if (plat->cloud_anim > 0.35f) {
@@ -764,8 +783,7 @@ void rife_render_flush(RifeCore* core) {
         float target_dw_x = (ww - dw_w) * 0.5f;
         float target_dw_y = (wh - dw_h) * 0.44f;
 
-        float t = plat->drawer_anim;
-        float ease = t * t * (3.0f - 2.0f * t);
+        float ease = rife_smootherstep(plat->drawer_anim);
 
         float cur_dw_x = rife_lerpf(orig_x, target_dw_x, ease);
         float cur_dw_y = rife_lerpf(orig_y, target_dw_y, ease);
@@ -787,8 +805,7 @@ void rife_render_flush(RifeCore* core) {
         float target_h = win->is_maximized ? wh : win->h;
         float target_r = win->is_maximized ? 0.0f : 22.0f;
 
-        float t = win->anim;
-        float ease = t * t * (3.0f - 2.0f * t);
+        float ease = rife_smootherstep(win->anim);
 
         float cur_x = rife_lerpf(orig_x, target_x, ease);
         float cur_y = rife_lerpf(orig_y, target_y, ease);
@@ -1353,12 +1370,12 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
 
     // 1. 流体云展开动力学
     float target_cloud = plat->cloud_expanded ? 1.0f : 0.0f;
-    plat->cloud_anim += (target_cloud - plat->cloud_anim) * 0.28f;
-    if (fabsf(plat->cloud_anim - target_cloud) < 0.002f) plat->cloud_anim = target_cloud;
+    plat->cloud_anim = rife_fluid_decay(plat->cloud_anim, target_cloud, 14.0f, dt_sec);
+    if (fabsf(plat->cloud_anim - target_cloud) < 0.001f) plat->cloud_anim = target_cloud;
 
     // 2. 抽屉自顶部流体云展开动画
     float target_drawer = plat->drawer_open ? 1.0f : 0.0f;
-    plat->drawer_anim += (target_drawer - plat->drawer_anim) * 0.25f;
+    plat->drawer_anim = rife_fluid_decay(plat->drawer_anim, target_drawer, 12.0f, dt_sec);
     if (fabsf(plat->drawer_anim - target_drawer) < 0.001f) plat->drawer_anim = target_drawer;
 
     // 3. 悬停手柄检测
@@ -1455,7 +1472,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
         if (!win->inst) continue;
 
         float target = win->is_open ? 1.0f : 0.0f;
-        win->anim += (target - win->anim) * 0.25f;
+        win->anim = rife_fluid_decay(win->anim, target, 14.0f, dt_sec);
 
         if (!win->is_open && win->anim < 0.01f) {
             win->plugin->destroy(win->inst);
@@ -1546,8 +1563,8 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
 
     bool in_dock_zone = (my >= wh - 62.0f && mx >= dock_x && mx <= dock_x + dock_w);
     float target_dock = (in_dock_zone || cfg->dock_always_visible) ? 1.0f : 0.0f;
-    plat->dock_anim += (target_dock - plat->dock_anim) * 0.22f;
-    if (fabsf(plat->dock_anim - target_dock) < 0.002f) plat->dock_anim = target_dock;
+    plat->dock_anim = rife_fluid_decay(plat->dock_anim, target_dock, 15.0f, dt_sec);
+    if (fabsf(plat->dock_anim - target_dock) < 0.001f) plat->dock_anim = target_dock;
 
     bool is_animating = (fabsf(plat->dock_anim - target_dock) > 0.001f) ||
         (fabsf(plat->drawer_anim - target_drawer) > 0.001f) ||
