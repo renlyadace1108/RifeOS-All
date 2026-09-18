@@ -1971,3 +1971,13 @@ int main(void) {
     timeEndPeriod(1);
     return 0;
 }
+
+#if defined(_WIN32)
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    (void)hInstance;
+    (void)hPrevInstance;
+    (void)lpCmdLine;
+    (void)nShowCmd;
+    return main();
+}
+#endif

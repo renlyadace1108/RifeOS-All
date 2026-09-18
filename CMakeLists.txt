@@ -4,7 +4,7 @@ project(RIFEOS LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_executable(RIFEOS
+add_executable(RIFEOS WIN32
     src/rife_core.h
     src/rife_core.c
     src/app_settings.h
