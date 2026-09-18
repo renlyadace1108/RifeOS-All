@@ -1,7 +1,7 @@
 # RifeOS
 
 > **极致轻量、亚像素美学与双 Arena 微内核极简桌面操作系统**  
-> *Crafted with passion by Renly (陈俊易)*
+> *Crafted with passion by Renly*
 
 ---
 
@@ -49,6 +49,9 @@ cmake --build --preset x64-release
 
 ---
 
-## 📜 许可证 (License)
+## 📬 开发者联络与许可 (Contact & License)
+
+- **邮箱 (Email)**: `renly20061108@gmail.com`
+- **抖音 (Douyin)**: `陈连山`
 
 Made with ❤️ by Renly. All Rights Reserved.

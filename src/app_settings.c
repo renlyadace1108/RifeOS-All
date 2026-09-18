@@ -571,23 +571,25 @@ static void settings_render(void* inst, RifeCore* core, float client_x, float cl
     else if (state->current_tab == 4) {
         // Tab 4: 关于系统 (macOS 风格关于卡片)
         float c_y = cy;
-        draw_settings_card(core, rx, c_y, rw, 240.0f);
+        draw_settings_card(core, rx, c_y, rw, 258.0f);
 
         // 品牌徽标与名称
-        rife_draw_round_rect(core, rx + 24.0f, c_y + 20.0f, 48.0f, 48.0f, 12.0f, 0x334155FF, 0x0F172AFF);
-        rife_draw_text_font(core, rx + 41.0f, c_y + 28.0f, "R", 0xFFFFFFFF, 1);
+        rife_draw_round_rect(core, rx + 24.0f, c_y + 18.0f, 48.0f, 48.0f, 12.0f, 0x334155FF, 0x0F172AFF);
+        rife_draw_text_font(core, rx + 41.0f, c_y + 26.0f, "R", 0xFFFFFFFF, 1);
 
-        rife_draw_text_font(core, rx + 84.0f, c_y + 22.0f, "RifeOS Workspace Host", 0x0F172AFF, 1);
-        rife_draw_text_font(core, rx + 84.0f, c_y + 46.0f, "Crafted with Passion by Renly (陈俊易)", 0x0284C7FF, 0);
+        rife_draw_text_font(core, rx + 84.0f, c_y + 18.0f, "RifeOS Workspace Host", 0x0F172AFF, 1);
+        rife_draw_text_font(core, rx + 84.0f, c_y + 38.0f, "Crafted with Passion by Renly", 0x0284C7FF, 0);
+        rife_draw_text_font(core, rx + 84.0f, c_y + 56.0f, is_zh ? "邮箱: renly20061108@gmail.com  |  抖音: 陈连山" : "Email: renly20061108@gmail.com | Douyin: 陈连山", 0x64748BFF, 4);
 
-        rife_draw_rect(core, rx + 20.0f, c_y + 82.0f, rw - 40.0f, 1.0f, 0xF1F5F9FF);
+        rife_draw_rect(core, rx + 20.0f, c_y + 80.0f, rw - 40.0f, 1.0f, 0xF1F5F9FF);
 
         // 详细规格列表
-        rife_draw_text_font(core, rx + 24.0f, c_y + 98.0f, is_zh ? "版本信息: v1.0.0 Pro Micro Edition (x86_64, Release)" : "Version: v1.0.0 Pro Micro Edition (x86_64, Release)", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 124.0f, is_zh ? "内核架构: 纯 C 双 Arena 微内核 + 亚像素液态玻璃 SDF 渲染器" : "Kernel: Pure C Dual Arena Microkernel + Liquid Glass SDF Renderer", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 150.0f, is_zh ? "动力特性: 灵动流体云 + 双向流体吞吐 + 表面张力回弹 + 光子湮灭环" : "Physics: Fluid Cloud + Two-Way Morphing + Elastic Step + Annihilation Ripple", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 176.0f, is_zh ? "编译链项: Visual Studio 2026 / MSVC /MT 静态链接 (零外部 DLL 依赖)" : "Toolchain: Visual Studio 2026 / MSVC /MT Static CRT (Zero external DLLs)", 0x475569FF, 4);
-        rife_draw_text_font(core, rx + 24.0f, c_y + 204.0f, is_zh ? "运行状态: 零泄漏 / 严苛控制物理工作集在 ~5MB 警戒线内" : "Status: Zero Leak / Strictly bounded within ~5MB working set", 0x10B981FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 96.0f, is_zh ? "版本信息: v1.0.0 Pro Micro Edition (x86_64, Release)" : "Version: v1.0.0 Pro Micro Edition (x86_64, Release)", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 122.0f, is_zh ? "内核架构: 纯 C 双 Arena 微内核 + 亚像素液态玻璃 SDF 渲染器" : "Kernel: Pure C Dual Arena Microkernel + Liquid Glass SDF Renderer", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 148.0f, is_zh ? "动力特性: 灵动流体云 + 双向流体吞吐 + 表面张力回弹 + 光子湮灭环" : "Physics: Fluid Cloud + Two-Way Morphing + Elastic Step + Annihilation Ripple", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 174.0f, is_zh ? "编译链项: Visual Studio 2026 / MSVC /MT 静态链接 (零外部 DLL 依赖)" : "Toolchain: Visual Studio 2026 / MSVC /MT Static CRT (Zero external DLLs)", 0x475569FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 200.0f, is_zh ? "开发者联络: renly20061108@gmail.com  (抖音: 陈连山)" : "Contact: renly20061108@gmail.com (Douyin: 陈连山)", 0x0284C7FF, 4);
+        rife_draw_text_font(core, rx + 24.0f, c_y + 226.0f, is_zh ? "运行状态: 零泄漏 / 严苛控制物理工作集在 ~5MB 警戒线内" : "Status: Zero Leak / Strictly bounded within ~5MB working set", 0x10B981FF, 4);
     }
 }
 
