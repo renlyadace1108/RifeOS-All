@@ -1,8 +1,10 @@
 #include "app_manifest.h"
 
 extern const RifePluginApp g_settings_plugin_app;
+extern const RifePluginApp g_calendar_plugin_app;
 
 const RifePluginApp* g_installed_apps[] = {
+    &g_calendar_plugin_app,
     &g_settings_plugin_app,
 };
 

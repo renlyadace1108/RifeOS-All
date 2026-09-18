@@ -166,7 +166,8 @@ d:\MyProjects\VS\RIFEOS
   - [x] Obsidian 黑曜石深色液态玻璃全面适配（抽屉底座、Dock栏、九宫格按钮、桌面快捷方式高对比度文字）；
   - [x] 设置窗口黑曜石深色暗晶化（消除原刺眼白底色块，采用 `0x201832` 暗晶底板 + `0x382B54` 紫晶边框）；
   - [x] Windows 纯 GUI 无黑窗口原生安装向导套件（Inno Setup 6 + `build_installer.bat` 一键打包）；
-  - [x] 跨账号无缝交接与自动状态同步机制（`GEMINI.md` + `AI_CONTINUITY.md`）。
+  - [x] 跨账号无缝交接与自动状态同步机制（`GEMINI.md` + `AI_CONTINUITY.md`）；
+  - [x] 原生飞书风格日程系统（`src/app_calendar.c`，包含周/日/月/日程多维视图、实时系统时钟红线、迷你月历与多色分类过滤）。
 
 ---
 
@@ -181,3 +182,4 @@ d:\MyProjects\VS\RIFEOS
 | **Milestone 5** | **Windows 原生商业级安装包与图标**：使用 .NET 绘制 256x256 高清多分辨率 `rifeos.ico`；编写 `resources/rifeos.rc`；引入 Inno Setup 6 编写 `RifeOS_Setup.iss` 与 `build_installer.bat`。 | `resources/`, `assets/`, `installer/`, `scripts/` |
 | **Milestone 6** | **根除控制台 CMD 黑窗口**：CMake 增加 `WIN32` 属性，主程序添加标准 `WinMain` GUI 入口桥接，启动完全纯净无黑窗。 | `CMakeLists.txt`, `src/main.c` |
 | **Milestone 7** | **AI 跨账号连续协同体系与实时状态同步**：建立 `GEMINI.md`（自动加载）、`AGENTS.md` 与 `AI_CONTINUITY.md`，确立实时同步状态机制，实现随时断随时接。 | `AI_CONTINUITY.md`, `GEMINI.md`, `AGENTS.md` |
+| **Milestone 8** | **飞书风格日程系统 (Feishu-Style Calendar App)**：打造原汁原味飞书多维日历，含周视图时间轴（08:00~20:00）、实时系统时钟红线指示器、日/月/日程清单视图、左侧迷你月历、多分类标签过滤、新建日程模态弹窗与详情 Popover；完美适配 Obsidian 黑曜石深色模式与浅色模式。 | `src/app_calendar.h`, `src/app_calendar.c`, `src/app_manifest.c`, `CMakeLists.txt` |
