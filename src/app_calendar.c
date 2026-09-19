@@ -38,12 +38,14 @@ typedef struct {
 
     int selected_event_id;
 
-    // 新建日程模态弹窗
+    // 新建日程模态弹窗 (100% 用户自定义起止时间)
     bool show_new_modal;
     int modal_tag_idx;
     int new_hour;
     int new_min;          // 0-59 分钟 (1分钟原子级精度)
-    int new_duration_idx; // 0: 1m, 1: 15m, 2: 30m, 3: 1h
+    int new_end_hour;     // 0-23
+    int new_end_min;      // 0-59
+    int new_duration_idx; // 快捷时长标记 (0: 1m, 1: 15m, 2: 30m, 3: 1h, 4: 2h, -1: custom)
 
     // 交互式文本输入与焦点状态机
     // active_field: 0=none, 1=title, 2=location, 3=desc, 4=new_tag_name, 5=search_query
@@ -422,7 +424,9 @@ static void* calendar_create(RifeCore* core) {
     state->modal_tag_idx = 0;
     state->new_hour = 10;
     state->new_min = 0;
-    state->new_duration_idx = 0; // 默认 1 分钟 (系统最小单位)
+    state->new_end_hour = 10;
+    state->new_end_min = 30;
+    state->new_duration_idx = 2; // 默认 30 分钟快捷胶囊
     state->active_field = 0;
     state->search_query[0] = '\0';
     state->cursor_blink_t = 0.0f;
@@ -689,25 +693,64 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
 
     // 鼠标滚轮微调弹窗时间（以 1 分钟为单位）或缩放/滚动大时间轴
     if (state->show_new_modal && input->scroll_delta != 0.0f) {
-        float mw = 400.0f;
-        float mh = 330.0f;
+        float mw = 420.0f;
+        float mh = 340.0f;
         float mx0 = (client_w - mw) * 0.5f;
         float my0 = (client_h - mh) * 0.5f;
-        float time_y = my0 + 118.0f;
+        float time_y = my0 + 108.0f;
         float mx = input->mouse_x;
         float my = input->mouse_y;
 
-        if (my >= time_y - 6.0f && my <= time_y + 30.0f) {
+        if (my >= time_y - 4.0f && my <= time_y + 28.0f) {
             int delta = (input->scroll_delta > 0.0f) ? 1 : -1;
-            // 鼠标悬停在小时区域：滚轮调节小时
-            if (mx >= mx0 + 46.0f && mx <= mx0 + 116.0f) {
+            int cur_dur = (state->new_end_hour * 60 + state->new_end_min) - (state->new_hour * 60 + state->new_min);
+            if (cur_dur < 1) cur_dur = 30;
+
+            // 1. 悬停开始时间-小时区域
+            if (mx >= mx0 + 44.0f && mx <= mx0 + 106.0f) {
                 state->new_hour = (state->new_hour + delta + 24) % 24;
+                int new_end = state->new_hour * 60 + state->new_min + cur_dur;
+                if (new_end > 1439) new_end = 1439;
+                state->new_end_hour = new_end / 60;
+                state->new_end_min = new_end % 60;
                 rife_request_redraw(core);
                 return;
             }
-            // 鼠标悬停在分钟区域：滚轮调节分钟 (以 1 分钟为最小单位)
-            if (mx >= mx0 + 120.0f && mx <= mx0 + 192.0f) {
-                state->new_min = (state->new_min + delta + 60) % 60;
+            // 2. 悬停开始时间-分钟区域 (以 1 分钟为单位)
+            if (mx >= mx0 + 112.0f && mx <= mx0 + 174.0f) {
+                int new_start = state->new_hour * 60 + state->new_min + delta;
+                if (new_start < 0) new_start = 0;
+                if (new_start > 1438) new_start = 1438;
+                state->new_hour = new_start / 60;
+                state->new_min = new_start % 60;
+                int new_end = new_start + cur_dur;
+                if (new_end > 1439) new_end = 1439;
+                state->new_end_hour = new_end / 60;
+                state->new_end_min = new_end % 60;
+                rife_request_redraw(core);
+                return;
+            }
+            // 3. 悬停结束时间-小时区域
+            if (mx >= mx0 + 224.0f && mx <= mx0 + 288.0f) {
+                int new_end = state->new_end_hour * 60 + state->new_end_min + delta * 60;
+                int cur_start = state->new_hour * 60 + state->new_min;
+                if (new_end <= cur_start) new_end = cur_start + 1;
+                if (new_end > 1439) new_end = 1439;
+                state->new_end_hour = new_end / 60;
+                state->new_end_min = new_end % 60;
+                state->new_duration_idx = -1; // 自定义时长
+                rife_request_redraw(core);
+                return;
+            }
+            // 4. 悬停结束时间-分钟区域 (以 1 分钟为单位)
+            if (mx >= mx0 + 292.0f && mx <= mx0 + 354.0f) {
+                int new_end = state->new_end_hour * 60 + state->new_end_min + delta;
+                int cur_start = state->new_hour * 60 + state->new_min;
+                if (new_end <= cur_start) new_end = cur_start + 1;
+                if (new_end > 1439) new_end = 1439;
+                state->new_end_hour = new_end / 60;
+                state->new_end_min = new_end % 60;
+                state->new_duration_idx = -1; // 自定义时长
                 rife_request_redraw(core);
                 return;
             }
@@ -723,12 +766,12 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
 
             bool is_ctrl = (input->key_down[VK_CONTROL] != 0) || ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
             if (is_ctrl) {
-                // Ctrl + 滚轮：动态平滑缩放时间轴刻度 (支持缩放到 1 分钟大格 480px/小时)
+                // Ctrl + 滚轮：动态平滑缩放时间轴刻度 (支持缩放到 1 分钟大格 720px/小时)
                 float old_h = cur_hour_h;
-                float zoom_step = input->scroll_delta * 16.0f;
+                float zoom_step = input->scroll_delta * (old_h >= 240.0f ? 28.0f : 18.0f);
                 float new_h = old_h + zoom_step;
                 if (new_h < 44.0f) new_h = 44.0f;
-                if (new_h > 480.0f) new_h = 480.0f;
+                if (new_h > 720.0f) new_h = 720.0f;
 
                 if (new_h != old_h) {
                     float grid_y_offset = 44.0f + header_bar_h;
@@ -838,26 +881,26 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
         }
     }
 
-    // 1. 浮动弹窗：新建日程模态框
+    // 1. 浮动弹窗：新建日程模态框 (支持 100% 用户自定义起止时间)
     if (state->show_new_modal) {
-        float mw = 400.0f;
-        float mh = 330.0f;
+        float mw = 420.0f;
+        float mh = 340.0f;
         float mx0 = (client_w - mw) * 0.5f;
         float my0 = (client_h - mh) * 0.5f;
         float box_w = mw - 32.0f;
 
         if (mx >= mx0 && mx <= mx0 + mw && my >= my0 && my <= my0 + mh) {
             // A. 点击标题输入框
-            float title_y = my0 + 42.0f;
-            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= title_y && my <= title_y + 32.0f) {
+            float title_y = my0 + 40.0f;
+            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= title_y && my <= title_y + 30.0f) {
                 state->active_field = 1;
                 rife_request_redraw(core);
                 return;
             }
 
             // B. 自定义标签胶囊行与 [+ 标签]
-            float tag_y = my0 + 82.0f;
-            if (my >= tag_y && my <= tag_y + 26.0f) {
+            float tag_y = my0 + 76.0f;
+            if (my >= tag_y && my <= tag_y + 24.0f) {
                 float px = mx0 + 16.0f;
                 for (int c = 0; c < state->tag_count; c++) {
                     float pw = 60.0f;
@@ -880,76 +923,189 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 }
             }
 
-            // C. 时间与时长微调联动 (以 1 分钟为最小单位)
-            float time_y = my0 + 118.0f;
-            // 减小时 [-]
-            if (mx >= mx0 + 50.0f && mx <= mx0 + 68.0f && my >= time_y && my <= time_y + 24.0f) {
-                state->new_hour = (state->new_hour + 23) % 24;
-                rife_request_redraw(core);
-                return;
-            }
-            // 点击小时框快速递增小时
-            if (mx >= mx0 + 70.0f && mx <= mx0 + 94.0f && my >= time_y && my <= time_y + 24.0f) {
-                state->new_hour = (state->new_hour + 1) % 24;
-                rife_request_redraw(core);
-                return;
-            }
-            // 加小时 [+]
-            if (mx >= mx0 + 96.0f && mx <= mx0 + 114.0f && my >= time_y && my <= time_y + 24.0f) {
-                state->new_hour = (state->new_hour + 1) % 24;
-                rife_request_redraw(core);
-                return;
-            }
+            // C. 自定义起止时间选择行 (开始时间与结束时间全自由设定)
+            float time_y = my0 + 108.0f;
+            if (my >= time_y && my <= time_y + 24.0f) {
+                int cur_dur = (state->new_end_hour * 60 + state->new_end_min) - (state->new_hour * 60 + state->new_min);
+                if (cur_dur < 1) cur_dur = 30;
 
-            // 减分钟 [-] (1分钟递减)
-            if (mx >= mx0 + 125.0f && mx <= mx0 + 143.0f && my >= time_y && my <= time_y + 24.0f) {
-                state->new_min = (state->new_min + 59) % 60;
-                rife_request_redraw(core);
-                return;
-            }
-            // 点击分钟框快速递增分钟 (1分钟递增)
-            if (mx >= mx0 + 145.0f && mx <= mx0 + 169.0f && my >= time_y && my <= time_y + 24.0f) {
-                state->new_min = (state->new_min + 1) % 60;
-                rife_request_redraw(core);
-                return;
-            }
-            // 加分钟 [+] (1分钟递增)
-            if (mx >= mx0 + 171.0f && mx <= mx0 + 189.0f && my >= time_y && my <= time_y + 24.0f) {
-                state->new_min = (state->new_min + 1) % 60;
-                rife_request_redraw(core);
-                return;
-            }
+                // 1. 开始时间 - 减小时 [-]
+                if (mx >= mx0 + 46.0f && mx <= mx0 + 62.0f) {
+                    state->new_hour = (state->new_hour + 23) % 24;
+                    int new_end = state->new_hour * 60 + state->new_min + cur_dur;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 点击开始小时框步进
+                if (mx >= mx0 + 64.0f && mx <= mx0 + 86.0f) {
+                    state->new_hour = (state->new_hour + 1) % 24;
+                    int new_end = state->new_hour * 60 + state->new_min + cur_dur;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 开始时间 - 加小时 [+]
+                if (mx >= mx0 + 88.0f && mx <= mx0 + 104.0f) {
+                    state->new_hour = (state->new_hour + 1) % 24;
+                    int new_end = state->new_hour * 60 + state->new_min + cur_dur;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    rife_request_redraw(core);
+                    return;
+                }
 
-            // 时长胶囊 (4项: 1分, 15分, 30分, 1h)
-            for (int d = 0; d < 4; d++) {
-                float bx = mx0 + 230.0f + (float)d * 38.0f;
-                if (mx >= bx && mx <= bx + 35.0f && my >= time_y && my <= time_y + 24.0f) {
-                    state->new_duration_idx = d;
+                // 2. 开始时间 - 减分钟 [-]
+                if (mx >= mx0 + 114.0f && mx <= mx0 + 130.0f) {
+                    int new_start = state->new_hour * 60 + state->new_min - 1;
+                    if (new_start < 0) new_start = 0;
+                    state->new_hour = new_start / 60;
+                    state->new_min = new_start % 60;
+                    int new_end = new_start + cur_dur;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 点击开始分钟框步进
+                if (mx >= mx0 + 132.0f && mx <= mx0 + 154.0f) {
+                    int new_start = state->new_hour * 60 + state->new_min + 1;
+                    if (new_start > 1438) new_start = 1438;
+                    state->new_hour = new_start / 60;
+                    state->new_min = new_start % 60;
+                    int new_end = new_start + cur_dur;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 开始时间 - 加分钟 [+]
+                if (mx >= mx0 + 156.0f && mx <= mx0 + 172.0f) {
+                    int new_start = state->new_hour * 60 + state->new_min + 1;
+                    if (new_start > 1438) new_start = 1438;
+                    state->new_hour = new_start / 60;
+                    state->new_min = new_start % 60;
+                    int new_end = new_start + cur_dur;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    rife_request_redraw(core);
+                    return;
+                }
+
+                // 3. 结束时间 - 减小时 [-]
+                if (mx >= mx0 + 226.0f && mx <= mx0 + 242.0f) {
+                    int new_end = state->new_end_hour * 60 + state->new_end_min - 60;
+                    int cur_start = state->new_hour * 60 + state->new_min;
+                    if (new_end <= cur_start) new_end = cur_start + 1;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    state->new_duration_idx = -1;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 点击结束小时框步进
+                if (mx >= mx0 + 244.0f && mx <= mx0 + 266.0f) {
+                    int new_end = state->new_end_hour * 60 + state->new_end_min + 60;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    state->new_duration_idx = -1;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 结束时间 - 加小时 [+]
+                if (mx >= mx0 + 268.0f && mx <= mx0 + 284.0f) {
+                    int new_end = state->new_end_hour * 60 + state->new_end_min + 60;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    state->new_duration_idx = -1;
+                    rife_request_redraw(core);
+                    return;
+                }
+
+                // 4. 结束时间 - 减分钟 [-]
+                if (mx >= mx0 + 294.0f && mx <= mx0 + 310.0f) {
+                    int new_end = state->new_end_hour * 60 + state->new_end_min - 1;
+                    int cur_start = state->new_hour * 60 + state->new_min;
+                    if (new_end <= cur_start) new_end = cur_start + 1;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    state->new_duration_idx = -1;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 点击结束分钟框步进
+                if (mx >= mx0 + 312.0f && mx <= mx0 + 334.0f) {
+                    int new_end = state->new_end_hour * 60 + state->new_end_min + 1;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    state->new_duration_idx = -1;
+                    rife_request_redraw(core);
+                    return;
+                }
+                // 结束时间 - 加分钟 [+]
+                if (mx >= mx0 + 336.0f && mx <= mx0 + 352.0f) {
+                    int new_end = state->new_end_hour * 60 + state->new_end_min + 1;
+                    if (new_end > 1439) new_end = 1439;
+                    state->new_end_hour = new_end / 60;
+                    state->new_end_min = new_end % 60;
+                    state->new_duration_idx = -1;
                     rife_request_redraw(core);
                     return;
                 }
             }
 
-            // D. 点击地点输入框
-            float loc_y = my0 + 156.0f;
+            // D. 快捷时长增量胶囊行 (+1分, +15分, +30分, +1小时, +2小时)
+            float quick_y = my0 + 138.0f;
+            if (my >= quick_y && my <= quick_y + 22.0f) {
+                int cur_start = state->new_hour * 60 + state->new_min;
+                const int quick_mins[5] = { 1, 15, 30, 60, 120 };
+                const float q_widths[5] = { 36.0f, 40.0f, 40.0f, 44.0f, 44.0f };
+                float qx = mx0 + 48.0f;
+                for (int q = 0; q < 5; q++) {
+                    if (mx >= qx && mx <= qx + q_widths[q]) {
+                        int new_end = cur_start + quick_mins[q];
+                        if (new_end > 1439) new_end = 1439;
+                        state->new_end_hour = new_end / 60;
+                        state->new_end_min = new_end % 60;
+                        state->new_duration_idx = q;
+                        rife_request_redraw(core);
+                        return;
+                    }
+                    qx += q_widths[q] + 4.0f;
+                }
+            }
+
+            // E. 点击地点输入框
+            float loc_y = my0 + 168.0f;
             if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= loc_y && my <= loc_y + 30.0f) {
                 state->active_field = 2;
                 rife_request_redraw(core);
                 return;
             }
 
-            // E. 点击备注/描述输入框
-            float desc_y = my0 + 194.0f;
+            // F. 点击备注/描述输入框
+            float desc_y = my0 + 206.0f;
             if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= desc_y && my <= desc_y + 30.0f) {
                 state->active_field = 3;
                 rife_request_redraw(core);
                 return;
             }
 
-            // F. 底部操作按钮：确认创建 / 取消
-            float btn_y = my0 + mh - 44.0f;
+            // G. 底部操作按钮：确认创建 / 取消
+            float btn_y = my0 + mh - 42.0f;
             // 确认创建
-            if (mx >= mx0 + mw - 96.0f && mx <= mx0 + mw - 16.0f && my >= btn_y && my <= btn_y + 32.0f) {
+            if (mx >= mx0 + mw - 96.0f && mx <= mx0 + mw - 16.0f && my >= btn_y && my <= btn_y + 28.0f) {
                 if (state->event_count < CAL_MAX_EVENTS) {
                     CalendarEvent* ne = &state->events[state->event_count++];
                     static uint32_t s_next_id = 1000;
@@ -967,7 +1123,15 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                     ne->day = state->view_day;
                     ne->start_hour = state->new_hour;
                     ne->start_min = state->new_min;
-                    calc_event_end_time(ne->start_hour, ne->start_min, state->new_duration_idx, &ne->end_hour, &ne->end_min);
+                    ne->end_hour = state->new_end_hour;
+                    ne->end_min = state->new_end_min;
+                    // 保证结束时间严格晚于开始时间
+                    if (ne->end_hour < ne->start_hour || (ne->end_hour == ne->start_hour && ne->end_min <= ne->start_min)) {
+                        int total_end = ne->start_hour * 60 + ne->start_min + 1;
+                        if (total_end > 1439) total_end = 1439;
+                        ne->end_hour = total_end / 60;
+                        ne->end_min = total_end % 60;
+                    }
                     ne->is_completed = false;
                     save_calendar_data(state);
                 }
@@ -980,7 +1144,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 return;
             }
             // 取消
-            if (mx >= mx0 + mw - 170.0f && mx <= mx0 + mw - 104.0f && my >= btn_y && my <= btn_y + 32.0f) {
+            if (mx >= mx0 + mw - 170.0f && mx <= mx0 + mw - 104.0f && my >= btn_y && my <= btn_y + 28.0f) {
                 state->show_new_modal = false;
                 state->active_field = 0;
                 rife_request_redraw(core);
@@ -1170,6 +1334,13 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
         state->input_title[0] = '\0';
         state->input_location[0] = '\0';
         state->input_desc[0] = '\0';
+        state->new_hour = state->cur_hour;
+        state->new_min = (state->cur_min / 5) * 5;
+        int end_mins = state->new_hour * 60 + state->new_min + 30;
+        if (end_mins > 1439) end_mins = 1439;
+        state->new_end_hour = end_mins / 60;
+        state->new_end_min = end_mins % 60;
+        state->new_duration_idx = 2; // 默认 30 分钟
         rife_request_redraw(core);
         return;
     }
@@ -1248,6 +1419,13 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                     state->input_title[0] = '\0';
                     state->input_location[0] = '\0';
                     state->input_desc[0] = '\0';
+                    state->new_hour = state->cur_hour;
+                    state->new_min = (state->cur_min / 5) * 5;
+                    int end_mins = state->new_hour * 60 + state->new_min + 30;
+                    if (end_mins > 1439) end_mins = 1439;
+                    state->new_end_hour = end_mins / 60;
+                    state->new_end_min = end_mins % 60;
+                    state->new_duration_idx = 2;
                 }
             } else {
                 // 点击搜索框文字区域：激活搜索输入焦点并准备接收键盘输入
@@ -1358,7 +1536,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 int c = (int)((mx - grid_left) / col_w);
                 if (c < 0) c = 0; if (c > 6) c = 6;
                 float exact_h = (my - grid_top + state->scroll_y) / hour_h;
-                int total_mins = (int)floorf(exact_h * 60.0f + 0.5f);
+                int total_mins = (int)floorf(exact_h * 60.0f);
                 if (total_mins < 0) total_mins = 0;
                 if (total_mins > 1439) total_mins = 1439;
 
@@ -1369,7 +1547,12 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 state->view_day = target_d;
                 state->new_hour = total_mins / 60;
                 state->new_min = total_mins % 60; // 1分钟单位精准吸附 (0-59)
-                state->new_duration_idx = 0;   // 默认时长 1 分钟
+                int dur_mins = (hour_h >= 400.0f) ? 15 : 30;
+                int end_mins = total_mins + dur_mins;
+                if (end_mins > 1439) end_mins = 1439;
+                state->new_end_hour = end_mins / 60;
+                state->new_end_min = end_mins % 60;
+                state->new_duration_idx = (dur_mins == 15) ? 1 : 2;
                 state->show_new_modal = true;
                 state->active_field = 1;
                 state->input_title[0] = '\0';
@@ -1409,13 +1592,18 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
             // B. 点击日视图空白区域新建 (以 1 分钟为单位精准吸附)
             if (my >= day_grid_top && my <= client_h - 6.0f && mx >= ex && mx <= ex + ew) {
                 float exact_h = (my - day_grid_top + state->scroll_y) / day_hour_h;
-                int total_mins = (int)floorf(exact_h * 60.0f + 0.5f);
+                int total_mins = (int)floorf(exact_h * 60.0f);
                 if (total_mins < 0) total_mins = 0;
                 if (total_mins > 1439) total_mins = 1439;
 
                 state->new_hour = total_mins / 60;
                 state->new_min = total_mins % 60; // 1分钟单位精准吸附 (0-59)
-                state->new_duration_idx = 0;   // 默认时长 1 分钟
+                int dur_mins = (day_hour_h >= 400.0f) ? 15 : 30;
+                int end_mins = total_mins + dur_mins;
+                if (end_mins > 1439) end_mins = 1439;
+                state->new_end_hour = end_mins / 60;
+                state->new_end_min = end_mins % 60;
+                state->new_duration_idx = (dur_mins == 15) ? 1 : 2;
                 state->show_new_modal = true;
                 state->active_field = 1;
                 state->input_title[0] = '\0';
@@ -1466,6 +1654,9 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                         state->view_day = d;
                         state->new_hour = 10;
                         state->new_min = 0;
+                        state->new_end_hour = 11;
+                        state->new_end_min = 0;
+                        state->new_duration_idx = 3;
                         state->show_new_modal = true;
                         state->active_field = 1;
                         state->input_title[0] = '\0';
@@ -1865,9 +2056,21 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             }
 
             if (h < 24) {
-                // 当放大到高倍率 (hour_h >= 180) 时，标尺绘制 1 分钟微刻度
-                if (hour_h >= 180.0f) {
-                    float min_h = hour_h / 60.0f;
+                float min_h = hour_h / 60.0f;
+                // 当放大到高倍率 (hour_h >= 240) 时，整个网格绘制全贯通 1 分钟细密水平格线，形成清晰可见的 1 分钟格子
+                if (hour_h >= 240.0f) {
+                    uint32_t line_1m = is_dark ? (hour_h >= 480.0f ? 0x38285522 : 0x38285514)
+                                               : (hour_h >= 480.0f ? 0x0000000B : 0x00000006);
+                    uint32_t tick_1m = is_dark ? 0x3828552E : 0x00000014;
+                    for (int m = 1; m < 60; m++) {
+                        if (m % 5 == 0) continue;
+                        float my = hy + (float)m * min_h;
+                        if (my < grid_top || my > grid_top + avail_h) continue;
+                        // 贯通 7 列，形成完整的 1 分钟矩形格子 (1-minute cells)
+                        rife_draw_rect(core, grid_left, my, col_w * 7.0f, 1.0f, line_1m);
+                        rife_draw_rect(core, grid_left - 4.0f, my, 4.0f, 1.0f, tick_1m);
+                    }
+                } else if (hour_h >= 180.0f) {
                     uint32_t tick_1m = is_dark ? 0x38285516 : 0x00000008;
                     for (int m = 1; m < 60; m++) {
                         if (m % 5 == 0) continue;
@@ -1916,6 +2119,27 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
                             snprintf(m5_str, sizeof(m5_str), "%02d:%02d", h, m);
                             rife_draw_text_font(core, main_x + 8.0f, qy - 6.0f, m5_str, is_dark ? 0x8A80A033 : 0x8A80A044, 4);
                         }
+                    }
+                }
+            }
+        }
+
+        // 2.5 悬停高亮 1 分钟吸附格子 (当放大至高倍率时，直观呈现当前指针所在的一分钟格子)
+        if (hour_h >= 240.0f && !state->show_new_modal && !state->show_new_tag_modal) {
+            float hmx = core->input.mouse_x;
+            float hmy = core->input.mouse_y;
+            if (hmx >= grid_left && hmx <= grid_left + 7.0f * col_w && hmy >= grid_top && hmy <= grid_top + avail_h) {
+                int hc = (int)((hmx - grid_left) / col_w);
+                if (hc >= 0 && hc < 7) {
+                    float exact_h = (hmy - grid_top + state->scroll_y) / hour_h;
+                    int h_total_mins = (int)floorf(exact_h * 60.0f);
+                    if (h_total_mins >= 0 && h_total_mins < 1440) {
+                        float cell_top = grid_top - state->scroll_y + (float)h_total_mins * (hour_h / 60.0f);
+                        float cell_h = hour_h / 60.0f;
+                        float cell_left = grid_left + (float)hc * col_w;
+                        rife_draw_rect(core, cell_left + 1.0f, cell_top + 0.5f, col_w - 2.0f, cell_h, is_dark ? 0x3370FF24 : 0x3370FF16);
+                        rife_draw_rect(core, cell_left + 1.0f, cell_top, col_w - 2.0f, 1.0f, rtodo_blue);
+                        rife_draw_rect(core, cell_left + 1.0f, cell_top + cell_h, col_w - 2.0f, 1.0f, rtodo_blue);
                     }
                 }
             }
@@ -2031,9 +2255,20 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             }
 
             if (h < 24) {
-                // 1 分钟微刻度 (day_hour_h >= 180)
-                if (day_hour_h >= 180.0f) {
-                    float min_h = day_hour_h / 60.0f;
+                float min_h = day_hour_h / 60.0f;
+                // 当放大到高倍率 (day_hour_h >= 240) 时，绘制全贯通 1 分钟细密水平格线，形成清晰可见的 1 分钟格子
+                if (day_hour_h >= 240.0f) {
+                    uint32_t line_1m = is_dark ? (day_hour_h >= 480.0f ? 0x38285522 : 0x38285514)
+                                               : (day_hour_h >= 480.0f ? 0x0000000B : 0x00000006);
+                    uint32_t tick_1m = is_dark ? 0x3828552E : 0x00000014;
+                    for (int m = 1; m < 60; m++) {
+                        if (m % 5 == 0) continue;
+                        float my = hy + (float)m * min_h;
+                        if (my < day_grid_top || my > day_grid_top + day_avail_h) continue;
+                        rife_draw_rect(core, ex, my, ew, 1.0f, line_1m);
+                        rife_draw_rect(core, main_x + day_ruler_w - 4.0f, my, 4.0f, 1.0f, tick_1m);
+                    }
+                } else if (day_hour_h >= 180.0f) {
                     uint32_t tick_1m = is_dark ? 0x38285516 : 0x00000008;
                     for (int m = 1; m < 60; m++) {
                         if (m % 5 == 0) continue;
@@ -2080,6 +2315,23 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
                             rife_draw_text_font(core, main_x + 14.0f, qy - 6.0f, m5_str, is_dark ? 0x8A80A033 : 0x8A80A044, 4);
                         }
                     }
+                }
+            }
+        }
+
+        // 2.5 悬停高亮 1 分钟吸附格子 (日视图)
+        if (day_hour_h >= 240.0f && !state->show_new_modal && !state->show_new_tag_modal) {
+            float hmx = core->input.mouse_x;
+            float hmy = core->input.mouse_y;
+            if (hmx >= ex && hmx <= ex + ew && hmy >= day_grid_top && hmy <= day_grid_top + day_avail_h) {
+                float exact_h = (hmy - day_grid_top + state->scroll_y) / day_hour_h;
+                int h_total_mins = (int)floorf(exact_h * 60.0f);
+                if (h_total_mins >= 0 && h_total_mins < 1440) {
+                    float cell_top = day_grid_top - state->scroll_y + (float)h_total_mins * (day_hour_h / 60.0f);
+                    float cell_h = day_hour_h / 60.0f;
+                    rife_draw_rect(core, ex + 1.0f, cell_top + 0.5f, ew - 2.0f, cell_h, is_dark ? 0x3370FF24 : 0x3370FF16);
+                    rife_draw_rect(core, ex + 1.0f, cell_top, ew - 2.0f, 1.0f, rtodo_blue);
+                    rife_draw_rect(core, ex + 1.0f, cell_top + cell_h, ew - 2.0f, 1.0f, rtodo_blue);
                 }
             }
         }
@@ -2288,13 +2540,14 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     // 弹窗浮层：新建日程模态卡片 (New Event Modal - 100% 用户自定义)
     // ==========================================
     if (state->show_new_modal) {
-        float mw = 400.0f;
-        float mh = 330.0f;
+        float mw = 420.0f;
+        float mh = 340.0f;
         float mx0 = client_x + (client_w - mw) * 0.5f;
         float my0 = client_y + (client_h - mh) * 0.5f;
         float box_w = mw - 32.0f;
 
-        // 液态玻璃透光浮层卡片
+        // 半透环境遮罩与液态玻璃透光浮层卡片
+        rife_draw_rect(core, client_x, client_y, client_w, client_h, 0x00000044);
         rife_draw_round_rect(core, mx0, my0, mw, mh, 12.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, is_dark ? 0x5D458FAA : 0x00000018);
         rife_draw_round_rect(core, mx0 + 4.0f, my0 + 1.0f, mw - 8.0f, 1.5f, 2.0f, 0xFFFFFF66, 0x00000000);
 
@@ -2302,97 +2555,139 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         rife_draw_text_font(core, mx0 + 16.0f, my0 + 14.0f, is_zh ? "新建日程" : "New Event", text_title, 1);
 
         // 1. 标题输入框 (Title Input)
-        float title_y = my0 + 42.0f;
-        draw_input_box(core, mx0 + 16.0f, title_y, box_w, 32.0f,
+        float title_y = my0 + 40.0f;
+        draw_input_box(core, mx0 + 16.0f, title_y, box_w, 30.0f,
                        state->input_title,
                        is_zh ? "日程标题 (如: 团队例会、设计评审...)" : "Event Title...",
                        state->active_field == 1, cursor_on,
                        is_dark, rtodo_blue, border_col, text_title, text_muted);
 
         // 2. 自定义分类标签胶囊行与 [+ 标签]
-        float tag_y = my0 + 82.0f;
+        float tag_y = my0 + 76.0f;
         float px = mx0 + 16.0f;
         for (int c = 0; c < state->tag_count; c++) {
             CustomTag* tag = &state->tags[c];
             TagColorStyle ts = get_tag_style(tag->color_bar, is_dark);
             bool is_sel = (state->modal_tag_idx == c);
             float pw = 60.0f;
-            rife_draw_round_rect(core, px, tag_y, pw, 26.0f, 6.0f, is_sel ? ts.bar : ts.bg, ts.border);
-            rife_draw_text_rect(core, px, tag_y, pw, 26.0f, tag->name, is_sel ? 0xFFFFFFFF : ts.text, 4, 0);
+            rife_draw_round_rect(core, px, tag_y, pw, 24.0f, 6.0f, is_sel ? ts.bar : ts.bg, ts.border);
+            rife_draw_text_rect(core, px, tag_y, pw, 24.0f, tag->name, is_sel ? 0xFFFFFFFF : ts.text, 4, 0);
             px += pw + 8.0f;
         }
         // [+ 标签] 按钮 (液态玻璃)
         float add_w = 64.0f;
-        rife_draw_liquid_glass_button(core, px, tag_y, add_w, 26.0f, 6.0f, is_zh ? "+ 标签" : "+ Tag", 4, rtodo_blue, false, 0, false, is_dark);
+        rife_draw_liquid_glass_button(core, px, tag_y, add_w, 24.0f, 6.0f, is_zh ? "+ 标签" : "+ Tag", 4, rtodo_blue, false, 0, false, is_dark);
 
-        // 3. 时间与时长选择 (以 1 分钟为原子最小单位)
-        float time_y = my0 + 118.0f;
+        // 3. 自由起止时间设定行 (开始时间 [-] HH [+] : [-] MM [+]  至  结束时间 [-] HH [+] : [-] MM [+])
+        float time_y = my0 + 108.0f;
         rife_draw_text_font(core, mx0 + 16.0f, time_y + 4.0f, is_zh ? "时间:" : "Time:", text_muted, 3);
 
-        // 小时调整器 [-] HH [+] (液态玻璃)
-        rife_draw_liquid_glass_button(core, mx0 + 50.0f, time_y, 18.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
+        // A. 开始时间 - 小时调整器 [-] HH [+]
+        rife_draw_liquid_glass_button(core, mx0 + 46.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
         char hh_buf[8];
         snprintf(hh_buf, sizeof(hh_buf), "%02d", state->new_hour);
-        rife_draw_round_rect(core, mx0 + 70.0f, time_y, 24.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
-        rife_draw_text_rect(core, mx0 + 70.0f, time_y, 24.0f, 24.0f, hh_buf, text_title, 4, 0);
-        rife_draw_liquid_glass_button(core, mx0 + 96.0f, time_y, 18.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
+        rife_draw_round_rect(core, mx0 + 64.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
+        rife_draw_text_rect(core, mx0 + 64.0f, time_y, 22.0f, 24.0f, hh_buf, text_title, 4, 0);
+        rife_draw_liquid_glass_button(core, mx0 + 88.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
 
         // 冒号分隔符
-        rife_draw_text_font(core, mx0 + 117.0f, time_y + 3.0f, ":", text_title, 1);
+        rife_draw_text_font(core, mx0 + 106.0f, time_y + 3.0f, ":", text_title, 1);
 
-        // 分钟调整器 [-] MM [+] (1分钟原子级微调)
-        rife_draw_liquid_glass_button(core, mx0 + 125.0f, time_y, 18.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
+        // 开始时间 - 分钟调整器 [-] MM [+] (1分钟原子级微调)
+        rife_draw_liquid_glass_button(core, mx0 + 114.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
         char mm_buf[8];
         snprintf(mm_buf, sizeof(mm_buf), "%02d", state->new_min);
-        rife_draw_round_rect(core, mx0 + 145.0f, time_y, 24.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
-        rife_draw_text_rect(core, mx0 + 145.0f, time_y, 24.0f, 24.0f, mm_buf, text_title, 4, 0);
-        rife_draw_liquid_glass_button(core, mx0 + 171.0f, time_y, 18.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
+        rife_draw_round_rect(core, mx0 + 132.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
+        rife_draw_text_rect(core, mx0 + 132.0f, time_y, 22.0f, 24.0f, mm_buf, text_title, 4, 0);
+        rife_draw_liquid_glass_button(core, mx0 + 156.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
 
-        // 时长选择器 (4档: 1分, 15分, 30分, 1h)
-        rife_draw_text_font(core, mx0 + 196.0f, time_y + 4.0f, is_zh ? "时长:" : "Dur:", text_muted, 3);
-        const char* dur_labels_zh[4] = { "1分", "15分", "30分", "1h" };
-        const char* dur_labels_en[4] = { "1m", "15m", "30m", "1h" };
-        for (int d = 0; d < 4; d++) {
-            float bx = mx0 + 230.0f + (float)d * 38.0f;
-            bool is_d_act = (state->new_duration_idx == d);
-            const char* dur_label = is_zh ? dur_labels_zh[d] : dur_labels_en[d];
-            if (is_d_act) {
-                rife_draw_liquid_glass_button(core, bx, time_y, 35.0f, 24.0f, 4.0f, dur_label, 4, 0xFFFFFFFF, true, rtodo_blue, false, is_dark);
-            } else {
-                rife_draw_liquid_glass_button(core, bx, time_y, 35.0f, 24.0f, 4.0f, dur_label, 4, text_muted, false, 0, false, is_dark);
-            }
+        // 中间衔接符：至 / To
+        rife_draw_text_rect(core, mx0 + 176.0f, time_y, 46.0f, 24.0f, is_zh ? "至" : "To", text_muted, 3, 0);
+
+        // B. 结束时间 - 小时调整器 [-] HH [+]
+        rife_draw_liquid_glass_button(core, mx0 + 226.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
+        char end_hh_buf[8];
+        snprintf(end_hh_buf, sizeof(end_hh_buf), "%02d", state->new_end_hour);
+        rife_draw_round_rect(core, mx0 + 244.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
+        rife_draw_text_rect(core, mx0 + 244.0f, time_y, 22.0f, 24.0f, end_hh_buf, text_title, 4, 0);
+        rife_draw_liquid_glass_button(core, mx0 + 268.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
+
+        // 冒号分隔符
+        rife_draw_text_font(core, mx0 + 286.0f, time_y + 3.0f, ":", text_title, 1);
+
+        // 结束时间 - 分钟调整器 [-] MM [+] (1分钟原子级微调)
+        rife_draw_liquid_glass_button(core, mx0 + 294.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
+        char end_mm_buf[8];
+        snprintf(end_mm_buf, sizeof(end_mm_buf), "%02d", state->new_end_min);
+        rife_draw_round_rect(core, mx0 + 312.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
+        rife_draw_text_rect(core, mx0 + 312.0f, time_y, 22.0f, 24.0f, end_mm_buf, text_title, 4, 0);
+        rife_draw_liquid_glass_button(core, mx0 + 336.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
+
+        // 4. 快捷时长预设与动态时长胶囊行 (+1分, +15分, +30分, +1h, +2h)
+        float quick_y = my0 + 138.0f;
+        rife_draw_text_font(core, mx0 + 16.0f, quick_y + 3.0f, is_zh ? "快捷:" : "Quick:", text_muted, 3);
+        const char* q_labels_zh[5] = { "+1分", "+15分", "+30分", "+1h", "+2h" };
+        const char* q_labels_en[5] = { "+1m", "+15m", "+30m", "+1h", "+2h" };
+        const int quick_mins[5] = { 1, 15, 30, 60, 120 };
+        const float q_widths[5] = { 36.0f, 40.0f, 40.0f, 44.0f, 44.0f };
+        int cur_dur = (state->new_end_hour * 60 + state->new_end_min) - (state->new_hour * 60 + state->new_min);
+        if (cur_dur < 0) cur_dur = 0;
+
+        float qx = mx0 + 48.0f;
+        for (int q = 0; q < 5; q++) {
+            bool is_match = (cur_dur == quick_mins[q]);
+            const char* ql = is_zh ? q_labels_zh[q] : q_labels_en[q];
+            rife_draw_liquid_glass_button(core, qx, quick_y, q_widths[q], 22.0f, 4.0f, ql, 4, is_match ? 0xFFFFFFFF : text_muted, is_match, is_match ? rtodo_blue : 0, false, is_dark);
+            qx += q_widths[q] + 4.0f;
         }
 
-        // 4. 地点输入框 (Location Input)
-        float loc_y = my0 + 156.0f;
+        // 右侧动态时长胶囊 (实时显示总时长)
+        float dur_w = 110.0f;
+        float dur_x = mx0 + mw - 16.0f - dur_w;
+        char dur_badge[48];
+        if (cur_dur >= 60) {
+            if (cur_dur % 60 == 0) {
+                snprintf(dur_badge, sizeof(dur_badge), is_zh ? "时长: %d小时" : "Dur: %dh", cur_dur / 60);
+            } else {
+                snprintf(dur_badge, sizeof(dur_badge), is_zh ? "时长: %d小时%02d分" : "Dur: %dh %02dm", cur_dur / 60, cur_dur % 60);
+            }
+        } else {
+            snprintf(dur_badge, sizeof(dur_badge), is_zh ? "时长: %d分钟" : "Dur: %dm", cur_dur);
+        }
+        uint32_t dur_bg = is_dark ? 0x60A5FA22 : 0x3B82F618;
+        uint32_t dur_brd = is_dark ? 0x60A5FA55 : 0x3B82F633;
+        rife_draw_round_rect(core, dur_x, quick_y, dur_w, 22.0f, 4.0f, dur_bg, dur_brd);
+        rife_draw_text_rect(core, dur_x, quick_y, dur_w, 22.0f, dur_badge, is_dark ? 0x93C5FDFF : 0x2563EBFF, 4, 0);
+
+        // 5. 地点输入框 (Location Input)
+        float loc_y = my0 + 168.0f;
         draw_input_box(core, mx0 + 16.0f, loc_y, box_w, 30.0f,
                        state->input_location,
                        is_zh ? "地点 / 会议链接 (如: 线上会议、会议室A...)" : "Location / Meeting URL...",
                        state->active_field == 2, cursor_on,
                        is_dark, rtodo_blue, border_col, text_title, text_muted);
 
-        // 5. 描述/备注输入框 (Notes Input)
-        float desc_y = my0 + 194.0f;
+        // 6. 描述/备注输入框 (Notes Input)
+        float desc_y = my0 + 206.0f;
         draw_input_box(core, mx0 + 16.0f, desc_y, box_w, 30.0f,
                        state->input_desc,
                        is_zh ? "备注信息 / 议程大纲 (选填)..." : "Notes / Agenda Outline...",
                        state->active_field == 3, cursor_on,
                        is_dark, rtodo_blue, border_col, text_title, text_muted);
 
-        // 6. 预期起止时间与日期详情
-        int end_h = 0, end_m = 0;
-        calc_event_end_time(state->new_hour, state->new_min, state->new_duration_idx, &end_h, &end_m);
-        char sched_summary[64];
-        snprintf(sched_summary, sizeof(sched_summary), "%d月%d日 %02d:%02d 至 %02d:%02d", state->view_month, state->view_day, state->new_hour, state->new_min, end_h, end_m);
-        rife_draw_text_font(core, mx0 + 16.0f, my0 + 236.0f, sched_summary, text_title, 3);
+        // 7. 日程时间详情总览
+        char sched_summary[80];
+        snprintf(sched_summary, sizeof(sched_summary), "%d月%d日 %02d:%02d 至 %02d:%02d  (共 %d 分钟)",
+                 state->view_month, state->view_day, state->new_hour, state->new_min, state->new_end_hour, state->new_end_min, cur_dur);
+        rife_draw_text_font(core, mx0 + 16.0f, my0 + 246.0f, sched_summary, text_title, 3);
 
         // 分割线
-        rife_draw_rect(core, mx0 + 16.0f, my0 + 262.0f, mw - 32.0f, 1.0f, border_col);
+        rife_draw_rect(core, mx0 + 16.0f, my0 + 270.0f, mw - 32.0f, 1.0f, border_col);
 
-        // 底部按钮：取消 / 确认创建 (液态玻璃 + 严格居中)
-        float btn_y = my0 + mh - 44.0f;
-        rife_draw_liquid_glass_button(core, mx0 + mw - 170.0f, btn_y, 66.0f, 32.0f, 6.0f, is_zh ? "取消" : "Cancel", 0, text_muted, false, 0, false, is_dark);
-        rife_draw_liquid_glass_button(core, mx0 + mw - 96.0f, btn_y, 80.0f, 32.0f, 6.0f, is_zh ? "确认创建" : "Create", 5, 0xFFFFFFFF, true, rtodo_blue, false, is_dark);
+        // 底部操作按钮：取消 / 确认创建 (液态玻璃 + 严格居中)
+        float btn_y = my0 + mh - 42.0f;
+        rife_draw_liquid_glass_button(core, mx0 + mw - 170.0f, btn_y, 66.0f, 28.0f, 6.0f, is_zh ? "取消" : "Cancel", 0, text_muted, false, 0, false, is_dark);
+        rife_draw_liquid_glass_button(core, mx0 + mw - 96.0f, btn_y, 80.0f, 28.0f, 6.0f, is_zh ? "确认创建" : "Create", 5, 0xFFFFFFFF, true, rtodo_blue, false, is_dark);
     }
 
     // ==========================================
