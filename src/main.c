@@ -1275,6 +1275,33 @@ void rife_render_flush(RifeCore* core) {
             SetTextColor(plat->hdc_mem, RGB(r, g, b));
             rife_draw_text_u8(plat->hdc_mem, (int)curr->x, (int)curr->y, curr->text);
         }
+        else if (curr->type == CMD_TEXT_RECT) {
+            if (curr->font_id == 1) SelectObject(plat->hdc_mem, plat->hfont_title);
+            else if (curr->font_id == 2) SelectObject(plat->hdc_mem, plat->hfont_panel_title);
+            else if (curr->font_id == 3) SelectObject(plat->hdc_mem, plat->hfont_sm);
+            else if (curr->font_id == 4) SelectObject(plat->hdc_mem, plat->hfont_caption);
+            else if (curr->font_id == 5) SelectObject(plat->hdc_mem, plat->hfont_bold);
+            else if (curr->font_id == 6) SelectObject(plat->hdc_mem, plat->hfont_display);
+            else SelectObject(plat->hdc_mem, plat->hfont_body);
+
+            uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
+            uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
+            uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
+            SetTextColor(plat->hdc_mem, RGB(r, g, b));
+
+            wchar_t wbuf[256];
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, curr->text, -1, wbuf, 256);
+            if (wlen > 0) {
+                RECT rc = { (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h) };
+                UINT flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+                if (curr->border_color == 1) {
+                    flags = DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+                } else if (curr->border_color == 2) {
+                    flags = DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+                }
+                DrawTextW(plat->hdc_mem, wbuf, wlen - 1, &rc, flags);
+            }
+        }
         else if (curr->type == CMD_ROUND_RECT) {
             uint8_t a = (uint8_t)(curr->color & 0xFF);
             uint8_t ba = (uint8_t)(curr->border_color & 0xFF);
@@ -1448,7 +1475,7 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
     }
     case WM_CHAR: {
         wchar_t wch = (wchar_t)wparam;
-        if (wch >= 32 || wch == '\b' || wch == '\r') {
+        if (wch >= 32 || wch == '\r' || wch == '\t') {
             char utf8[8] = { 0 };
             WideCharToMultiByte(CP_UTF8, 0, &wch, 1, utf8, sizeof(utf8), NULL, NULL);
             size_t len = strlen(core->input.text_input);
@@ -1623,7 +1650,6 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         }
 
         plat->drag_mode = 0;
-        plat->active_win_idx = -1;
         plat->snap_preview = false;
         ReleaseCapture();
         return 0;
@@ -1638,7 +1664,7 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         return 0;
     }
     }
-    return DefWindowProc(hwnd, msg, wparam, lparam);
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, int width, int height) {
@@ -1682,13 +1708,13 @@ bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, 
     update_horiz_lookup(plat, width);
 
     core->platform_data = plat;
-    WNDCLASSA wc = { 0 };
+    WNDCLASSW wc = { 0 };
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = rife_wnd_proc;
     wc.hInstance = GetModuleHandle(NULL);
-    wc.lpszClassName = "RifeDesktopHostClass";
+    wc.lpszClassName = L"RifeDesktopHostClass";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClassA(&wc);
+    RegisterClassW(&wc);
 
     int screen_w = GetSystemMetrics(SM_CXSCREEN);
     int screen_h = GetSystemMetrics(SM_CYSCREEN);
@@ -1700,7 +1726,10 @@ bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, 
     int init_x = (screen_w > width) ? (screen_w - width) / 2 : 20;
     int init_y = (screen_h > height) ? (screen_h - height) / 2 : 35;
 
-    plat->hwnd = CreateWindowExA(WS_EX_APPWINDOW | WS_EX_ACCEPTFILES, wc.lpszClassName, title,
+    wchar_t wtitle[128] = { 0 };
+    MultiByteToWideChar(CP_UTF8, 0, title, -1, wtitle, 128);
+
+    plat->hwnd = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_ACCEPTFILES, wc.lpszClassName, wtitle,
         WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_POPUP,
         init_x, init_y, width, height, NULL, NULL, wc.hInstance, NULL);
     if (!plat->hwnd) return false;
@@ -2010,7 +2039,16 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
     }
 
     // 键盘按键与文本输入事件分发至当前聚焦应用窗口
-    if (plat->active_win_idx >= 0 && (input->text_input[0] != '\0' || input->key_pressed[VK_BACK] || input->key_pressed[VK_RETURN])) {
+    bool has_key_event = (input->text_input[0] != '\0');
+    if (!has_key_event) {
+        for (int k = 0; k < 256; k++) {
+            if (input->key_pressed[k] || input->key_down[k]) {
+                has_key_event = true;
+                break;
+            }
+        }
+    }
+    if (plat->active_win_idx >= 0 && has_key_event) {
         ActiveWindow* win_act = &plat->windows[plat->active_win_idx];
         if (win_act->inst && win_act->anim > 0.85f && win_act->is_open && win_act->plugin->update) {
             float cur_x = win_act->is_maximized ? 0.0f : win_act->x;
@@ -2054,7 +2092,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
             }
         }
     }
-    if (is_animating || input->mouse_pressed[0] || input->mouse_down[0] || input->scroll_delta != 0.0f || input->text_input[0] != '\0' || input->key_pressed[VK_BACK]) {
+    if (is_animating || input->mouse_pressed[0] || input->mouse_down[0] || input->scroll_delta != 0.0f || has_key_event) {
         rife_request_redraw(core);
     }
 
@@ -2251,6 +2289,10 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                 return;
             }
         }
+
+        // F. 点击桌面纯粹空白底板：解除当前应用焦点
+        plat->active_win_idx = -1;
+        rife_request_redraw(core);
     }
 }
 
@@ -2295,9 +2337,9 @@ int main(void) {
 
     while (core.running) {
         MSG msg;
-        while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
-            DispatchMessageA(&msg);
+            DispatchMessageW(&msg);
         }
 
         RifeSystemConfig* cfg = rife_get_system_config();

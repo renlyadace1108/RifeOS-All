@@ -34,7 +34,7 @@ typedef struct {
     uint8_t key_down[256];
     uint8_t key_pressed[256];
     uint8_t key_released[256];
-    char text_input[32];
+    char text_input[128];
 } RifeInput;
 typedef enum {
     CMD_NONE = 0,
@@ -42,7 +42,8 @@ typedef enum {
     CMD_TEXT = 2,
     CMD_SCISSOR_PUSH = 3,
     CMD_SCISSOR_POP = 4,
-    CMD_ROUND_RECT = 5
+    CMD_ROUND_RECT = 5,
+    CMD_TEXT_RECT = 6
 } RenderCmdType;
 typedef struct RenderCmd {
     RenderCmdType type;
@@ -107,6 +108,7 @@ void rife_draw_rect(RifeCore* core, float x, float y, float w, float h, uint32_t
 void rife_draw_round_rect(RifeCore* core, float x, float y, float w, float h, float radius, uint32_t bg_color, uint32_t border_color);
 void rife_draw_text(RifeCore* core, float x, float y, const char* text, uint32_t color);
 void rife_draw_text_font(RifeCore* core, float x, float y, const char* text, uint32_t color, uint8_t font_id);
+void rife_draw_text_rect(RifeCore* core, float x, float y, float w, float h, const char* text, uint32_t color, uint8_t font_id, uint32_t align_flags);
 void rife_push_scissor(RifeCore* core, float x, float y, float w, float h);
 void rife_push_scissor_round(RifeCore* core, float x, float y, float w, float h, float radius);
 void rife_pop_scissor(RifeCore* core);

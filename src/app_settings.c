@@ -76,11 +76,11 @@ static inline void draw_segmented_pills(RifeCore* core, float rx, float row_y, f
             uint32_t act_border = is_dark ? 0x634E8CFF : 0xCBD5E1FF;
             uint32_t text_col = is_dark ? 0xF8FAFCFF : 0x0284C7FF;
             rife_draw_round_rect(core, ix, iy, iw, ih, 5.0f, act_col, act_border);
-            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], text_col, 5);
+            rife_draw_text_rect(core, ix, iy, iw, ih, items[k], text_col, 5, 0);
         }
         else {
             uint32_t text_col = is_dark ? 0x94A3B8FF : 0x64748BFF;
-            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], text_col, 0);
+            rife_draw_text_rect(core, ix, iy, iw, ih, items[k], text_col, 0, 0);
         }
     }
 }

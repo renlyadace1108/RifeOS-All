@@ -301,6 +301,25 @@ void rife_draw_text_font(RifeCore* core, float x, float y, const char* text, uin
 void rife_draw_text(RifeCore* core, float x, float y, const char* text, uint32_t color) {
     rife_draw_text_font(core, x, y, text, color, 0);
 }
+void rife_draw_text_rect(RifeCore* core, float x, float y, float w, float h, const char* text, uint32_t color, uint8_t font_id, uint32_t align_flags) {
+    if (!text || !core || w <= 0.0f || h <= 0.0f) {
+        return;
+    }
+    RenderCmd* cmd = rife_cmd_push(core, CMD_TEXT_RECT);
+    if (!cmd) {
+        return;
+    }
+    cmd->x = x;
+    cmd->y = y;
+    cmd->w = w;
+    cmd->h = h;
+    cmd->radius = 0.0f;
+    cmd->color = color;
+    cmd->border_color = align_flags;
+    cmd->font_id = font_id;
+    strncpy(cmd->text, text, sizeof(cmd->text) - 1);
+    cmd->text[sizeof(cmd->text) - 1] = '\0';
+}
 void rife_push_scissor(RifeCore* core, float x, float y, float w, float h) {
     RenderCmd* cmd = rife_cmd_push(core, CMD_SCISSOR_PUSH);
     if (!cmd) {
