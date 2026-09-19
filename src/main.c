@@ -1313,6 +1313,8 @@ void rife_render_flush(RifeCore* core) {
 
             ActiveWindow* win = &plat->windows[i];
             if (!win->inst || win->anim < 0.01f) continue;
+            // 桌面实时预览态：暂停绘制桌面已开窗口底板 (Aero Peek 体验，避免与预览窗口重叠穿透)
+            if (plat->preview_win_idx >= 0) continue;
 
             float target_x = win->is_maximized ? 0.0f : win->x;
             float target_y = win->is_maximized ? 0.0f : win->y;
@@ -1607,6 +1609,8 @@ void rife_render_flush(RifeCore* core) {
 
             ActiveWindow* win = &plat->windows[i];
             if (!win->inst || win->anim < 0.02f) continue;
+            // 桌面实时预览态：暂停绘制桌面已开窗口内容与标题 (Aero Peek 体验，避免与预览窗口重叠穿透)
+            if (plat->preview_win_idx >= 0) continue;
 
             float target_x = win->is_maximized ? 0.0f : win->x;
             float target_y = win->is_maximized ? 0.0f : win->y;
@@ -1672,10 +1676,19 @@ void rife_render_flush(RifeCore* core) {
             if (pwin->is_maximized) ph = wh - 56.0f;
             float pr = pwin->is_maximized ? 0.0f : 20.0f;
 
+            // 1. 预览窗口整体高质感防穿透微透底板 (保护内部文字与表盘绝对清晰，防止穿透)
+            uint32_t pwin_bg = is_obsidian ? 0x161122F5 : 0xFFFFFFF5;
+            uint32_t pwin_bd = is_obsidian ? 0x382B54AA : 0xE2E8F0AA;
+            rife_draw_round_rect(core, px, py, pw, ph, pr, pwin_bg, pwin_bd);
+
+            // 2. 预览顶栏独立微光底板与 1px 细分割线
+            rife_draw_round_rect(core, px, py, pw, 36.0f, pr, is_obsidian ? 0x20183299 : 0xF8FAFCBB, 0x00000000);
+            rife_draw_rect(core, px + 1.0f, py + 35.0f, pw - 2.0f, 1.0f, is_obsidian ? 0x382B5488 : 0xE2E8F0AA);
+
             // 控制灯 (预览态三色圆钮)
             float l_sz = 12.0f;
             float l_r = l_sz * 0.5f;
-            float l_y = py + 14.0f;
+            float l_y = py + 12.0f;
             rife_draw_round_rect(core, px + 16.0f, l_y, l_sz, l_sz, l_r, 0xFF5F56FF, 0xE0443EFF);
             rife_draw_round_rect(core, px + 34.0f, l_y, l_sz, l_sz, l_r, 0xFFBD2EFF, 0xDEA123FF);
             rife_draw_round_rect(core, px + 52.0f, l_y, l_sz, l_sz, l_r, 0x27C93FFF, 0x1AAB29FF);
