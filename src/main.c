@@ -1076,14 +1076,14 @@ void rife_render_flush(RifeCore* core) {
         }
     }
 
-    float tasks_w = (bg_count > 0) ? ((float)bg_count * 96.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
-    if (bg_count >= 2) tasks_w += 50.0f;
+    float tasks_w = (bg_count > 0) ? ((float)bg_count * 38.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
+    if (bg_count >= 2) tasks_w += 32.0f;
     float needed_w = 110.0f + tasks_w + 24.0f;
-    float exp_w = ww * 0.42f;
+    float exp_w = ww * 0.36f;
     if (exp_w < needed_w) exp_w = needed_w;
     if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
 
-    float col_size = (bg_count > 0) ? (32.0f + (float)bg_count * 22.0f + 4.0f) : 22.0f;
+    float col_size = (bg_count > 0) ? (28.0f + (float)bg_count * 20.0f + 4.0f) : 22.0f;
     float col_h = (bg_count > 0) ? 24.0f : 22.0f;
     float orig_x = (ww - col_size) * 0.5f;
     float orig_y = 10.0f;
@@ -1253,7 +1253,7 @@ void rife_render_flush(RifeCore* core) {
                     ActiveWindow* win = &plat->windows[i];
                     if (!win->inst || win->is_open || !win->is_minimized) continue;
 
-                    float task_w = 96.0f;
+                    float task_w = 38.0f;
                     float task_h = 28.0f;
                     float task_x = cur_right - task_w;
                     float task_y = cloud_y + (cloud_h - task_h) * 0.5f;
@@ -1266,7 +1266,7 @@ void rife_render_flush(RifeCore* core) {
                 }
 
                 if (bg_count >= 2) {
-                    float clr_w = 44.0f;
+                    float clr_w = 26.0f;
                     float clr_h = 28.0f;
                     float clr_x = cur_right - clr_w;
                     float clr_y = cloud_y + (cloud_h - clr_h) * 0.5f;
@@ -1377,57 +1377,51 @@ void rife_render_flush(RifeCore* core) {
             }
         }
         else if (plat->cloud_anim > 0.35f) {
-            // 展开流体云模式：保持 42px 高度与之前一致的流体云布局
-            // 左侧：三色控制钮 (红/黄/绿)
-            // 中间：若无后台任务则显示就绪提示
-            if (bg_count == 0) {
-                SelectObject(plat->hdc_mem, plat->hfont_caption);
-                SetTextColor(plat->hdc_mem, is_obsidian ? RGB(167, 139, 250) : RGB(100, 116, 139));
-                rife_draw_text_u8(plat->hdc_mem, (int)(cloud_x + 86.0f), (int)(cloud_y + 14.0f),
-                    is_zh ? "系统流体云 · 暂无后台任务" : "Fluid Cloud · Ready");
-            }
-
-            // 右侧：从右往左依次挂载后台任务胶囊
+            // 展开流体云模式：纯净流体玻璃与纯图符胶囊 (零冗余文字)
+            // 右侧：从右往左依次挂载后台任务紧凑图符胶囊
             if (bg_count > 0) {
                 float cur_right = cloud_x + cloud_w - 10.0f;
                 for (size_t i = 0; i < g_installed_app_count; i++) {
                     ActiveWindow* win = &plat->windows[i];
                     if (!win->inst || win->is_open || !win->is_minimized) continue;
 
-                    float task_w = 96.0f;
+                    float task_w = 38.0f;
                     float task_h = 28.0f;
                     float task_x = cur_right - task_w;
                     float task_y = cloud_y + (cloud_h - task_h) * 0.5f;
 
-                    // 应用图标 (20x20)
-                    rife_draw_procedural_icon_direct(plat->hdc_mem, task_x + 4.0f, task_y + 4.0f, 20.0f,
+                    // 应用原生图符 (20x20，例如 Rt / Rc)
+                    rife_draw_procedural_icon_direct(plat->hdc_mem, task_x + 3.0f, task_y + 4.0f, 20.0f,
                         win->plugin->color_top, win->plugin->color_bot, win->plugin->glyph, NULL, false);
 
-                    // 应用名
-                    SelectObject(plat->hdc_mem, plat->hfont_sm);
-                    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(task_x + 28.0f), (int)(task_y + 6.0f),
-                        is_zh ? win->plugin->name_zh : win->plugin->name_en);
-
-                    // 关闭按钮 ×
-                    bool close_hvr = (mx >= task_x + task_w - 20.0f && mx <= task_x + task_w - 2.0f &&
+                    // 关闭图符 × (悬停红显，纯符无字)
+                    bool close_hvr = (mx >= task_x + task_w - 14.0f && mx <= task_x + task_w &&
                                       my >= task_y && my <= task_y + task_h);
                     SelectObject(plat->hdc_mem, plat->hfont_sm);
                     SetTextColor(plat->hdc_mem, close_hvr ? RGB(239, 68, 68) : (is_obsidian ? RGB(156, 163, 175) : RGB(148, 163, 184)));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(task_x + task_w - 15.0f), (int)(task_y + 6.0f), "×");
+                    rife_draw_text_u8(plat->hdc_mem, (int)(task_x + task_w - 12.0f), (int)(task_y + 6.0f), "×");
 
                     cur_right -= (task_w + 6.0f);
                 }
 
                 if (bg_count >= 2) {
-                    float clr_w = 44.0f;
+                    float clr_w = 26.0f;
                     float clr_h = 28.0f;
                     float clr_x = cur_right - clr_w;
                     float clr_y = cloud_y + (cloud_h - clr_h) * 0.5f;
                     bool is_clr_hvr = (mx >= clr_x && mx <= clr_x + clr_w && my >= clr_y && my <= clr_y + clr_h);
-                    SelectObject(plat->hdc_mem, plat->hfont_caption);
-                    SetTextColor(plat->hdc_mem, is_clr_hvr ? (is_obsidian ? RGB(248, 113, 113) : RGB(220, 38, 38)) : (is_obsidian ? RGB(196, 181, 253) : RGB(99, 102, 241)));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(clr_x + 10.0f), (int)(clr_y + 7.0f), is_zh ? "清理" : "Clear");
+                    
+                    // 绘制纯净无字几何清理图符 (Clear All Procedural Icon)
+                    HPEN hpen = CreatePen(PS_SOLID, 2, is_clr_hvr ? RGB(239, 68, 68) : (is_obsidian ? RGB(167, 139, 250) : RGB(99, 102, 241)));
+                    HPEN old_pen = (HPEN)SelectObject(plat->hdc_mem, hpen);
+                    int cx = (int)(clr_x + clr_w * 0.5f);
+                    int cy = (int)(clr_y + clr_h * 0.5f);
+                    MoveToEx(plat->hdc_mem, cx - 4, cy - 4, NULL);
+                    LineTo(plat->hdc_mem, cx + 5, cy + 5);
+                    MoveToEx(plat->hdc_mem, cx + 4, cy - 4, NULL);
+                    LineTo(plat->hdc_mem, cx - 5, cy + 5);
+                    SelectObject(plat->hdc_mem, old_pen);
+                    DeleteObject(hpen);
                 }
             }
         }
@@ -1994,13 +1988,13 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         for (size_t i = 0; i < g_installed_app_count; i++) {
             if (plat->windows[i].inst && !plat->windows[i].is_open && plat->windows[i].is_minimized) bg_cnt++;
         }
-        float tasks_w = (bg_cnt > 0) ? ((float)bg_cnt * 96.0f + (float)(bg_cnt - 1) * 6.0f) : 0.0f;
-        if (bg_cnt >= 2) tasks_w += 50.0f;
+        float tasks_w = (bg_cnt > 0) ? ((float)bg_cnt * 38.0f + (float)(bg_cnt - 1) * 6.0f) : 0.0f;
+        if (bg_cnt >= 2) tasks_w += 32.0f;
         float needed_w = 110.0f + tasks_w + 24.0f;
-        float exp_w = (float)plat->win_width * 0.42f;
+        float exp_w = (float)plat->win_width * 0.36f;
         if (exp_w < needed_w) exp_w = needed_w;
         if (exp_w > (float)plat->win_width - 32.0f) exp_w = (float)plat->win_width - 32.0f;
-        float col_size = (bg_cnt > 0) ? (32.0f + (float)bg_cnt * 22.0f + 4.0f) : 22.0f;
+        float col_size = (bg_cnt > 0) ? (28.0f + (float)bg_cnt * 20.0f + 4.0f) : 22.0f;
         float col_h = (bg_cnt > 0) ? 24.0f : 22.0f;
         float cur_cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
         float cur_cloud_h = rife_lerpf(col_h, 42.0f, plat->cloud_anim);
@@ -2563,14 +2557,14 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                 bg_count++;
             }
         }
-        float tasks_w = (bg_count > 0) ? ((float)bg_count * 96.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
-        if (bg_count >= 2) tasks_w += 50.0f;
+        float tasks_w = (bg_count > 0) ? ((float)bg_count * 38.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
+        if (bg_count >= 2) tasks_w += 32.0f;
         float needed_w = 110.0f + tasks_w + 24.0f;
-        float exp_w = ww * 0.42f;
+        float exp_w = ww * 0.36f;
         if (exp_w < needed_w) exp_w = needed_w;
         if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
 
-        float col_size = (bg_count > 0) ? (32.0f + (float)bg_count * 22.0f + 4.0f) : 22.0f;
+        float col_size = (bg_count > 0) ? (28.0f + (float)bg_count * 20.0f + 4.0f) : 22.0f;
         float col_h = (bg_count > 0) ? 24.0f : 22.0f;
         float exp_h = 42.0f; // 始终固定 42px 高度！
 
@@ -2605,14 +2599,14 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                         ActiveWindow* win_k = &plat->windows[k];
                         if (!win_k->inst || win_k->is_open || !win_k->is_minimized) continue;
 
-                        float task_w = 96.0f;
+                        float task_w = 38.0f;
                         float task_h = 28.0f;
                         float task_x = cur_right - task_w;
                         float task_y = cur_cloud_y + (cur_cloud_h - task_h) * 0.5f;
 
                         if (mx >= task_x && mx <= task_x + task_w && my >= task_y && my <= task_y + task_h) {
                             // 单个卡片点击 [ × ] 结束任务并物理回收内存
-                            if (mx >= task_x + task_w - 20.0f) {
+                            if (mx >= task_x + task_w - 14.0f) {
                                 if (win_k->plugin && win_k->plugin->destroy) {
                                     win_k->plugin->destroy(win_k->inst);
                                 }
@@ -2644,7 +2638,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
 
                     // 3. 点击一键清理 (当 >= 2 个任务时)
                     if (bg_count >= 2) {
-                        float clr_w = 44.0f;
+                        float clr_w = 26.0f;
                         float clr_h = 28.0f;
                         float clr_x = cur_right - clr_w;
                         float clr_y = cur_cloud_y + (cur_cloud_h - clr_h) * 0.5f;
