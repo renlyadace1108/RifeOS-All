@@ -310,6 +310,18 @@ void rife_push_scissor(RifeCore* core, float x, float y, float w, float h) {
     cmd->y = y;
     cmd->w = w;
     cmd->h = h;
+    cmd->radius = 0.0f;
+}
+void rife_push_scissor_round(RifeCore* core, float x, float y, float w, float h, float radius) {
+    RenderCmd* cmd = rife_cmd_push(core, CMD_SCISSOR_PUSH);
+    if (!cmd) {
+        return;
+    }
+    cmd->x = x;
+    cmd->y = y;
+    cmd->w = w;
+    cmd->h = h;
+    cmd->radius = radius;
 }
 void rife_pop_scissor(RifeCore* core) {
     rife_cmd_push(core, CMD_SCISSOR_POP);

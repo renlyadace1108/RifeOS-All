@@ -1131,8 +1131,10 @@ void rife_render_flush(RifeCore* core) {
 
             // 插件界面内容：带动态流体裁剪框，自微球中心向四周铺展
             if (win->plugin->render && cur_h > 46.0f && cur_w > 120.0f) {
-                rife_push_scissor(core, cur_x + 2.0f, cur_y + 36.0f, cur_w - 4.0f, cur_h - 38.0f);
-                win->plugin->render(win->inst, core, cur_x, cur_y + 36.0f, cur_w, cur_h - 36.0f);
+                float target_r = win->is_maximized ? 0.0f : 20.0f;
+                // 窗口专用安全圆角视口裁剪：严格限制在窗口底板边缘圆角以内，内缩 1px 保护反光边缘，杜绝直角溢出
+                rife_push_scissor_round(core, cur_x + 1.0f, cur_y + 36.0f, cur_w - 2.0f, cur_h - 37.0f, target_r);
+                win->plugin->render(win->inst, core, cur_x + 1.0f, cur_y + 36.0f, cur_w - 2.0f, cur_h - 37.0f);
                 rife_pop_scissor(core);
             }
         }
@@ -1177,8 +1179,29 @@ void rife_render_flush(RifeCore* core) {
         }
         else if (curr->type == CMD_SCISSOR_PUSH) {
             SaveDC(plat->hdc_mem);
-            HRGN rgn = CreateRectRgn((int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h));
-            SelectClipRgn(plat->hdc_mem, rgn);
+            HRGN rgn = NULL;
+            if (curr->radius > 0.5f) {
+                // 特殊圆角窗口视口裁剪：顶部在标题栏下方保持水平直线，底部两角严格圆角
+                int rx0 = (int)curr->x;
+                int ry0 = (int)(curr->y - 36.0f);
+                int rx1 = (int)(curr->x + curr->w + 1.0f);
+                int ry1 = (int)(curr->y + curr->h + 1.0f);
+                int rd = (int)(curr->radius * 2.0f);
+                HRGN rgn_win = CreateRoundRectRgn(rx0, ry0, rx1, ry1, rd, rd);
+                HRGN rgn_box = CreateRectRgn(rx0, (int)curr->y, rx1, ry1);
+                CombineRgn(rgn_box, rgn_box, rgn_win, RGN_AND);
+                DeleteObject(rgn_win);
+                rgn = rgn_box;
+            } else {
+                rgn = CreateRectRgn((int)curr->x, (int)curr->y, (int)(curr->x + curr->w + 1.0f), (int)(curr->y + curr->h + 1.0f));
+            }
+            HRGN existing = CreateRectRgn(0, 0, 0, 0);
+            if (GetClipRgn(plat->hdc_mem, existing) == 1) {
+                ExtSelectClipRgn(plat->hdc_mem, rgn, RGN_AND);
+            } else {
+                SelectClipRgn(plat->hdc_mem, rgn);
+            }
+            DeleteObject(existing);
             DeleteObject(rgn);
         }
         else if (curr->type == CMD_SCISSOR_POP) {

@@ -108,6 +108,7 @@ void rife_draw_round_rect(RifeCore* core, float x, float y, float w, float h, fl
 void rife_draw_text(RifeCore* core, float x, float y, const char* text, uint32_t color);
 void rife_draw_text_font(RifeCore* core, float x, float y, const char* text, uint32_t color, uint8_t font_id);
 void rife_push_scissor(RifeCore* core, float x, float y, float w, float h);
+void rife_push_scissor_round(RifeCore* core, float x, float y, float w, float h, float radius);
 void rife_pop_scissor(RifeCore* core);
 bool rife_emit_event(RifeCore* core, uint32_t type, uint16_t src, uint16_t dst, uint64_t payload);
 void rife_dispatch_events(RifeCore* core);
