@@ -556,24 +556,38 @@ void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, fl
     }
 }
 
-void rife_draw_subpixel_circle(Win32Platform* plat, float cx, float cy, float radius, uint32_t fill_color, uint32_t border_color) {
-    if (!plat || !plat->pixels) return;
-    int x0 = (int)floorf(cx - radius - 1.0f);
-    int y0 = (int)floorf(cy - radius - 1.0f);
-    int x1 = (int)ceilf(cx + radius + 1.0f);
-    int y1 = (int)ceilf(cy + radius + 1.0f);
+static void rife_blend_circle_pixels(Win32Platform* plat, float cx, float cy, float radius, uint32_t color, uint32_t border_color) {
+    if (!plat || !plat->pixels || radius <= 0.0f) return;
+    int x0 = (int)floorf(cx - radius - 1.5f);
+    int y0 = (int)floorf(cy - radius - 1.5f);
+    int x1 = (int)ceilf(cx + radius + 1.5f);
+    int y1 = (int)ceilf(cy + radius + 1.5f);
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
     if (x1 > plat->win_width) x1 = plat->win_width;
     if (y1 > plat->win_height) y1 = plat->win_height;
 
-    float fr = (float)((fill_color >> 16) & 0xFF);
-    float fg = (float)((fill_color >> 8) & 0xFF);
-    float fb = (float)(fill_color & 0xFF);
-    float br = (float)((border_color >> 16) & 0xFF);
-    float bg = (float)((border_color >> 8) & 0xFF);
-    float bb = (float)(border_color & 0xFF);
+    RECT clip_rc;
+    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+        if (x0 < clip_rc.left) x0 = clip_rc.left;
+        if (y0 < clip_rc.top) y0 = clip_rc.top;
+        if (x1 > clip_rc.right) x1 = clip_rc.right;
+        if (y1 > clip_rc.bottom) y1 = clip_rc.bottom;
+    }
+    if (x0 >= x1 || y0 >= y1) return;
+
+    float fr = (float)((color >> 24) & 0xFF);
+    float fg = (float)((color >> 16) & 0xFF);
+    float fb = (float)((color >> 8) & 0xFF);
+    float fa = (float)(color & 0xFF) / 255.0f;
+
+    float br = (float)((border_color >> 24) & 0xFF);
+    float bg = (float)((border_color >> 16) & 0xFF);
+    float bb = (float)((border_color >> 8) & 0xFF);
+    float ba = (float)(border_color & 0xFF) / 255.0f;
+
     int width = plat->win_width;
+    float r_sq_max = (radius + 1.5f) * (radius + 1.5f);
 
     for (int y = y0; y < y1; y++) {
         float py = (float)y + 0.5f;
@@ -581,26 +595,236 @@ void rife_draw_subpixel_circle(Win32Platform* plat, float cx, float cy, float ra
         for (int x = x0; x < x1; x++) {
             float px = (float)x + 0.5f;
             float d_sq = (px - cx) * (px - cx) + (py - cy) * (py - cy);
-            if (d_sq > (radius + 1.0f) * (radius + 1.0f)) continue;
+            if (d_sq > r_sq_max) continue;
 
             float d = sqrtf(d_sq) - radius;
-            float coverage = rife_clampf(0.5f - d, 0.0f, 1.0f);
-            if (coverage <= 0.0f) continue;
+            float cov = rife_clampf(0.5f - d, 0.0f, 1.0f);
+            if (cov <= 0.0f) continue;
 
             uint32_t orig = line[x];
             float ob = (float)(orig & 0xFF);
             float og = (float)((orig >> 8) & 0xFF);
             float or_ = (float)((orig >> 16) & 0xFF);
 
-            float stroke_factor = rife_clampf(1.0f - fabsf(d + 0.5f), 0.0f, 1.0f);
-            float r = rife_lerpf(fr, br, stroke_factor);
-            float g = rife_lerpf(fg, bg, stroke_factor);
-            float b = rife_lerpf(fb, bb, stroke_factor);
+            float cur_r = fr;
+            float cur_g = fg;
+            float cur_b = fb;
+            float cur_a = fa;
 
-            uint32_t final_r = (uint32_t)rife_clampf(rife_lerpf(or_, r, coverage), 0.0f, 255.0f);
-            uint32_t final_g = (uint32_t)rife_clampf(rife_lerpf(og, g, coverage), 0.0f, 255.0f);
-            uint32_t final_b = (uint32_t)rife_clampf(rife_lerpf(ob, b, coverage), 0.0f, 255.0f);
-            line[x] = (final_r << 16) | (final_g << 8) | final_b;
+            if (ba > 0.0f) {
+                float stroke_factor = rife_clampf(1.0f - fabsf(d + 0.5f), 0.0f, 1.0f);
+                if (stroke_factor > 0.0f) {
+                    cur_r = rife_lerpf(cur_r, br, stroke_factor);
+                    cur_g = rife_lerpf(cur_g, bg, stroke_factor);
+                    cur_b = rife_lerpf(cur_b, bb, stroke_factor);
+                    cur_a = rife_lerpf(cur_a, ba, stroke_factor);
+                }
+            }
+
+            float final_a = cur_a * cov;
+            float inv_a = 1.0f - final_a;
+            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + cur_r * final_a, 0.0f, 255.0f);
+            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + cur_g * final_a, 0.0f, 255.0f);
+            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + cur_b * final_a, 0.0f, 255.0f);
+            line[x] = (nr << 16) | (ng << 8) | nb;
+        }
+    }
+}
+
+void rife_draw_subpixel_circle(Win32Platform* plat, float cx, float cy, float radius, uint32_t fill_color, uint32_t border_color) {
+    uint32_t fc = ((fill_color & 0xFFFFFF) << 8) | 0xFF;
+    uint32_t bc = ((border_color & 0xFFFFFF) << 8) | 0xFF;
+    rife_blend_circle_pixels(plat, cx, cy, radius, fc, bc);
+}
+
+static void rife_blend_line_pixels(Win32Platform* plat, float x1, float y1, float x2, float y2, float thickness, uint32_t color) {
+    if (!plat || !plat->pixels || thickness <= 0.0f) return;
+    float half_thick = thickness * 0.5f;
+    float min_x = (x1 < x2 ? x1 : x2) - half_thick - 1.5f;
+    float min_y = (y1 < y2 ? y1 : y2) - half_thick - 1.5f;
+    float max_x = (x1 > x2 ? x1 : x2) + half_thick + 1.5f;
+    float max_y = (y1 > y2 ? y1 : y2) + half_thick + 1.5f;
+
+    int x0 = (int)floorf(min_x);
+    int y0 = (int)floorf(min_y);
+    int x1_i = (int)ceilf(max_x);
+    int y1_i = (int)ceilf(max_y);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1_i > plat->win_width) x1_i = plat->win_width;
+    if (y1_i > plat->win_height) y1_i = plat->win_height;
+
+    RECT clip_rc;
+    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+        if (x0 < clip_rc.left) x0 = clip_rc.left;
+        if (y0 < clip_rc.top) y0 = clip_rc.top;
+        if (x1_i > clip_rc.right) x1_i = clip_rc.right;
+        if (y1_i > clip_rc.bottom) y1_i = clip_rc.bottom;
+    }
+    if (x0 >= x1_i || y0 >= y1_i) return;
+
+    float lr = (float)((color >> 24) & 0xFF);
+    float lg = (float)((color >> 16) & 0xFF);
+    float lb = (float)((color >> 8) & 0xFF);
+    float la = (float)(color & 0xFF) / 255.0f;
+    if (la <= 0.0f) return;
+
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len_sq = dx * dx + dy * dy;
+    int width = plat->win_width;
+
+    for (int y = y0; y < y1_i; y++) {
+        float py = (float)y + 0.5f;
+        uint32_t* line = &plat->pixels[y * width];
+        for (int x = x0; x < x1_i; x++) {
+            float px = (float)x + 0.5f;
+            float t = 0.0f;
+            if (len_sq > 0.0001f) {
+                t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
+                if (t < 0.0f) t = 0.0f;
+                else if (t > 1.0f) t = 1.0f;
+            }
+            float qx = x1 + t * dx;
+            float qy = y1 + t * dy;
+            float dist = sqrtf((px - qx) * (px - qx) + (py - qy) * (py - qy)) - half_thick;
+            float cov = rife_clampf(0.5f - dist, 0.0f, 1.0f);
+            if (cov <= 0.0f) continue;
+
+            uint32_t orig = line[x];
+            float ob = (float)(orig & 0xFF);
+            float og = (float)((orig >> 8) & 0xFF);
+            float or_ = (float)((orig >> 16) & 0xFF);
+
+            float final_a = la * cov;
+            float inv_a = 1.0f - final_a;
+            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + lr * final_a, 0.0f, 255.0f);
+            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + lg * final_a, 0.0f, 255.0f);
+            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + lb * final_a, 0.0f, 255.0f);
+            line[x] = (nr << 16) | (ng << 8) | nb;
+        }
+    }
+}
+
+static void rife_blend_arc_sector_pixels(Win32Platform* plat, float cx, float cy, float r_inner, float r_outer, float start_deg, float end_deg, uint32_t color, uint32_t border_color) {
+    if (!plat || !plat->pixels || r_outer <= 0.0f || r_outer <= r_inner) return;
+
+    int x0 = (int)floorf(cx - r_outer - 1.5f);
+    int y0 = (int)floorf(cy - r_outer - 1.5f);
+    int x1 = (int)ceilf(cx + r_outer + 1.5f);
+    int y1 = (int)ceilf(cy + r_outer + 1.5f);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > plat->win_width) x1 = plat->win_width;
+    if (y1 > plat->win_height) y1 = plat->win_height;
+
+    RECT clip_rc;
+    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+        if (x0 < clip_rc.left) x0 = clip_rc.left;
+        if (y0 < clip_rc.top) y0 = clip_rc.top;
+        if (x1 > clip_rc.right) x1 = clip_rc.right;
+        if (y1 > clip_rc.bottom) y1 = clip_rc.bottom;
+    }
+    if (x0 >= x1 || y0 >= y1) return;
+
+    float fr = (float)((color >> 24) & 0xFF);
+    float fg = (float)((color >> 16) & 0xFF);
+    float fb = (float)((color >> 8) & 0xFF);
+    float fa = (float)(color & 0xFF) / 255.0f;
+
+    float br = (float)((border_color >> 24) & 0xFF);
+    float bg = (float)((border_color >> 16) & 0xFF);
+    float bb = (float)((border_color >> 8) & 0xFF);
+    float ba = (float)(border_color & 0xFF) / 255.0f;
+
+    if (fa <= 0.0f && ba <= 0.0f) return;
+
+    float span = end_deg - start_deg;
+    bool is_full_circle = (span >= 359.9f);
+    float s = fmodf(start_deg, 360.0f);
+    if (s < 0.0f) s += 360.0f;
+    float e = fmodf(end_deg, 360.0f);
+    if (e < 0.0f) e += 360.0f;
+
+    int width = plat->win_width;
+    float r_in_sq = (r_inner > 1.0f) ? (r_inner - 1.5f) * (r_inner - 1.5f) : 0.0f;
+    float r_out_sq = (r_outer + 1.5f) * (r_outer + 1.5f);
+    const float rad2deg = 57.295779513f;
+    const float deg2rad = 0.0174532925f;
+
+    for (int y = y0; y < y1; y++) {
+        float py = (float)y + 0.5f;
+        float dy = py - cy;
+        uint32_t* line = &plat->pixels[y * width];
+        for (int x = x0; x < x1; x++) {
+            float px = (float)x + 0.5f;
+            float dx = px - cx;
+            float d_sq = dx * dx + dy * dy;
+            if (d_sq < r_in_sq || d_sq > r_out_sq) continue;
+
+            float r = sqrtf(d_sq);
+            if (r < 0.001f) continue;
+
+            float cov_in = (r_inner > 0.0f) ? rife_clampf(r - (r_inner - 0.5f), 0.0f, 1.0f) : 1.0f;
+            float cov_out = rife_clampf((r_outer + 0.5f) - r, 0.0f, 1.0f);
+            float cov_r = cov_in * cov_out;
+            if (cov_r <= 0.0f) continue;
+
+            float angle = atan2f(dx, -dy) * rad2deg;
+            if (angle < 0.0f) angle += 360.0f;
+
+            float cov_ang = 1.0f;
+            bool inside_ang = false;
+            if (is_full_circle) {
+                inside_ang = true;
+            }
+            else if (s <= e) {
+                if (angle >= s - 1.0f && angle <= e + 1.0f) {
+                    inside_ang = true;
+                    float d_s = (angle - s) * deg2rad * r;
+                    float d_e = (e - angle) * deg2rad * r;
+                    float d_min = (d_s < d_e) ? d_s : d_e;
+                    cov_ang = rife_clampf(d_min + 0.5f, 0.0f, 1.0f);
+                }
+            }
+            else {
+                if (angle >= s - 1.0f || angle <= e + 1.0f) {
+                    inside_ang = true;
+                    float d_s = (angle >= s - 1.0f) ? (angle - s) : (angle + 360.0f - s);
+                    d_s = d_s * deg2rad * r;
+                    float d_e = (angle <= e + 1.0f) ? (e - angle) : (e + 360.0f - angle);
+                    d_e = d_e * deg2rad * r;
+                    float d_min = (d_s < d_e) ? d_s : d_e;
+                    cov_ang = rife_clampf(d_min + 0.5f, 0.0f, 1.0f);
+                }
+            }
+
+            if (!inside_ang || cov_ang <= 0.0f) continue;
+
+            float cov = cov_r * cov_ang;
+            uint32_t orig = line[x];
+            float ob = (float)(orig & 0xFF);
+            float og = (float)((orig >> 8) & 0xFF);
+            float or_ = (float)((orig >> 16) & 0xFF);
+
+            float cur_r = fr, cur_g = fg, cur_b = fb, cur_a = fa;
+            if (ba > 0.0f) {
+                float edge_dist = (r_outer - r < r - r_inner) ? (r_outer - r) : (r - r_inner);
+                float stroke = rife_clampf(1.0f - edge_dist, 0.0f, 1.0f);
+                if (stroke > 0.0f) {
+                    cur_r = rife_lerpf(cur_r, br, stroke);
+                    cur_g = rife_lerpf(cur_g, bg, stroke);
+                    cur_b = rife_lerpf(cur_b, bb, stroke);
+                    cur_a = rife_lerpf(cur_a, ba, stroke);
+                }
+            }
+
+            float final_a = cur_a * cov;
+            float inv_a = 1.0f - final_a;
+            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + cur_r * final_a, 0.0f, 255.0f);
+            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + cur_g * final_a, 0.0f, 255.0f);
+            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + cur_b * final_a, 0.0f, 255.0f);
+            line[x] = (nr << 16) | (ng << 8) | nb;
         }
     }
 }
@@ -1312,6 +1536,29 @@ void rife_render_flush(RifeCore* core) {
                 // 统一采用亚像素 SDF 连续距离场抗锯齿渲染（彻底杜绝 Windows GDI RoundRect 狗牙与阶梯锯齿）
                 GdiFlush();
                 rife_blend_round_rect_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color, curr->border_color);
+            }
+        }
+        else if (curr->type == CMD_CIRCLE) {
+            uint8_t a = (uint8_t)(curr->color & 0xFF);
+            uint8_t ba = (uint8_t)(curr->border_color & 0xFF);
+            if (a > 0 || ba > 0) {
+                GdiFlush();
+                rife_blend_circle_pixels(plat, curr->x, curr->y, curr->radius, curr->color, curr->border_color);
+            }
+        }
+        else if (curr->type == CMD_LINE) {
+            uint8_t a = (uint8_t)(curr->color & 0xFF);
+            if (a > 0) {
+                GdiFlush();
+                rife_blend_line_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color);
+            }
+        }
+        else if (curr->type == CMD_ARC_SECTOR) {
+            uint8_t a = (uint8_t)(curr->color & 0xFF);
+            uint8_t ba = (uint8_t)(curr->border_color & 0xFF);
+            if (a > 0 || ba > 0) {
+                GdiFlush();
+                rife_blend_arc_sector_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->angle_start, curr->angle_end, curr->color, curr->border_color);
             }
         }
         else if (curr->type == CMD_RECT) {

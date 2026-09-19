@@ -43,7 +43,10 @@ typedef enum {
     CMD_SCISSOR_PUSH = 3,
     CMD_SCISSOR_POP = 4,
     CMD_ROUND_RECT = 5,
-    CMD_TEXT_RECT = 6
+    CMD_TEXT_RECT = 6,
+    CMD_CIRCLE = 7,
+    CMD_LINE = 8,
+    CMD_ARC_SECTOR = 9
 } RenderCmdType;
 typedef struct RenderCmd {
     RenderCmdType type;
@@ -52,6 +55,8 @@ typedef struct RenderCmd {
     float w;
     float h;
     float radius;
+    float angle_start;
+    float angle_end;
     uint32_t color;
     uint32_t border_color;
     uint8_t font_id;
@@ -106,6 +111,9 @@ bool rife_storage_compact(uint16_t app_id, const uint32_t* data_types, const voi
 RenderCmd* rife_cmd_push(RifeCore* core, RenderCmdType type);
 void rife_draw_rect(RifeCore* core, float x, float y, float w, float h, uint32_t color);
 void rife_draw_round_rect(RifeCore* core, float x, float y, float w, float h, float radius, uint32_t bg_color, uint32_t border_color);
+void rife_draw_circle(RifeCore* core, float cx, float cy, float radius, uint32_t fill_color, uint32_t border_color);
+void rife_draw_line(RifeCore* core, float x1, float y1, float x2, float y2, float thickness, uint32_t color);
+void rife_draw_arc_sector(RifeCore* core, float cx, float cy, float r_inner, float r_outer, float start_deg, float end_deg, uint32_t fill_color, uint32_t border_color);
 void rife_draw_text(RifeCore* core, float x, float y, const char* text, uint32_t color);
 void rife_draw_text_font(RifeCore* core, float x, float y, const char* text, uint32_t color, uint8_t font_id);
 void rife_draw_text_rect(RifeCore* core, float x, float y, float w, float h, const char* text, uint32_t color, uint8_t font_id, uint32_t align_flags);

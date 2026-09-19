@@ -11,6 +11,8 @@ add_executable(RIFEOS WIN32
     src/app_settings.c
     src/app_calendar.h
     src/app_calendar.c
+    src/app_clock.h
+    src/app_clock.c
     src/main.c
     src/rife_app_api.h
     src/app_manifest.h

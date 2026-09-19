@@ -167,8 +167,6 @@ static void sync_system_clock(CalendarState* state) {
 // Rtodo 自定义标签色彩体系与本地持久化 (Zero Heap Churn)
 // -------------------------------------------------------------
 
-#define RTODO_MAGIC 0x544F444F // "TODO"
-#define RTODO_VERSION 2
 
 static const uint32_t s_tag_palette[6] = {
     0x3370FFFF, // 品牌蓝 (Blue)
@@ -295,33 +293,7 @@ static void calc_event_end_time(int start_h, int start_m, int duration_idx, int*
     }
 }
 
-typedef struct {
-    uint32_t magic;
-    uint32_t version;
-    int tag_count;
-    CustomTag tags[CAL_MAX_CUSTOM_TAGS];
-    int event_count;
-    CalendarEvent events[CAL_MAX_EVENTS];
-} RtodoStorage;
-
-static void init_default_tags(CalendarState* state) {
-    state->tag_count = 3;
-    snprintf(state->tags[0].name, sizeof(state->tags[0].name), "工作");
-    state->tags[0].color_bar = 0x3370FFFF; // Blue
-    state->tags[0].is_enabled = true;
-
-    snprintf(state->tags[1].name, sizeof(state->tags[1].name), "生活");
-    state->tags[1].color_bar = 0x10B981FF; // Green
-    state->tags[1].is_enabled = true;
-
-    snprintf(state->tags[2].name, sizeof(state->tags[2].name), "重要");
-    state->tags[2].color_bar = 0xEF4444FF; // Red
-    state->tags[2].is_enabled = true;
-
-    state->event_count = 0; // 干净初始状态：绝不注入假测试数据
-}
-
-static void get_rtodo_storage_path(char* out_path, size_t max_len) {
+void rtodo_get_storage_path(char* out_path, size_t max_len) {
     // 1. 优先检查当前运行目录是否存在现有的 rtodo_data.bin (便携模式)
     FILE* test_fp = fopen("rtodo_data.bin", "rb");
     if (test_fp) {
@@ -361,11 +333,50 @@ static void get_rtodo_storage_path(char* out_path, size_t max_len) {
     snprintf(out_path, max_len, "rtodo_data.bin");
 }
 
-static void save_calendar_data(const CalendarState* state) {
+bool rtodo_save_storage(const RtodoStorage* in_storage) {
+    if (!in_storage) return false;
     char path[MAX_PATH];
-    get_rtodo_storage_path(path, sizeof(path));
+    rtodo_get_storage_path(path, sizeof(path));
     FILE* fp = fopen(path, "wb");
-    if (!fp) return;
+    if (!fp) return false;
+    fwrite(in_storage, sizeof(RtodoStorage), 1, fp);
+    fclose(fp);
+    return true;
+}
+
+bool rtodo_load_storage(RtodoStorage* out_storage) {
+    if (!out_storage) return false;
+    char path[MAX_PATH];
+    rtodo_get_storage_path(path, sizeof(path));
+    FILE* fp = fopen(path, "rb");
+    if (!fp) return false;
+    bool ok = false;
+    if (fread(out_storage, sizeof(RtodoStorage), 1, fp) == 1 &&
+        out_storage->magic == RTODO_MAGIC && out_storage->version == RTODO_VERSION) {
+        ok = true;
+    }
+    fclose(fp);
+    return ok;
+}
+
+static void init_default_tags(CalendarState* state) {
+    state->tag_count = 3;
+    snprintf(state->tags[0].name, sizeof(state->tags[0].name), "工作");
+    state->tags[0].color_bar = 0x3370FFFF; // Blue
+    state->tags[0].is_enabled = true;
+
+    snprintf(state->tags[1].name, sizeof(state->tags[1].name), "生活");
+    state->tags[1].color_bar = 0x10B981FF; // Green
+    state->tags[1].is_enabled = true;
+
+    snprintf(state->tags[2].name, sizeof(state->tags[2].name), "重要");
+    state->tags[2].color_bar = 0xEF4444FF; // Red
+    state->tags[2].is_enabled = true;
+
+    state->event_count = 0; // 干净初始状态：绝不注入假测试数据
+}
+
+static void save_calendar_data(const CalendarState* state) {
     RtodoStorage store;
     memset(&store, 0, sizeof(RtodoStorage));
     store.magic = RTODO_MAGIC;
@@ -380,20 +391,12 @@ static void save_calendar_data(const CalendarState* state) {
     if (store.event_count > 0) {
         memcpy(store.events, state->events, sizeof(CalendarEvent) * store.event_count);
     }
-    fwrite(&store, sizeof(RtodoStorage), 1, fp);
-    fclose(fp);
+    rtodo_save_storage(&store);
 }
 
 static void load_calendar_data(CalendarState* state) {
-    char path[MAX_PATH];
-    get_rtodo_storage_path(path, sizeof(path));
-    FILE* fp = fopen(path, "rb");
-    if (!fp) {
-        init_default_tags(state);
-        return;
-    }
     RtodoStorage store;
-    if (fread(&store, sizeof(RtodoStorage), 1, fp) == 1 && store.magic == RTODO_MAGIC && store.version == RTODO_VERSION) {
+    if (rtodo_load_storage(&store)) {
         state->tag_count = store.tag_count;
         if (state->tag_count > CAL_MAX_CUSTOM_TAGS) state->tag_count = CAL_MAX_CUSTOM_TAGS;
         if (state->tag_count > 0) {
@@ -407,7 +410,6 @@ static void load_calendar_data(CalendarState* state) {
     } else {
         init_default_tags(state);
     }
-    fclose(fp);
 }
 
 // -------------------------------------------------------------

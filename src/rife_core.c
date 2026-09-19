@@ -279,6 +279,50 @@ void rife_draw_round_rect(RifeCore* core, float x, float y, float w, float h, fl
     cmd->font_id = 0;
     cmd->text[0] = '\0';
 }
+void rife_draw_circle(RifeCore* core, float cx, float cy, float radius, uint32_t fill_color, uint32_t border_color) {
+    if (!core || radius <= 0.0f) return;
+    RenderCmd* cmd = rife_cmd_push(core, CMD_CIRCLE);
+    if (!cmd) return;
+    cmd->x = cx;
+    cmd->y = cy;
+    cmd->w = radius * 2.0f;
+    cmd->h = radius * 2.0f;
+    cmd->radius = radius;
+    cmd->color = fill_color;
+    cmd->border_color = border_color;
+    cmd->font_id = 0;
+    cmd->text[0] = '\0';
+}
+void rife_draw_line(RifeCore* core, float x1, float y1, float x2, float y2, float thickness, uint32_t color) {
+    if (!core) return;
+    RenderCmd* cmd = rife_cmd_push(core, CMD_LINE);
+    if (!cmd) return;
+    cmd->x = x1;
+    cmd->y = y1;
+    cmd->w = x2;
+    cmd->h = y2;
+    cmd->radius = (thickness > 0.5f) ? thickness : 1.0f;
+    cmd->color = color;
+    cmd->border_color = 0;
+    cmd->font_id = 0;
+    cmd->text[0] = '\0';
+}
+void rife_draw_arc_sector(RifeCore* core, float cx, float cy, float r_inner, float r_outer, float start_deg, float end_deg, uint32_t fill_color, uint32_t border_color) {
+    if (!core || r_outer <= 0.0f) return;
+    RenderCmd* cmd = rife_cmd_push(core, CMD_ARC_SECTOR);
+    if (!cmd) return;
+    cmd->x = cx;
+    cmd->y = cy;
+    cmd->w = r_inner;
+    cmd->h = r_outer;
+    cmd->radius = r_outer;
+    cmd->angle_start = start_deg;
+    cmd->angle_end = end_deg;
+    cmd->color = fill_color;
+    cmd->border_color = border_color;
+    cmd->font_id = 0;
+    cmd->text[0] = '\0';
+}
 void rife_draw_text_font(RifeCore* core, float x, float y, const char* text, uint32_t color, uint8_t font_id) {
     if (!text) {
         return;

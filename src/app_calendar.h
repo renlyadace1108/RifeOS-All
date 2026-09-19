@@ -41,6 +41,23 @@ typedef struct {
     bool is_completed;
 } CalendarEvent;
 
+#define RTODO_MAGIC 0x544F444F // "TODO"
+#define RTODO_VERSION 2
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    int tag_count;
+    CustomTag tags[CAL_MAX_CUSTOM_TAGS];
+    int event_count;
+    CalendarEvent events[CAL_MAX_EVENTS];
+} RtodoStorage;
+
+void rtodo_get_storage_path(char* out_path, size_t max_len);
+bool rtodo_load_storage(RtodoStorage* out_storage);
+bool rtodo_save_storage(const RtodoStorage* in_storage);
+
 extern const RifePluginApp g_calendar_plugin_app;
 
 #endif
+
