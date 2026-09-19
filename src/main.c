@@ -1468,7 +1468,45 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         }
         break;
     }
+    case WM_CHAR: {
+        wchar_t wch = (wchar_t)wparam;
+        if (wch >= 32 || wch == '\b' || wch == '\r') {
+            char utf8[8] = { 0 };
+            WideCharToMultiByte(CP_UTF8, 0, &wch, 1, utf8, sizeof(utf8), NULL, NULL);
+            size_t len = strlen(core->input.text_input);
+            if (len + strlen(utf8) < sizeof(core->input.text_input) - 1) {
+                strcat(core->input.text_input, utf8);
+            }
+            rife_request_redraw(core);
+        }
+        return 0;
+    }
     case WM_KEYDOWN: {
+        if (wparam < 256) {
+            core->input.key_down[wparam] = 1;
+            core->input.key_pressed[wparam] = 1;
+        }
+        // Ctrl+V 剪贴板文本粘贴支持
+        if (wparam == 'V' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            if (OpenClipboard(hwnd)) {
+                HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+                if (hData) {
+                    wchar_t* wtext = (wchar_t*)GlobalLock(hData);
+                    if (wtext) {
+                        char utf8[128] = { 0 };
+                        WideCharToMultiByte(CP_UTF8, 0, wtext, -1, utf8, sizeof(utf8) - 1, NULL, NULL);
+                        size_t len = strlen(core->input.text_input);
+                        if (len + strlen(utf8) < sizeof(core->input.text_input) - 1) {
+                            strcat(core->input.text_input, utf8);
+                        }
+                        GlobalUnlock(hData);
+                    }
+                }
+                CloseClipboard();
+                rife_request_redraw(core);
+            }
+            return 0;
+        }
         if (wparam == VK_ESCAPE) {
             if (plat->is_fullscreen) {
                 toggle_immersion_fullscreen(plat);
@@ -1478,7 +1516,16 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
             rife_request_redraw(core);
             return 0;
         }
+        rife_request_redraw(core);
         break;
+    }
+    case WM_KEYUP: {
+        if (wparam < 256) {
+            core->input.key_down[wparam] = 0;
+            core->input.key_released[wparam] = 1;
+            rife_request_redraw(core);
+        }
+        return 0;
     }
     case WM_DROPFILES: {
         HDROP hDrop = (HDROP)wparam;
@@ -1984,6 +2031,22 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
         }
     }
 
+    // 键盘按键与文本输入事件分发至当前聚焦应用窗口
+    if (plat->active_win_idx >= 0 && (input->text_input[0] != '\0' || input->key_pressed[VK_BACK] || input->key_pressed[VK_RETURN])) {
+        ActiveWindow* win_act = &plat->windows[plat->active_win_idx];
+        if (win_act->inst && win_act->anim > 0.85f && win_act->is_open && win_act->plugin->update) {
+            float cur_x = win_act->is_maximized ? 0.0f : win_act->x;
+            float cur_y = win_act->is_maximized ? 0.0f : win_act->y;
+            float cur_w = win_act->is_maximized ? ww : win_act->w;
+            float cur_h = win_act->is_maximized ? wh : win_act->h;
+            RifeInput client_input = *input;
+            client_input.mouse_x = mx - cur_x;
+            client_input.mouse_y = my - (cur_y + 36.0f);
+            win_act->plugin->update(win_act->inst, core, &client_input, cur_w, cur_h - 36.0f);
+            rife_request_redraw(core);
+        }
+    }
+
     // 6. 底部纤细 Dock 浮动与插值判定 (44px)
     float dock_w = ww * (2.0f / 3.0f);
     if (dock_w < 280.0f) dock_w = 280.0f;
@@ -2013,7 +2076,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
             }
         }
     }
-    if (is_animating || input->mouse_pressed[0] || input->mouse_down[0] || input->scroll_delta != 0.0f) {
+    if (is_animating || input->mouse_pressed[0] || input->mouse_down[0] || input->scroll_delta != 0.0f || input->text_input[0] != '\0' || input->key_pressed[VK_BACK]) {
         rife_request_redraw(core);
     }
 

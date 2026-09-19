@@ -1,4 +1,8 @@
 #define _CRT_SECURE_NO_WARNINGS
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include "app_calendar.h"
 #include "app_manifest.h"
 #include <stdio.h>
@@ -24,21 +28,35 @@ typedef struct {
     int view_month;
     int view_day;
 
-    bool filter_category[CAL_CAT_COUNT];
+    // 自定义标签系统 (用户自由定义，完全自定义)
+    CustomTag tags[CAL_MAX_CUSTOM_TAGS];
+    int tag_count;
 
+    // 日程列表 (本地持久化)
     CalendarEvent events[CAL_MAX_EVENTS];
     int event_count;
 
     int selected_event_id;
 
-    // 新建日程浮动卡片
+    // 新建日程模态弹窗
     bool show_new_modal;
-    int new_cat;
+    int modal_tag_idx;
     int new_hour;
     int new_min;          // 0 或 30 分钟
     int new_duration_idx; // 0: 30m, 1: 1h, 2: 1.5h, 3: 2h
-    int new_preset_idx;   // 0..5 (6 常用主题)
-    int new_loc_idx;      // 0..3 (4 常用地点)
+
+    // 交互式文本输入与焦点状态机
+    // active_field: 0=none, 1=title, 2=location, 3=desc, 4=new_tag_name
+    int active_field;
+    char input_title[48];
+    char input_location[32];
+    char input_desc[64];
+    float cursor_blink_t;
+
+    // 新建自定义标签子弹窗
+    bool show_new_tag_modal;
+    char new_tag_name[24];
+    int new_tag_color_idx; // 0..5
 
     float scroll_y;
 } CalendarState;
@@ -58,7 +76,6 @@ static inline int days_in_month(int y, int m) {
     return 30;
 }
 
-// 坂本算法 (Sakamoto's Algorithm): 0=Monday .. 6=Sunday
 // 坂本算法 (Sakamoto's Algorithm): 0=Sunday, 1=Monday .. 6=Saturday
 static inline int get_day_of_week_sun(int y, int m, int d) {
     static const int t[] = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
@@ -131,43 +148,77 @@ static void sync_system_clock(CalendarState* state) {
 }
 
 // -------------------------------------------------------------
-// Rtodo 预设字典与本地存储 (Zero Heap Churn: 极简纯 C 序列化)
+// Rtodo 自定义标签色彩体系与本地持久化 (Zero Heap Churn)
 // -------------------------------------------------------------
 
-static const char* const s_cat_names_zh[CAL_CAT_COUNT] = { "工作协同", "架构评审", "个人聚焦", "关键发布" };
-static const char* const s_cat_names_en[CAL_CAT_COUNT] = { "Work & Sync", "Review", "Personal", "Milestones" };
+#define RTODO_MAGIC 0x544F444F // "TODO"
+#define RTODO_VERSION 2
 
-static const char* const s_preset_titles_zh[6] = {
-    "团队周会",
-    "代码重构",
-    "设计评审",
-    "方案讨论",
-    "健身运动",
-    "客户沟通"
+static const uint32_t s_tag_palette[6] = {
+    0x3370FFFF, // 品牌蓝 (Blue)
+    0x8B5CF6FF, // 薰衣紫 (Purple)
+    0x10B981FF, // 薄荷绿 (Emerald)
+    0xF59E0BFF, // 暖琥珀 (Amber)
+    0xEF4444FF, // 珊瑚红 (Rose)
+    0x06B6D4FF  // 极光青 (Cyan)
 };
 
-static const char* const s_preset_titles_en[6] = {
-    "Team Sync",
-    "Code Refactor",
-    "Design Review",
-    "Tech Discussion",
-    "Workout",
-    "Client Catchup"
-};
+typedef struct {
+    uint32_t bg;
+    uint32_t border;
+    uint32_t bar;
+    uint32_t text;
+} TagColorStyle;
 
-static const char* const s_preset_locations_zh[4] = {
-    "线上会议",
-    "会议室A",
-    "办公室",
-    "居家远程"
-};
+static TagColorStyle get_tag_style(uint32_t bar_color, bool is_dark) {
+    TagColorStyle s;
+    s.bar = bar_color;
+    uint8_t r = (uint8_t)((bar_color >> 24) & 0xFF);
+    uint8_t g = (uint8_t)((bar_color >> 16) & 0xFF);
+    uint8_t b = (uint8_t)((bar_color >> 8) & 0xFF);
+    if (is_dark) {
+        s.bg = ((uint32_t)(r * 0.22f) << 24) | ((uint32_t)(g * 0.22f) << 16) | ((uint32_t)(b * 0.22f) << 8) | 0xB8;
+        s.border = ((uint32_t)(r * 0.40f) << 24) | ((uint32_t)(g * 0.40f) << 16) | ((uint32_t)(b * 0.40f) << 8) | 0xCC;
+        s.text = ((uint32_t)(r * 0.4f + 150.0f) << 24) | ((uint32_t)(g * 0.4f + 150.0f) << 16) | ((uint32_t)(b * 0.4f + 150.0f) << 8) | 0xFF;
+    } else {
+        s.bg = ((uint32_t)(r * 0.12f + 220.0f) << 24) | ((uint32_t)(g * 0.12f + 220.0f) << 16) | ((uint32_t)(b * 0.12f + 220.0f) << 8) | 0xD4;
+        s.border = ((uint32_t)(r * 0.25f + 185.0f) << 24) | ((uint32_t)(g * 0.25f + 185.0f) << 16) | ((uint32_t)(b * 0.25f + 185.0f) << 8) | 0xD4;
+        s.text = ((uint32_t)(r * 0.6f) << 24) | ((uint32_t)(g * 0.6f) << 16) | ((uint32_t)(b * 0.6f) << 8) | 0xFF;
+    }
+    return s;
+}
 
-static const char* const s_preset_locations_en[4] = {
-    "Online Meeting",
-    "Room A",
-    "Office",
-    "Remote"
-};
+static TagColorStyle get_event_style(const CalendarState* state, int tag_idx, bool is_dark) {
+    if (tag_idx >= 0 && tag_idx < state->tag_count) {
+        return get_tag_style(state->tags[tag_idx].color_bar, is_dark);
+    }
+    return get_tag_style(0x3370FFFF, is_dark);
+}
+
+static const char* get_event_tag_name(const CalendarState* state, int tag_idx) {
+    if (tag_idx >= 0 && tag_idx < state->tag_count) {
+        return state->tags[tag_idx].name;
+    }
+    return "日程";
+}
+
+static bool is_event_visible(const CalendarState* state, const CalendarEvent* e) {
+    if (e->tag_idx >= 0 && e->tag_idx < state->tag_count) {
+        return state->tags[e->tag_idx].is_enabled;
+    }
+    return true;
+}
+
+static void utf8_pop_back(char* str) {
+    if (!str || str[0] == '\0') return;
+    size_t len = strlen(str);
+    if (len == 0) return;
+    size_t i = len - 1;
+    while (i > 0 && ((unsigned char)str[i] & 0xC0) == 0x80) {
+        i--;
+    }
+    str[i] = '\0';
+}
 
 static void calc_event_end_time(int start_h, int start_m, int duration_idx, int* end_h, int* end_m) {
     int duration_mins = 60;
@@ -187,41 +238,75 @@ static void calc_event_end_time(int start_h, int start_m, int duration_idx, int*
     }
 }
 
-static void save_calendar_events(const CalendarState* state) {
-    FILE* fp = fopen("rtodo_events.bin", "wb");
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    int tag_count;
+    CustomTag tags[CAL_MAX_CUSTOM_TAGS];
+    int event_count;
+    CalendarEvent events[CAL_MAX_EVENTS];
+} RtodoStorage;
+
+static void init_default_tags(CalendarState* state) {
+    state->tag_count = 3;
+    snprintf(state->tags[0].name, sizeof(state->tags[0].name), "工作");
+    state->tags[0].color_bar = 0x3370FFFF; // Blue
+    state->tags[0].is_enabled = true;
+
+    snprintf(state->tags[1].name, sizeof(state->tags[1].name), "生活");
+    state->tags[1].color_bar = 0x10B981FF; // Green
+    state->tags[1].is_enabled = true;
+
+    snprintf(state->tags[2].name, sizeof(state->tags[2].name), "重要");
+    state->tags[2].color_bar = 0xEF4444FF; // Red
+    state->tags[2].is_enabled = true;
+
+    state->event_count = 0; // 干净初始状态：绝不注入假测试数据
+}
+
+static void save_calendar_data(const CalendarState* state) {
+    FILE* fp = fopen("rtodo_data.bin", "wb");
     if (!fp) return;
-    uint32_t count = (uint32_t)state->event_count;
-    if (count > CAL_MAX_EVENTS) count = CAL_MAX_EVENTS;
-    fwrite(&count, sizeof(uint32_t), 1, fp);
-    if (count > 0) {
-        fwrite(state->events, sizeof(CalendarEvent), count, fp);
+    RtodoStorage store;
+    memset(&store, 0, sizeof(RtodoStorage));
+    store.magic = RTODO_MAGIC;
+    store.version = RTODO_VERSION;
+    store.tag_count = state->tag_count;
+    if (store.tag_count > CAL_MAX_CUSTOM_TAGS) store.tag_count = CAL_MAX_CUSTOM_TAGS;
+    if (store.tag_count > 0) {
+        memcpy(store.tags, state->tags, sizeof(CustomTag) * store.tag_count);
     }
+    store.event_count = state->event_count;
+    if (store.event_count > CAL_MAX_EVENTS) store.event_count = CAL_MAX_EVENTS;
+    if (store.event_count > 0) {
+        memcpy(store.events, state->events, sizeof(CalendarEvent) * store.event_count);
+    }
+    fwrite(&store, sizeof(RtodoStorage), 1, fp);
     fclose(fp);
 }
 
-static void load_calendar_events(CalendarState* state) {
-    FILE* fp = fopen("rtodo_events.bin", "rb");
+static void load_calendar_data(CalendarState* state) {
+    FILE* fp = fopen("rtodo_data.bin", "rb");
     if (!fp) {
-        state->event_count = 0;
+        init_default_tags(state);
         return;
     }
-    uint32_t count = 0;
-    if (fread(&count, sizeof(uint32_t), 1, fp) == 1) {
-        if (count > CAL_MAX_EVENTS) count = CAL_MAX_EVENTS;
-        state->event_count = (int)count;
-        if (count > 0) {
-            size_t read_cnt = fread(state->events, sizeof(CalendarEvent), count, fp);
-            state->event_count = (int)read_cnt;
+    RtodoStorage store;
+    if (fread(&store, sizeof(RtodoStorage), 1, fp) == 1 && store.magic == RTODO_MAGIC && store.version == RTODO_VERSION) {
+        state->tag_count = store.tag_count;
+        if (state->tag_count > CAL_MAX_CUSTOM_TAGS) state->tag_count = CAL_MAX_CUSTOM_TAGS;
+        if (state->tag_count > 0) {
+            memcpy(state->tags, store.tags, sizeof(CustomTag) * state->tag_count);
+        }
+        state->event_count = store.event_count;
+        if (state->event_count > CAL_MAX_EVENTS) state->event_count = CAL_MAX_EVENTS;
+        if (state->event_count > 0) {
+            memcpy(state->events, store.events, sizeof(CalendarEvent) * store.event_count);
         }
     } else {
-        state->event_count = 0;
+        init_default_tags(state);
     }
     fclose(fp);
-}
-
-static void init_preset_events(CalendarState* state) {
-    // 干净初始状态：不注入硬编码假数据，从本地存储加载已有日程
-    load_calendar_events(state);
 }
 
 // -------------------------------------------------------------
@@ -241,20 +326,19 @@ static void* calendar_create(RifeCore* core) {
     state->view_month = state->cur_month;
     state->view_day = state->cur_day;
 
-    for (int i = 0; i < CAL_CAT_COUNT; i++) {
-        state->filter_category[i] = true; // 默认全选
-    }
+    load_calendar_data(state);
 
     state->selected_event_id = -1;
     state->show_new_modal = false;
-    state->new_cat = CAL_CAT_WORK;
+    state->modal_tag_idx = 0;
     state->new_hour = 10;
     state->new_min = 0;
     state->new_duration_idx = 1; // 1h
-    state->new_preset_idx = 0;
-    state->new_loc_idx = 0;
+    state->active_field = 0;
+    state->cursor_blink_t = 0.0f;
+    state->show_new_tag_modal = false;
+    state->new_tag_color_idx = 0;
 
-    init_preset_events(state);
     state->scroll_y = 8.0f * 60.0f; // 默认平滑定位于早 08:00 工作时段
     return state;
 }
@@ -264,56 +348,117 @@ static void calendar_destroy(void* inst) {
 }
 
 // -------------------------------------------------------------
-// Rtodo 色彩体系 (Rtodo Design Tokens)
-// -------------------------------------------------------------
-
-typedef struct {
-    uint32_t bg;
-    uint32_t border;
-    uint32_t bar;
-    uint32_t text;
-} CategoryColor;
-
-static CategoryColor get_category_color(CalendarCategory cat, bool is_dark) {
-    CategoryColor c;
-    if (is_dark) {
-        switch (cat) {
-            case CAL_CAT_WORK: // 科技蓝
-                c.bg = 0x1A284AB8; c.border = 0x274380CC; c.bar = 0x3B82F6FF; c.text = 0xBFDBFEFF; break;
-            case CAL_CAT_REVIEW: // 紫晶
-                c.bg = 0x2A1A4AB8; c.border = 0x472B80CC; c.bar = 0xA855F7FF; c.text = 0xE9D5FFFF; break;
-            case CAL_CAT_PERSONAL: // 翡翠
-                c.bg = 0x0F3325B8; c.border = 0x1A593FCC; c.bar = 0x10B981FF; c.text = 0xA7F3D0FF; break;
-            case CAL_CAT_MILESTONE: // 琥珀
-            default:
-                c.bg = 0x38240AB8; c.border = 0x613D0ECC; c.bar = 0xF59E0BFF; c.text = 0xFDE68AFF; break;
-        }
-    } else {
-        switch (cat) {
-            case CAL_CAT_WORK: // Rtodo 品牌蓝 (Feishu Soft Blue)
-                c.bg = 0xF0F5FFD4; c.border = 0xCFE0FED4; c.bar = 0x3370FFFF; c.text = 0x1E40AFFF; break;
-            case CAL_CAT_REVIEW: // 薰衣紫
-                c.bg = 0xFBF7FFD4; c.border = 0xEEDBFFD4; c.bar = 0x8B5CF6FF; c.text = 0x6B21A8FF; break;
-            case CAL_CAT_PERSONAL: // 薄荷绿
-                c.bg = 0xF0FDF4D4; c.border = 0xBBF7D0D4; c.bar = 0x10B981FF; c.text = 0x065F46FF; break;
-            case CAL_CAT_MILESTONE: // 温暖橙
-            default:
-                c.bg = 0xFFFBEBD4; c.border = 0xFDE68AD4; c.bar = 0xF59E0BFF; c.text = 0x92400EFF; break;
-        }
-    }
-    return c;
-}
-
-// -------------------------------------------------------------
 // 交互更新 (Update)
 // -------------------------------------------------------------
 
 static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, float client_w, float client_h) {
-    (void)client_h;
     CalendarState* state = (CalendarState*)inst;
     if (!state) return;
 
     sync_system_clock(state);
+
+    // 光标闪烁时钟推进
+    state->cursor_blink_t += 0.04f;
+    if (state->cursor_blink_t > 1.0f) state->cursor_blink_t -= 1.0f;
+
+    // 键盘按键与字符文本输入处理
+    if (state->active_field > 0) {
+        // A. ESC 关闭或失焦
+        if (input->key_pressed[VK_ESCAPE]) {
+            if (state->show_new_tag_modal) {
+                state->show_new_tag_modal = false;
+                state->active_field = 1;
+            } else if (state->show_new_modal) {
+                state->show_new_modal = false;
+                state->active_field = 0;
+            }
+            rife_request_redraw(core);
+            return;
+        }
+
+        // B. Tab 循环切换输入框焦点
+        if (input->key_pressed[VK_TAB]) {
+            if (state->show_new_modal && !state->show_new_tag_modal) {
+                state->active_field = (state->active_field % 3) + 1; // 1 -> 2 -> 3 -> 1
+                rife_request_redraw(core);
+                return;
+            }
+        }
+
+        // C. Backspace 退格删除 (UTF-8 安全多字节边界)
+        if (input->key_pressed[VK_BACK]) {
+            if (state->active_field == 1) {
+                utf8_pop_back(state->input_title);
+            } else if (state->active_field == 2) {
+                utf8_pop_back(state->input_location);
+            } else if (state->active_field == 3) {
+                utf8_pop_back(state->input_desc);
+            } else if (state->active_field == 4) {
+                utf8_pop_back(state->new_tag_name);
+            }
+            rife_request_redraw(core);
+        }
+
+        // D. 字符文本输入与 Ctrl+V 剪贴板文本写入
+        if (input->text_input[0] != '\0') {
+            const char* p = input->text_input;
+            while (*p) {
+                if (*p == '\r' || *p == '\n') {
+                    if (state->active_field == 4) {
+                        // 确认新建标签
+                        if (state->new_tag_name[0] != '\0' && state->tag_count < CAL_MAX_CUSTOM_TAGS) {
+                            int idx = state->tag_count++;
+                            snprintf(state->tags[idx].name, sizeof(state->tags[idx].name), "%s", state->new_tag_name);
+                            state->tags[idx].color_bar = s_tag_palette[state->new_tag_color_idx];
+                            state->tags[idx].is_enabled = true;
+                            state->modal_tag_idx = idx;
+                            save_calendar_data(state);
+                        }
+                        state->show_new_tag_modal = false;
+                        state->active_field = 1;
+                    } else if (state->active_field == 1) {
+                        state->active_field = 2; // 回车切换至地点
+                    } else if (state->active_field == 2) {
+                        state->active_field = 3; // 回车切换至备注
+                    }
+                    p++;
+                    continue;
+                }
+                if (*p == '\b') {
+                    p++;
+                    continue;
+                }
+
+                if (state->active_field == 1) {
+                    size_t len = strlen(state->input_title);
+                    if (len < sizeof(state->input_title) - 4) {
+                        state->input_title[len] = *p;
+                        state->input_title[len + 1] = '\0';
+                    }
+                } else if (state->active_field == 2) {
+                    size_t len = strlen(state->input_location);
+                    if (len < sizeof(state->input_location) - 4) {
+                        state->input_location[len] = *p;
+                        state->input_location[len + 1] = '\0';
+                    }
+                } else if (state->active_field == 3) {
+                    size_t len = strlen(state->input_desc);
+                    if (len < sizeof(state->input_desc) - 4) {
+                        state->input_desc[len] = *p;
+                        state->input_desc[len + 1] = '\0';
+                    }
+                } else if (state->active_field == 4) {
+                    size_t len = strlen(state->new_tag_name);
+                    if (len < sizeof(state->new_tag_name) - 4) {
+                        state->new_tag_name[len] = *p;
+                        state->new_tag_name[len + 1] = '\0';
+                    }
+                }
+                p++;
+            }
+            rife_request_redraw(core);
+        }
+    }
 
     // 鼠标滚轮纵向平滑滚动 (周视图与日视图大表格上下滚动)
     if (input->scroll_delta != 0.0f) {
@@ -338,46 +483,110 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
     float mx = input->mouse_x;
     float my = input->mouse_y;
 
-    RifeSystemConfig* cfg = rife_get_system_config();
-    (void)cfg;
-
     float header_h = 44.0f;
     float sidebar_w = 180.0f;
+
+    // 0. 子弹窗：新建自定义标签模态框
+    if (state->show_new_tag_modal) {
+        float tw = 300.0f;
+        float th = 170.0f;
+        float tx0 = (client_w - tw) * 0.5f;
+        float ty0 = (client_h - th) * 0.5f;
+
+        if (mx >= tx0 && mx <= tx0 + tw && my >= ty0 && my <= ty0 + th) {
+            // A. 点击标签名称输入框
+            if (mx >= tx0 + 16.0f && mx <= tx0 + tw - 16.0f && my >= ty0 + 40.0f && my <= ty0 + 72.0f) {
+                state->active_field = 4;
+                rife_request_redraw(core);
+                return;
+            }
+            // B. 点击 6 种色彩圆点
+            float dot_y = ty0 + 82.0f;
+            for (int i = 0; i < 6; i++) {
+                float dot_x = tx0 + 20.0f + (float)i * 32.0f;
+                if (mx >= dot_x && mx <= dot_x + 22.0f && my >= dot_y && my <= dot_y + 22.0f) {
+                    state->new_tag_color_idx = i;
+                    rife_request_redraw(core);
+                    return;
+                }
+            }
+            // C. 底部操作按钮
+            float act_y = ty0 + th - 40.0f;
+            // 取消
+            if (mx >= tx0 + tw - 150.0f && mx <= tx0 + tw - 86.0f && my >= act_y && my <= act_y + 28.0f) {
+                state->show_new_tag_modal = false;
+                state->active_field = 1;
+                rife_request_redraw(core);
+                return;
+            }
+            // 确定创建
+            if (mx >= tx0 + tw - 80.0f && mx <= tx0 + tw - 16.0f && my >= act_y && my <= act_y + 28.0f) {
+                if (state->new_tag_name[0] != '\0' && state->tag_count < CAL_MAX_CUSTOM_TAGS) {
+                    int idx = state->tag_count++;
+                    snprintf(state->tags[idx].name, sizeof(state->tags[idx].name), "%s", state->new_tag_name);
+                    state->tags[idx].color_bar = s_tag_palette[state->new_tag_color_idx];
+                    state->tags[idx].is_enabled = true;
+                    state->modal_tag_idx = idx;
+                    save_calendar_data(state);
+                }
+                state->show_new_tag_modal = false;
+                state->active_field = 1;
+                rife_request_redraw(core);
+                return;
+            }
+            return;
+        } else {
+            state->show_new_tag_modal = false;
+            state->active_field = 1;
+            rife_request_redraw(core);
+            return;
+        }
+    }
 
     // 1. 浮动弹窗：新建日程模态框
     if (state->show_new_modal) {
         float mw = 400.0f;
-        float mh = 340.0f;
+        float mh = 330.0f;
         float mx0 = (client_w - mw) * 0.5f;
         float my0 = (client_h - mh) * 0.5f;
+        float box_w = mw - 32.0f;
 
-        // 点击卡片内部选项
         if (mx >= mx0 && mx <= mx0 + mw && my >= my0 && my <= my0 + mh) {
-            // A. 分类切换 (4项)
-            float cat_y = my0 + 58.0f;
-            for (int c = 0; c < 4; c++) {
-                float bx = mx0 + 16.0f + (float)c * 94.0f;
-                if (mx >= bx && mx <= bx + 86.0f && my >= cat_y && my <= cat_y + 26.0f) {
-                    state->new_cat = c;
+            // A. 点击标题输入框
+            float title_y = my0 + 42.0f;
+            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= title_y && my <= title_y + 32.0f) {
+                state->active_field = 1;
+                rife_request_redraw(core);
+                return;
+            }
+
+            // B. 自定义标签胶囊行与 [+ 标签]
+            float tag_y = my0 + 82.0f;
+            if (my >= tag_y && my <= tag_y + 26.0f) {
+                float px = mx0 + 16.0f;
+                for (int c = 0; c < state->tag_count; c++) {
+                    float pw = 60.0f;
+                    if (mx >= px && mx <= px + pw) {
+                        state->modal_tag_idx = c;
+                        rife_request_redraw(core);
+                        return;
+                    }
+                    px += pw + 8.0f;
+                }
+                // 点击 [+ 标签] 按钮
+                float add_w = 64.0f;
+                if (mx >= px && mx <= px + add_w) {
+                    state->show_new_tag_modal = true;
+                    state->new_tag_name[0] = '\0';
+                    state->new_tag_color_idx = 0;
+                    state->active_field = 4;
                     rife_request_redraw(core);
                     return;
                 }
             }
-            // B. 预设主题 (6项, 2行3列)
-            float pre_y = my0 + 94.0f;
-            for (int p = 0; p < 6; p++) {
-                float row = (float)(p / 3);
-                float col = (float)(p % 3);
-                float bx = mx0 + 16.0f + col * 124.0f;
-                float by = pre_y + row * 28.0f;
-                if (mx >= bx && mx <= bx + 118.0f && my >= by && my <= by + 24.0f) {
-                    state->new_preset_idx = p;
-                    rife_request_redraw(core);
-                    return;
-                }
-            }
-            // C. 时间与时长选择
-            float time_y = my0 + 158.0f;
+
+            // C. 时间与时长微调联动
+            float time_y = my0 + 118.0f;
             // 减小时
             if (mx >= mx0 + 56.0f && mx <= mx0 + 80.0f && my >= time_y && my <= time_y + 24.0f) {
                 if (state->new_hour > 0) state->new_hour--;
@@ -405,29 +614,39 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                     return;
                 }
             }
-            // D. 地点选择 (4项)
-            float loc_y = my0 + 196.0f;
-            for (int l = 0; l < 4; l++) {
-                float bx = mx0 + 56.0f + (float)l * 80.0f;
-                if (mx >= bx && mx <= bx + 74.0f && my >= loc_y && my <= loc_y + 24.0f) {
-                    state->new_loc_idx = l;
-                    rife_request_redraw(core);
-                    return;
-                }
+
+            // D. 点击地点输入框
+            float loc_y = my0 + 156.0f;
+            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= loc_y && my <= loc_y + 30.0f) {
+                state->active_field = 2;
+                rife_request_redraw(core);
+                return;
             }
 
-            // E. 底部操作按钮：确认添加 / 取消
-            float btn_y = my0 + mh - 48.0f;
+            // E. 点击备注/描述输入框
+            float desc_y = my0 + 194.0f;
+            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= desc_y && my <= desc_y + 30.0f) {
+                state->active_field = 3;
+                rife_request_redraw(core);
+                return;
+            }
+
+            // F. 底部操作按钮：确认创建 / 取消
+            float btn_y = my0 + mh - 44.0f;
             // 确认创建
             if (mx >= mx0 + mw - 96.0f && mx <= mx0 + mw - 16.0f && my >= btn_y && my <= btn_y + 32.0f) {
                 if (state->event_count < CAL_MAX_EVENTS) {
                     CalendarEvent* ne = &state->events[state->event_count++];
                     static uint32_t s_next_id = 1000;
                     ne->id = s_next_id++;
-                    snprintf(ne->title, sizeof(ne->title), "%s", s_preset_titles_zh[state->new_preset_idx]);
-                    snprintf(ne->location, sizeof(ne->location), "%s", s_preset_locations_zh[state->new_loc_idx]);
-                    snprintf(ne->desc, sizeof(ne->desc), "%s", "由用户快速创建的待办日程");
-                    ne->category = (CalendarCategory)state->new_cat;
+                    if (state->input_title[0] != '\0') {
+                        snprintf(ne->title, sizeof(ne->title), "%s", state->input_title);
+                    } else {
+                        snprintf(ne->title, sizeof(ne->title), "%s", "新日程");
+                    }
+                    snprintf(ne->location, sizeof(ne->location), "%s", state->input_location);
+                    snprintf(ne->desc, sizeof(ne->desc), "%s", state->input_desc);
+                    ne->tag_idx = state->modal_tag_idx;
                     ne->year = state->view_year;
                     ne->month = state->view_month;
                     ne->day = state->view_day;
@@ -435,15 +654,20 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                     ne->start_min = state->new_min;
                     calc_event_end_time(ne->start_hour, ne->start_min, state->new_duration_idx, &ne->end_hour, &ne->end_min);
                     ne->is_completed = false;
-                    save_calendar_events(state);
+                    save_calendar_data(state);
                 }
                 state->show_new_modal = false;
+                state->active_field = 0;
+                state->input_title[0] = '\0';
+                state->input_location[0] = '\0';
+                state->input_desc[0] = '\0';
                 rife_request_redraw(core);
                 return;
             }
             // 取消
             if (mx >= mx0 + mw - 170.0f && mx <= mx0 + mw - 104.0f && my >= btn_y && my <= btn_y + 32.0f) {
                 state->show_new_modal = false;
+                state->active_field = 0;
                 rife_request_redraw(core);
                 return;
             }
@@ -451,6 +675,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
         } else {
             // 点击外部关闭弹窗
             state->show_new_modal = false;
+            state->active_field = 0;
             rife_request_redraw(core);
             return;
         }
@@ -469,7 +694,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 for (int i = 0; i < state->event_count; i++) {
                     if ((int)state->events[i].id == state->selected_event_id) {
                         state->events[i].is_completed = !state->events[i].is_completed;
-                        save_calendar_events(state);
+                        save_calendar_data(state);
                         break;
                     }
                 }
@@ -484,7 +709,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                             state->events[j] = state->events[j + 1];
                         }
                         state->event_count--;
-                        save_calendar_events(state);
+                        save_calendar_data(state);
                         break;
                     }
                 }
@@ -571,11 +796,15 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
     float fab_y = client_h - fab_sz - 24.0f;
     if (mx >= fab_x && mx <= fab_x + fab_sz && my >= fab_y && my <= fab_y + fab_sz) {
         state->show_new_modal = true;
+        state->active_field = 1;
+        state->input_title[0] = '\0';
+        state->input_location[0] = '\0';
+        state->input_desc[0] = '\0';
         rife_request_redraw(core);
         return;
     }
 
-    // 5. 左侧侧边栏交互 (迷你月历 & 搜索 & 分类过滤)
+    // 5. 左侧侧边栏交互 (迷你月历 & 搜索 & 自定义分类)
     if (mx >= 0.0f && mx <= sidebar_w && my > header_h) {
         float mini_y = header_h + 12.0f;
         // 迷你日历月份左右切换
@@ -622,16 +851,31 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
         float search_w = sidebar_w - 32.0f;
         if (mx >= 16.0f + search_w - 24.0f && mx <= 16.0f + search_w && my >= search_y && my <= search_y + 28.0f) {
             state->show_new_modal = true;
+            state->active_field = 1;
+            state->input_title[0] = '\0';
+            state->input_location[0] = '\0';
+            state->input_desc[0] = '\0';
             rife_request_redraw(core);
             return;
         }
 
-        // C. 分类过滤器勾选 (4项)
+        // C. 自定义标签列表勾选与新建
         float sec_y = search_y + 36.0f;
-        for (int c = 0; c < CAL_CAT_COUNT; c++) {
+        // 点击右上角 [+] 打开新建分类弹窗
+        if (mx >= sidebar_w - 36.0f && mx <= sidebar_w - 12.0f && my >= sec_y && my <= sec_y + 22.0f) {
+            state->show_new_tag_modal = true;
+            state->new_tag_name[0] = '\0';
+            state->new_tag_color_idx = 0;
+            state->active_field = 4;
+            rife_request_redraw(core);
+            return;
+        }
+
+        for (int c = 0; c < state->tag_count; c++) {
             float row_y = sec_y + 24.0f + (float)c * 26.0f;
             if (mx >= 16.0f && mx <= sidebar_w - 16.0f && my >= row_y && my <= row_y + 24.0f) {
-                state->filter_category[c] = !state->filter_category[c];
+                state->tags[c].is_enabled = !state->tags[c].is_enabled;
+                save_calendar_data(state);
                 rife_request_redraw(core);
                 return;
             }
@@ -656,7 +900,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
             // A. 先检查是否点击了已有日程卡片
             for (int i = 0; i < state->event_count; i++) {
                 CalendarEvent* e = &state->events[i];
-                if (!state->filter_category[e->category]) continue;
+                if (!is_event_visible(state, e)) continue;
 
                 for (int c = 0; c < 7; c++) {
                     int col_y, col_m, col_d;
@@ -694,6 +938,10 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 state->new_hour = h;
                 state->new_min = 0;
                 state->show_new_modal = true;
+                state->active_field = 1;
+                state->input_title[0] = '\0';
+                state->input_location[0] = '\0';
+                state->input_desc[0] = '\0';
                 rife_request_redraw(core);
                 return;
             }
@@ -709,7 +957,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
             // A. 先检查是否点击了已有日程卡片
             for (int i = 0; i < state->event_count; i++) {
                 CalendarEvent* e = &state->events[i];
-                if (!state->filter_category[e->category]) continue;
+                if (!is_event_visible(state, e)) continue;
                 if (e->year == state->view_year && e->month == state->view_month && e->day == state->view_day) {
                     float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
                     float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
@@ -732,6 +980,10 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 state->new_hour = h;
                 state->new_min = 0;
                 state->show_new_modal = true;
+                state->active_field = 1;
+                state->input_title[0] = '\0';
+                state->input_location[0] = '\0';
+                state->input_desc[0] = '\0';
                 rife_request_redraw(core);
                 return;
             }
@@ -759,6 +1011,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                         int item_idx = 0;
                         for (int i = 0; i < state->event_count; i++) {
                             CalendarEvent* e = &state->events[i];
+                            if (!is_event_visible(state, e)) continue;
                             if (e->year == state->view_year && e->month == state->view_month && e->day == d) {
                                 float chip_y = cy + 32.0f + (float)item_idx * 20.0f;
                                 if (chip_y + 18.0f < cy + m_row_h) {
@@ -777,6 +1030,10 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                         state->new_hour = 10;
                         state->new_min = 0;
                         state->show_new_modal = true;
+                        state->active_field = 1;
+                        state->input_title[0] = '\0';
+                        state->input_location[0] = '\0';
+                        state->input_desc[0] = '\0';
                         rife_request_redraw(core);
                         return;
                     }
@@ -793,13 +1050,13 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
 
             for (int i = 0; i < state->event_count; i++) {
                 CalendarEvent* e = &state->events[i];
-                if (!state->filter_category[e->category]) continue;
+                if (!is_event_visible(state, e)) continue;
 
                 float cy = card_y;
                 // 复选框点击：完成 / 取消完成
                 if (mx >= main_x + 36.0f && mx <= main_x + 60.0f && my >= cy + 12.0f && my <= cy + 36.0f) {
                     e->is_completed = !e->is_completed;
-                    save_calendar_events(state);
+                    save_calendar_data(state);
                     rife_request_redraw(core);
                     return;
                 }
@@ -811,6 +1068,52 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 }
                 card_y += ch + 10.0f;
                 if (card_y + ch > client_h) break;
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// 通用轻量文本输入框绘制器 (Text Box Widget)
+// -------------------------------------------------------------
+
+static void draw_input_box(RifeCore* core, float x, float y, float w, float h,
+                           const char* text, const char* placeholder,
+                           bool is_focused, bool cursor_on,
+                           bool is_dark, uint32_t accent_color, uint32_t border_col,
+                           uint32_t text_title, uint32_t text_muted)
+{
+    uint32_t bg_col = is_dark ? (is_focused ? 0x281F3DFF : 0x1E172EFF) : (is_focused ? 0xFFFFFFFF : 0xF8FAFCFF);
+    uint32_t brd_col = is_focused ? accent_color : border_col;
+    rife_draw_round_rect(core, x, y, w, h, 6.0f, bg_col, brd_col);
+
+    if (text && text[0] != '\0') {
+        rife_draw_text_font(core, x + 10.0f, y + 7.0f, text, text_title, 0);
+        if (is_focused && cursor_on) {
+            float tw = 0.0f;
+            const unsigned char* p = (const unsigned char*)text;
+            while (*p) {
+                if (*p < 0x80) { tw += 7.5f; p++; }
+                else if ((*p & 0xE0) == 0xC0) { tw += 12.0f; p += 2; }
+                else if ((*p & 0xF0) == 0xE0) { tw += 13.0f; p += 3; }
+                else { tw += 14.0f; p += 4; }
+            }
+            float cur_x = x + 10.0f + tw + 1.0f;
+            if (cur_x < x + w - 8.0f) {
+                rife_draw_rect(core, cur_x, y + 6.0f, 1.5f, h - 12.0f, accent_color);
+            }
+        }
+    } else {
+        if (is_focused) {
+            if (cursor_on) {
+                rife_draw_rect(core, x + 10.0f, y + 6.0f, 1.5f, h - 12.0f, accent_color);
+            }
+            if (placeholder) {
+                rife_draw_text_font(core, x + 14.0f, y + 7.0f, placeholder, is_dark ? 0x6B5888FF : 0xCBD5E1FF, 3);
+            }
+        } else {
+            if (placeholder) {
+                rife_draw_text_font(core, x + 10.0f, y + 7.0f, placeholder, text_muted, 3);
             }
         }
     }
@@ -901,7 +1204,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         }
     }
 
-    // C. 左侧侧边栏 (迷你月历 & 搜索 & 分类)
+    // C. 左侧侧边栏 (迷你月历 & 搜索 & 自定义分类)
     float sb_x = client_x;
     float sb_y = client_y + header_h;
 
@@ -959,15 +1262,17 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     rife_draw_text_font(core, sb_x + 28.0f, search_y + 6.0f, is_zh ? "🔍 搜索日程、会议..." : "🔍 Search...", text_muted, 4);
     rife_draw_text_font(core, sb_x + 16.0f + search_w - 18.0f, search_y + 5.0f, "+", text_muted, 1);
 
-    // 5. 日历分类折叠项
+    // 5. 用户自定义分类/日历列表 (动态展示自定义标签)
     float sec_y = search_y + 36.0f;
     rife_draw_text_font(core, sb_x + 16.0f, sec_y, is_zh ? "我的日历" : "My Calendars", text_title, 5);
-    rife_draw_text_font(core, sb_x + sidebar_w - 28.0f, sec_y, "v", text_muted, 4);
+    // 侧边栏新建分类快捷 [+] 按钮
+    rife_draw_text_font(core, sb_x + sidebar_w - 24.0f, sec_y - 1.0f, "+", rtodo_blue, 1);
 
-    for (int c = 0; c < CAL_CAT_COUNT; c++) {
+    for (int c = 0; c < state->tag_count; c++) {
         float row_y = sec_y + 24.0f + (float)c * 26.0f;
-        CategoryColor cc = get_category_color((CalendarCategory)c, is_dark);
-        bool checked = state->filter_category[c];
+        CustomTag* tag = &state->tags[c];
+        TagColorStyle cc = get_tag_style(tag->color_bar, is_dark);
+        bool checked = tag->is_enabled;
 
         if (checked) {
             rife_draw_round_rect(core, sb_x + 16.0f, row_y + 3.0f, 13.0f, 13.0f, 3.0f, cc.bar, cc.bar);
@@ -978,7 +1283,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             rife_draw_round_rect(core, sb_x + 16.0f, row_y + 3.0f, 13.0f, 13.0f, 3.0f, is_dark ? 0x221B33FF : 0xFFFFFFFF, border_col);
         }
 
-        rife_draw_text_font(core, sb_x + 36.0f, row_y + 1.0f, is_zh ? s_cat_names_zh[c] : s_cat_names_en[c], text_title, 3);
+        rife_draw_text_font(core, sb_x + 36.0f, row_y + 1.0f, tag->name, text_title, 3);
     }
 
     // D. 右侧主工作区 (周视图 / 日视图 / 月视图)
@@ -1057,7 +1362,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         // 3. 渲染事件卡片 (舒展大格卡片)
         for (int i = 0; i < state->event_count; i++) {
             CalendarEvent* e = &state->events[i];
-            if (!state->filter_category[e->category]) continue;
+            if (!is_event_visible(state, e)) continue;
 
             for (int c = 0; c < 7; c++) {
                 int cy_y, cy_m, cy_d;
@@ -1073,7 +1378,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
                     if (cy + ch < grid_top || cy > grid_top + avail_h) continue;
 
-                    CategoryColor cc = get_category_color(e->category, is_dark);
+                    TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
 
                     rife_push_scissor(core, cx + 1.0f, cy, cw - 2.0f, ch);
                     rife_draw_round_rect(core, cx, cy, cw, ch, 6.0f, cc.bg, cc.border);
@@ -1165,7 +1470,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
         for (int i = 0; i < state->event_count; i++) {
             CalendarEvent* e = &state->events[i];
-            if (!state->filter_category[e->category]) continue;
+            if (!is_event_visible(state, e)) continue;
             if (e->year == state->view_year && e->month == state->view_month && e->day == state->view_day) {
                 float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
                 float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
@@ -1175,7 +1480,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
                 if (ey + eh < day_grid_top || ey > day_grid_top + day_avail_h) continue;
 
-                CategoryColor cc = get_category_color(e->category, is_dark);
+                TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
                 rife_push_scissor(core, ex, ey, ew, eh);
 
                 rife_draw_round_rect(core, ex, ey, ew, eh, 8.0f, cc.bg, cc.border);
@@ -1259,8 +1564,9 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             int item_idx = 0;
             for (int i = 0; i < state->event_count; i++) {
                 CalendarEvent* e = &state->events[i];
+                if (!is_event_visible(state, e)) continue;
                 if (e->year == state->view_year && e->month == state->view_month && e->day == d) {
-                    CategoryColor cc = get_category_color(e->category, is_dark);
+                    TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
                     float chip_y = cy + 32.0f + (float)item_idx * 20.0f;
                     if (chip_y + 18.0f < cy + m_row_h) {
                         rife_draw_round_rect(core, cx + 4.0f, chip_y, m_col_w - 8.0f, 18.0f, 4.0f, cc.bg, cc.border);
@@ -1281,7 +1587,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
         int visible_events = 0;
         for (int i = 0; i < state->event_count; i++) {
-            if (state->filter_category[state->events[i].category]) visible_events++;
+            if (is_event_visible(state, &state->events[i])) visible_events++;
         }
 
         if (visible_events == 0) {
@@ -1302,9 +1608,9 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             float card_y = list_y + 36.0f;
             for (int i = 0; i < state->event_count; i++) {
                 CalendarEvent* e = &state->events[i];
-                if (!state->filter_category[e->category]) continue;
+                if (!is_event_visible(state, e)) continue;
 
-                CategoryColor cc = get_category_color(e->category, is_dark);
+                TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
                 float cw = main_w - 48.0f;
                 float ch = 48.0f;
 
@@ -1326,7 +1632,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
                 // 时间与地点标签
                 char meta_str[64];
-                snprintf(meta_str, sizeof(meta_str), "%d月%d日 %02d:%02d - %02d:%02d · %s", e->month, e->day, e->start_hour, e->start_min, e->end_hour, e->end_min, e->location);
+                snprintf(meta_str, sizeof(meta_str), "%d月%d日 %02d:%02d - %02d:%02d · %s", e->month, e->day, e->start_hour, e->start_min, e->end_hour, e->end_min, e->location[0] ? e->location : "无地点");
                 rife_draw_text_font(core, main_x + 68.0f, card_y + 26.0f, meta_str, text_muted, 3);
 
                 card_y += ch + 10.0f;
@@ -1341,55 +1647,55 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float fab_sz = 44.0f;
     float fab_x = client_x + client_w - fab_sz - 24.0f;
     float fab_y = client_y + client_h - fab_sz - 24.0f;
-    // 阴影与微光晕
     rife_draw_round_rect(core, fab_x, fab_y + 2.0f, fab_sz, fab_sz, fab_sz * 0.5f, is_dark ? 0x00000066 : 0x3370FF33, is_dark ? 0x00000066 : 0x3370FF33);
-    // 品牌蓝圆形底盘
     rife_draw_round_rect(core, fab_x, fab_y, fab_sz, fab_sz, fab_sz * 0.5f, rtodo_blue, rtodo_blue);
-    // 白色加号
     rife_draw_rect(core, fab_x + 21.0f, fab_y + 13.0f, 2.0f, 18.0f, 0xFFFFFFFF);
     rife_draw_rect(core, fab_x + 13.0f, fab_y + 21.0f, 18.0f, 2.0f, 0xFFFFFFFF);
 
     // ==========================================
-    // 弹窗浮层：新建日程模态卡片 (New Event Modal)
+    // 弹窗浮层：新建日程模态卡片 (New Event Modal - 100% 用户自定义)
     // ==========================================
     if (state->show_new_modal) {
         float mw = 400.0f;
-        float mh = 340.0f;
+        float mh = 330.0f;
         float mx0 = client_x + (client_w - mw) * 0.5f;
         float my0 = client_y + (client_h - mh) * 0.5f;
+        float box_w = mw - 32.0f;
+        bool cursor_on = (state->cursor_blink_t < 0.5f);
 
         // 暗晶柔和阴影与卡片底板 (磨砂毛玻璃浮层)
         rife_draw_round_rect(core, mx0, my0, mw, mh, 12.0f, is_dark ? 0x231A38F2 : 0xFFFFFFF2, is_dark ? 0x4D3678FF : 0xCBD5E1FF);
 
-        // 标题与说明
-        rife_draw_text_font(core, mx0 + 16.0f, my0 + 16.0f, is_zh ? "快速创建日程" : "Quick New Event", text_title, 1);
-        rife_draw_text_font(core, mx0 + 16.0f, my0 + 38.0f, is_zh ? "选择分类、预设主题、起止时间与地点" : "Select Category, Topic, Time & Location", text_muted, 3);
+        // 标题
+        rife_draw_text_font(core, mx0 + 16.0f, my0 + 14.0f, is_zh ? "新建日程" : "New Event", text_title, 1);
 
-        // 1. 分类标签胶囊 (4类)
-        float cat_y = my0 + 58.0f;
-        for (int c = 0; c < 4; c++) {
-            float bx = mx0 + 16.0f + (float)c * 94.0f;
-            bool is_c_act = (state->new_cat == c);
-            CategoryColor cc = get_category_color((CalendarCategory)c, is_dark);
-            rife_draw_round_rect(core, bx, cat_y, 86.0f, 26.0f, 6.0f, is_c_act ? cc.bar : cc.bg, cc.border);
-            rife_draw_text_font(core, bx + 16.0f, cat_y + 5.0f, is_zh ? s_cat_names_zh[c] : s_cat_names_en[c], is_c_act ? 0xFFFFFFFF : cc.text, 4);
-        }
+        // 1. 标题输入框 (Title Input)
+        float title_y = my0 + 42.0f;
+        draw_input_box(core, mx0 + 16.0f, title_y, box_w, 32.0f,
+                       state->input_title,
+                       is_zh ? "日程标题 (如: 团队例会、设计评审...)" : "Event Title...",
+                       state->active_field == 1, cursor_on,
+                       is_dark, rtodo_blue, border_col, text_title, text_muted);
 
-        // 2. 预设主题 (6项, 2行3列)
-        float pre_y = my0 + 94.0f;
-        for (int p = 0; p < 6; p++) {
-            float row = (float)(p / 3);
-            float col = (float)(p % 3);
-            float bx = mx0 + 16.0f + col * 124.0f;
-            float by = pre_y + row * 28.0f;
-            bool is_p_act = (state->new_preset_idx == p);
-            rife_draw_round_rect(core, bx, by, 118.0f, 24.0f, 5.0f, is_p_act ? (is_dark ? 0x3D2C63FF : 0xEFF6FFFF) : (is_dark ? 0x1B142BFF : 0xF8FAFCFF), is_p_act ? rtodo_blue : border_col);
-            const char* title_str = is_zh ? s_preset_titles_zh[p] : s_preset_titles_en[p];
-            rife_draw_text_font(core, bx + 12.0f, by + 4.0f, title_str, is_p_act ? (is_dark ? 0xD8B4FEFF : rtodo_blue) : text_title, 3);
+        // 2. 自定义分类标签胶囊行与 [+ 标签]
+        float tag_y = my0 + 82.0f;
+        float px = mx0 + 16.0f;
+        for (int c = 0; c < state->tag_count; c++) {
+            CustomTag* tag = &state->tags[c];
+            TagColorStyle ts = get_tag_style(tag->color_bar, is_dark);
+            bool is_sel = (state->modal_tag_idx == c);
+            float pw = 60.0f;
+            rife_draw_round_rect(core, px, tag_y, pw, 26.0f, 6.0f, is_sel ? ts.bar : ts.bg, ts.border);
+            rife_draw_text_font(core, px + 10.0f, tag_y + 5.0f, tag->name, is_sel ? 0xFFFFFFFF : ts.text, 4);
+            px += pw + 8.0f;
         }
+        // [+ 标签] 按钮
+        float add_w = 64.0f;
+        rife_draw_round_rect(core, px, tag_y, add_w, 26.0f, 6.0f, is_dark ? 0x2A1F42FF : 0xF1F5F9FF, border_col);
+        rife_draw_text_font(core, px + 8.0f, tag_y + 5.0f, is_zh ? "+ 标签" : "+ Tag", rtodo_blue, 4);
 
         // 3. 时间与时长选择
-        float time_y = my0 + 158.0f;
+        float time_y = my0 + 118.0f;
         rife_draw_text_font(core, mx0 + 16.0f, time_y + 4.0f, is_zh ? "时间:" : "Time:", text_muted, 3);
 
         // 时间调整器 [-] HH:MM [+]
@@ -1415,18 +1721,23 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             rife_draw_text_font(core, bx + 6.0f, time_y + 4.0f, is_zh ? dur_labels_zh[d] : dur_labels_en[d], is_d_act ? 0xFFFFFFFF : text_muted, 4);
         }
 
-        // 4. 地点选择 (4项)
-        float loc_y = my0 + 196.0f;
-        rife_draw_text_font(core, mx0 + 16.0f, loc_y + 4.0f, is_zh ? "地点:" : "Loc:", text_muted, 3);
-        for (int l = 0; l < 4; l++) {
-            float bx = mx0 + 56.0f + (float)l * 80.0f;
-            bool is_l_act = (state->new_loc_idx == l);
-            rife_draw_round_rect(core, bx, loc_y, 74.0f, 24.0f, 4.0f, is_l_act ? (is_dark ? 0x3D2C63FF : 0xEFF6FFFF) : (is_dark ? 0x1B142BFF : 0xF8FAFCFF), is_l_act ? rtodo_blue : border_col);
-            const char* loc_str = is_zh ? s_preset_locations_zh[l] : s_preset_locations_en[l];
-            rife_draw_text_font(core, bx + 10.0f, loc_y + 4.0f, loc_str, is_l_act ? (is_dark ? 0xD8B4FEFF : rtodo_blue) : text_muted, 4);
-        }
+        // 4. 地点输入框 (Location Input)
+        float loc_y = my0 + 156.0f;
+        draw_input_box(core, mx0 + 16.0f, loc_y, box_w, 30.0f,
+                       state->input_location,
+                       is_zh ? "地点 / 会议链接 (如: 线上会议、会议室A...)" : "Location / Meeting URL...",
+                       state->active_field == 2, cursor_on,
+                       is_dark, rtodo_blue, border_col, text_title, text_muted);
 
-        // 5. 预期起止时间与日期详情
+        // 5. 描述/备注输入框 (Notes Input)
+        float desc_y = my0 + 194.0f;
+        draw_input_box(core, mx0 + 16.0f, desc_y, box_w, 30.0f,
+                       state->input_desc,
+                       is_zh ? "备注信息 / 议程大纲 (选填)..." : "Notes / Agenda Outline...",
+                       state->active_field == 3, cursor_on,
+                       is_dark, rtodo_blue, border_col, text_title, text_muted);
+
+        // 6. 预期起止时间与日期详情
         int end_h = 0, end_m = 0;
         calc_event_end_time(state->new_hour, state->new_min, state->new_duration_idx, &end_h, &end_m);
         char sched_summary[64];
@@ -1434,15 +1745,62 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         rife_draw_text_font(core, mx0 + 16.0f, my0 + 236.0f, sched_summary, text_title, 3);
 
         // 分割线
-        rife_draw_rect(core, mx0 + 16.0f, my0 + 266.0f, mw - 32.0f, 1.0f, border_col);
+        rife_draw_rect(core, mx0 + 16.0f, my0 + 262.0f, mw - 32.0f, 1.0f, border_col);
 
         // 底部按钮：取消 / 确认创建
-        float btn_y = my0 + mh - 48.0f;
+        float btn_y = my0 + mh - 44.0f;
         rife_draw_round_rect(core, mx0 + mw - 170.0f, btn_y, 66.0f, 32.0f, 6.0f, is_dark ? 0x241D35FF : 0xF1F5F9FF, border_col);
         rife_draw_text_font(core, mx0 + mw - 150.0f, btn_y + 7.0f, is_zh ? "取消" : "Cancel", text_muted, 0);
 
         rife_draw_round_rect(core, mx0 + mw - 96.0f, btn_y, 80.0f, 32.0f, 6.0f, rtodo_blue, rtodo_blue);
         rife_draw_text_font(core, mx0 + mw - 80.0f, btn_y + 7.0f, is_zh ? "确认创建" : "Create", 0xFFFFFFFF, 5);
+    }
+
+    // ==========================================
+    // 弹窗浮层：新建自定义标签模态卡片 (New Custom Tag Modal)
+    // ==========================================
+    if (state->show_new_tag_modal) {
+        float tw = 300.0f;
+        float th = 170.0f;
+        float tx0 = client_x + (client_w - tw) * 0.5f;
+        float ty0 = client_y + (client_h - th) * 0.5f;
+        bool cursor_on = (state->cursor_blink_t < 0.5f);
+
+        // 半透遮罩
+        rife_draw_rect(core, client_x, client_y, client_w, client_h, 0x00000055);
+
+        // 卡片底板
+        rife_draw_round_rect(core, tx0, ty0, tw, th, 12.0f, is_dark ? 0x221838F8 : 0xFFFFFFF8, is_dark ? 0x5D458FFF : 0xCBD5E1FF);
+
+        rife_draw_text_font(core, tx0 + 16.0f, ty0 + 14.0f, is_zh ? "新建自定义分类标签" : "New Custom Tag", text_title, 1);
+
+        // 标签名称输入框
+        draw_input_box(core, tx0 + 16.0f, ty0 + 40.0f, tw - 32.0f, 32.0f,
+                       state->new_tag_name,
+                       is_zh ? "标签名称 (如: 健身、项目A...)" : "Tag Name...",
+                       state->active_field == 4, cursor_on,
+                       is_dark, s_tag_palette[state->new_tag_color_idx], border_col, text_title, text_muted);
+
+        // 6 种色彩圆点
+        float dot_y = ty0 + 82.0f;
+        for (int i = 0; i < 6; i++) {
+            float dot_x = tx0 + 20.0f + (float)i * 32.0f;
+            uint32_t col = s_tag_palette[i];
+            bool is_sel = (state->new_tag_color_idx == i);
+            rife_draw_round_rect(core, dot_x, dot_y, 22.0f, 22.0f, 11.0f, col, is_sel ? 0xFFFFFFFF : col);
+            if (is_sel) {
+                rife_draw_round_rect(core, dot_x + 7.0f, dot_y + 7.0f, 8.0f, 8.0f, 4.0f, 0xFFFFFFFF, 0xFFFFFFFF);
+            }
+        }
+
+        // 底部按钮：取消 / 确定
+        float act_y = ty0 + th - 40.0f;
+        rife_draw_round_rect(core, tx0 + tw - 150.0f, act_y, 60.0f, 28.0f, 6.0f, is_dark ? 0x241D35FF : 0xF1F5F9FF, border_col);
+        rife_draw_text_font(core, tx0 + tw - 134.0f, act_y + 6.0f, is_zh ? "取消" : "Cancel", text_muted, 0);
+
+        uint32_t sel_color = s_tag_palette[state->new_tag_color_idx];
+        rife_draw_round_rect(core, tx0 + tw - 80.0f, act_y, 64.0f, 28.0f, 6.0f, sel_color, sel_color);
+        rife_draw_text_font(core, tx0 + tw - 64.0f, act_y + 6.0f, is_zh ? "确定" : "Save", 0xFFFFFFFF, 5);
     }
 
     // ==========================================
@@ -1464,17 +1822,18 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
             rife_draw_round_rect(core, pop_x, pop_y, pop_w, pop_h, 10.0f, is_dark ? 0x221838F2 : 0xFFFFFFF2, is_dark ? 0x47336EFF : 0xCBD5E1FF);
 
-            CategoryColor cc = get_category_color(cur_e->category, is_dark);
+            TagColorStyle cc = get_event_style(state, cur_e->tag_idx, is_dark);
+            const char* tag_str = get_event_tag_name(state, cur_e->tag_idx);
             rife_draw_round_rect(core, pop_x + 14.0f, pop_y + 14.0f, 64.0f, 20.0f, 4.0f, cc.bg, cc.border);
-            rife_draw_text_font(core, pop_x + 20.0f, pop_y + 16.0f, is_zh ? s_cat_names_zh[cur_e->category] : s_cat_names_en[cur_e->category], cc.text, 4);
+            rife_draw_text_font(core, pop_x + 20.0f, pop_y + 16.0f, tag_str, cc.text, 4);
 
             rife_draw_text_font(core, pop_x + 14.0f, pop_y + 40.0f, cur_e->title, text_title, 1);
 
             char time_loc[64];
-            snprintf(time_loc, sizeof(time_loc), "%d月%d日 %02d:%02d-%02d:%02d · %s", cur_e->month, cur_e->day, cur_e->start_hour, cur_e->start_min, cur_e->end_hour, cur_e->end_min, cur_e->location);
+            snprintf(time_loc, sizeof(time_loc), "%d月%d日 %02d:%02d-%02d:%02d · %s", cur_e->month, cur_e->day, cur_e->start_hour, cur_e->start_min, cur_e->end_hour, cur_e->end_min, cur_e->location[0] ? cur_e->location : "无地点");
             rife_draw_text_font(core, pop_x + 14.0f, pop_y + 64.0f, time_loc, text_muted, 3);
 
-            rife_draw_text_font(core, pop_x + 14.0f, pop_y + 86.0f, cur_e->desc, text_muted, 3);
+            rife_draw_text_font(core, pop_x + 14.0f, pop_y + 86.0f, cur_e->desc[0] ? cur_e->desc : "暂无详细备注", text_muted, 3);
 
             // 操作：标记完成 / 删除日程 / 关闭
             float act_y = pop_y + pop_h - 38.0f;

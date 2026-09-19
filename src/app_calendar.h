@@ -5,13 +5,16 @@
 #include "rife_core.h"
 #include "rife_app_api.h"
 
-typedef enum {
-    CAL_CAT_WORK = 0,      // 工作协同 (Rtodo Blue)
-    CAL_CAT_REVIEW,        // 架构评审 (Violet)
-    CAL_CAT_PERSONAL,      // 个人聚焦 (Emerald)
-    CAL_CAT_MILESTONE,     // 关键里程碑 (Sunset Amber)
-    CAL_CAT_COUNT
-} CalendarCategory;
+#define CAL_MAX_CUSTOM_TAGS 8
+
+typedef struct {
+    char name[24];          // 用户自定义标签名（如“工作”、“生活”、“项目A”等）
+    uint32_t color_bar;     // 标签主强调色 (例如 0x3370FFFF)
+    uint32_t color_bg;      // 背景微透底色
+    uint32_t color_border;  // 边框色
+    uint32_t color_text;    // 字体颜色
+    bool is_enabled;        // 侧边栏过滤开关
+} CustomTag;
 
 typedef enum {
     CAL_VIEW_WEEK = 0,     // 周视图 (默认)
@@ -27,7 +30,7 @@ typedef struct {
     char title[48];
     char location[32];
     char desc[64];
-    CalendarCategory category;
+    int tag_idx;            // 关联的自定义标签索引
     int year;
     int month;   // 1 - 12
     int day;     // 1 - 31
