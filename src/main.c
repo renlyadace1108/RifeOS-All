@@ -60,6 +60,7 @@ typedef struct {
     HFONT hfont_panel_title;
     HFONT hfont_title;
     HFONT hfont_body;
+    HFONT hfont_bold;
     HFONT hfont_sm;
     HFONT hfont_caption;
     int win_width;
@@ -151,20 +152,24 @@ static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
     if (plat->hfont_panel_title) DeleteObject(plat->hfont_panel_title);
     if (plat->hfont_title) DeleteObject(plat->hfont_title);
     if (plat->hfont_body) DeleteObject(plat->hfont_body);
+    if (plat->hfont_bold) DeleteObject(plat->hfont_bold);
     if (plat->hfont_sm) DeleteObject(plat->hfont_sm);
     if (plat->hfont_caption) DeleteObject(plat->hfont_caption);
 
-    int s_panel = (int)(20 * factor + 0.5f);
-    int s_title = (int)(14 * factor + 0.5f);
-    int s_body = (int)(13 * factor + 0.5f);
-    int s_sm = (int)(11 * factor + 0.5f);
-    int s_cap = (int)(10 * factor + 0.5f);
+    // 使用负值获得纯粹字符 EM 像素高度 (Pixel EM Height)，杜绝正值导致字符被额外挤压模糊
+    int s_panel = -(int)(18 * factor + 0.5f);
+    int s_title = -(int)(15 * factor + 0.5f);
+    int s_body  = -(int)(13 * factor + 0.5f);
+    int s_bold  = -(int)(13 * factor + 0.5f);
+    int s_sm    = -(int)(12 * factor + 0.5f);
+    int s_cap   = -(int)(11 * factor + 0.5f);
 
-    plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_sm = CreateFontW(s_sm, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_caption = CreateFontW(s_cap, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    plat->hfont_bold = CreateFontW(s_bold, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    plat->hfont_sm = CreateFontW(s_sm, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    plat->hfont_caption = CreateFontW(s_cap, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
     plat->current_font_scale = scale;
 }
@@ -1127,7 +1132,10 @@ void rife_render_flush(RifeCore* core) {
     while (curr) {
         if (curr->type == CMD_TEXT) {
             if (curr->font_id == 1) SelectObject(plat->hdc_mem, plat->hfont_title);
+            else if (curr->font_id == 2) SelectObject(plat->hdc_mem, plat->hfont_panel_title);
+            else if (curr->font_id == 3) SelectObject(plat->hdc_mem, plat->hfont_sm);
             else if (curr->font_id == 4) SelectObject(plat->hdc_mem, plat->hfont_caption);
+            else if (curr->font_id == 5) SelectObject(plat->hdc_mem, plat->hfont_bold);
             else SelectObject(plat->hdc_mem, plat->hfont_body);
 
             uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
@@ -1463,6 +1471,7 @@ bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, 
     plat->hfont_panel_title = NULL;
     plat->hfont_title = NULL;
     plat->hfont_body = NULL;
+    plat->hfont_bold = NULL;
     plat->hfont_sm = NULL;
     plat->hfont_caption = NULL;
     update_system_fonts(plat, FONT_SCALE_125);
@@ -1496,6 +1505,7 @@ void rife_platform_shutdown(Win32Platform* plat) {
     if (plat->hfont_panel_title) DeleteObject(plat->hfont_panel_title);
     if (plat->hfont_title) DeleteObject(plat->hfont_title);
     if (plat->hfont_body) DeleteObject(plat->hfont_body);
+    if (plat->hfont_bold) DeleteObject(plat->hfont_bold);
     if (plat->hfont_sm) DeleteObject(plat->hfont_sm);
     if (plat->hfont_caption) DeleteObject(plat->hfont_caption);
 }

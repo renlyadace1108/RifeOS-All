@@ -73,11 +73,11 @@ static inline void draw_segmented_pills(RifeCore* core, float rx, float row_y, f
             uint32_t act_border = is_dark ? 0x634E8CFF : 0xCBD5E1FF;
             uint32_t text_col = is_dark ? 0xF8FAFCFF : 0x0284C7FF;
             rife_draw_round_rect(core, ix, iy, iw, ih, 5.0f, act_col, act_border);
-            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], text_col, 4);
+            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], text_col, 5);
         }
         else {
             uint32_t text_col = is_dark ? 0x94A3B8FF : 0x64748BFF;
-            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], text_col, 4);
+            rife_draw_text_font(core, ix + 10.0f, iy + 4.0f, items[k], text_col, 0);
         }
     }
 }
@@ -87,7 +87,7 @@ static inline void draw_row_header(RifeCore* core, float card_x, float row_y, co
     uint32_t t_col = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
     uint32_t s_col = 0x94A3B8FF;
     rife_draw_text_font(core, card_x + 16.0f, row_y + 8.0f, title, t_col, 0);
-    rife_draw_text_font(core, card_x + 16.0f, row_y + 27.0f, subtitle, s_col, 4);
+    rife_draw_text_font(core, card_x + 16.0f, row_y + 27.0f, subtitle, s_col, 3);
 }
 
 static void settings_update(void* inst, RifeCore* core, const RifeInput* input, float client_w, float client_h) {
@@ -385,7 +385,7 @@ static void settings_render(void* inst, RifeCore* core, float client_x, float cl
             rife_draw_round_rect(core, tab_x, tab_y, tab_w, tab_h, 8.0f, bg, bd);
             rife_draw_round_rect(core, tab_x + 3.0f, tab_y + 8.0f, 3.0f, 20.0f, 1.5f, bar, bar);
             rife_draw_text_font(core, tab_x + 14.0f, tab_y + 9.0f, tabs_icon[i], bar, 1);
-            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 9.0f, is_zh ? tabs_zh[i] : tabs_en[i], txt, 1);
+            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 9.0f, is_zh ? tabs_zh[i] : tabs_en[i], txt, 5);
         }
         else {
             rife_draw_text_font(core, tab_x + 14.0f, tab_y + 9.0f, tabs_icon[i], is_dark ? 0x818CF8FF : 0x64748BFF, 0);
@@ -418,7 +418,7 @@ static void settings_render(void* inst, RifeCore* core, float client_x, float cl
     };
 
     rife_draw_text_font(core, rx, ry, is_zh ? cat_titles_zh[state->current_tab] : cat_titles_en[state->current_tab], is_dark ? 0xF8FAFCFF : 0x0F172AFF, 1);
-    rife_draw_text_font(core, rx, ry + 22.0f, is_zh ? cat_descs_zh[state->current_tab] : cat_descs_en[state->current_tab], is_dark ? 0x94A3B8FF : 0x64748BFF, 4);
+    rife_draw_text_font(core, rx, ry + 22.0f, is_zh ? cat_descs_zh[state->current_tab] : cat_descs_en[state->current_tab], is_dark ? 0x94A3B8FF : 0x64748BFF, 3);
 
     float cy = ry + 44.0f;
 
