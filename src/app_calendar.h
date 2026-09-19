@@ -6,7 +6,7 @@
 #include "rife_app_api.h"
 
 typedef enum {
-    CAL_CAT_WORK = 0,      // 工作协同 (Feishu Blue)
+    CAL_CAT_WORK = 0,      // 工作协同 (Rtodo Blue)
     CAL_CAT_REVIEW,        // 架构评审 (Violet)
     CAL_CAT_PERSONAL,      // 个人聚焦 (Emerald)
     CAL_CAT_MILESTONE,     // 关键里程碑 (Sunset Amber)

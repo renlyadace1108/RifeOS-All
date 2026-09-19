@@ -156,6 +156,17 @@ static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
     if (plat->hfont_sm) DeleteObject(plat->hfont_sm);
     if (plat->hfont_caption) DeleteObject(plat->hfont_caption);
 
+    // 查询 Windows 系统默认 UI 字体 (System Default UI Font)
+    wchar_t font_face[LF_FACESIZE] = L"Microsoft YaHei UI";
+    NONCLIENTMETRICSW ncm;
+    memset(&ncm, 0, sizeof(NONCLIENTMETRICSW));
+    ncm.cbSize = sizeof(NONCLIENTMETRICSW);
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICSW), &ncm, 0)) {
+        if (ncm.lfMessageFont.lfFaceName[0] != L'\0') {
+            wcsncpy_s(font_face, LF_FACESIZE, ncm.lfMessageFont.lfFaceName, _TRUNCATE);
+        }
+    }
+
     // 使用负值获得纯粹字符 EM 像素高度 (Pixel EM Height)，杜绝正值导致字符被额外挤压模糊
     int s_panel = -(int)(18 * factor + 0.5f);
     int s_title = -(int)(15 * factor + 0.5f);
@@ -164,12 +175,12 @@ static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
     int s_sm    = -(int)(12 * factor + 0.5f);
     int s_cap   = -(int)(11 * factor + 0.5f);
 
-    plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_bold = CreateFontW(s_bold, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_sm = CreateFontW(s_sm, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    plat->hfont_caption = CreateFontW(s_cap, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_bold = CreateFontW(s_bold, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_sm = CreateFontW(s_sm, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_caption = CreateFontW(s_cap, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
 
     plat->current_font_scale = scale;
 }

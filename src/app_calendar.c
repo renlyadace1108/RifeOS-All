@@ -8,7 +8,7 @@
 #include <math.h>
 
 // -------------------------------------------------------------
-// 飞书日历状态机定义 (Zero Heap Churn: 单次创建，帧循环零分配)
+// Rtodo 状态机定义 (Zero Heap Churn: 单次创建，帧循环零分配)
 // -------------------------------------------------------------
 
 typedef struct {
@@ -154,7 +154,7 @@ static void init_preset_events(CalendarState* state) {
     CalendarEvent* e1 = &state->events[state->event_count++];
     e1->id = 1;
     snprintf(e1->title, sizeof(e1->title), "%s", "RifeOS 微内核架构周会");
-    snprintf(e1->location, sizeof(e1->location), "%s", "飞书视频会议 / 1号会议室");
+    snprintf(e1->location, sizeof(e1->location), "%s", "RifeOS 视频会议 / 1号会议室");
     snprintf(e1->desc, sizeof(e1->desc), "%s", "双 Arena 架构吞吐率与帧周期分析");
     e1->category = CAL_CAT_WORK;
     e1->year = mon_y; e1->month = mon_m; e1->day = mon_d;
@@ -162,10 +162,10 @@ static void init_preset_events(CalendarState* state) {
     e1->end_hour = 10; e1->end_min = 30;
     e1->is_completed = true;
 
-    // 2. 周二：飞书日历多维视图联调
+    // 2. 周二：Rtodo 多维视图联调
     CalendarEvent* e2 = &state->events[state->event_count++];
     e2->id = 2;
-    snprintf(e2->title, sizeof(e2->title), "%s", "飞书多维日程交互走查");
+    snprintf(e2->title, sizeof(e2->title), "%s", "Rtodo 多维交互走查");
     snprintf(e2->location, sizeof(e2->location), "%s", "桌面研发工位");
     snprintf(e2->desc, sizeof(e2->desc), "%s", "时间标尺微像素对齐与红线指示器");
     e2->category = CAL_CAT_REVIEW;
@@ -225,7 +225,7 @@ static void init_preset_events(CalendarState* state) {
     // 7. 今天新增的一项日程（便于用户立即看见当前红线与日程交互）
     CalendarEvent* e7 = &state->events[state->event_count++];
     e7->id = 7;
-    snprintf(e7->title, sizeof(e7->title), "%s", "飞书日程全场景交互验收");
+    snprintf(e7->title, sizeof(e7->title), "%s", "Rtodo 全场景交互验收");
     snprintf(e7->location, sizeof(e7->location), "%s", "RifeOS 宿主工作台");
     snprintf(e7->desc, sizeof(e7->desc), "%s", "测试周/日/月/日程列表模式切换");
     e7->category = CAL_CAT_WORK;
@@ -246,7 +246,7 @@ static void* calendar_create(RifeCore* core) {
     if (!state) return NULL;
 
     memset(state, 0, sizeof(CalendarState));
-    state->view_mode = CAL_VIEW_WEEK; // 默认飞书招牌周视图
+    state->view_mode = CAL_VIEW_WEEK; // 默认经典周视图
     sync_system_clock(state);
 
     state->view_year = state->cur_year;
@@ -273,7 +273,7 @@ static void calendar_destroy(void* inst) {
 }
 
 // -------------------------------------------------------------
-// 飞书日历色彩体系 (Feishu Calendar Design Tokens)
+// Rtodo 色彩体系 (Rtodo Design Tokens)
 // -------------------------------------------------------------
 
 typedef struct {
@@ -299,7 +299,7 @@ static CategoryColor get_category_color(CalendarCategory cat, bool is_dark) {
         }
     } else {
         switch (cat) {
-            case CAL_CAT_WORK: // 飞书蓝
+            case CAL_CAT_WORK: // Rtodo 品牌蓝
                 c.bg = 0xEFF6FFFF; c.border = 0xBFDBFEFF; c.bar = 0x3370FFFF; c.text = 0x1E40AFFF; break;
             case CAL_CAT_REVIEW: // 薰衣紫
                 c.bg = 0xFAF5FFFF; c.border = 0xE9D5FFFF; c.bar = 0x8B5CF6FF; c.text = 0x6B21A8FF; break;
@@ -393,8 +393,8 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                     CalendarEvent* ne = &state->events[state->event_count++];
                     ne->id = (uint32_t)(state->event_count + 100);
                     snprintf(ne->title, sizeof(ne->title), "%s", presets[state->new_preset_idx]);
-                    snprintf(ne->location, sizeof(ne->location), "%s", "飞书工作空间");
-                    snprintf(ne->desc, sizeof(ne->desc), "%s", "由用户快速添加的飞书日程");
+                    snprintf(ne->location, sizeof(ne->location), "%s", "RifeOS 工作空间");
+                    snprintf(ne->desc, sizeof(ne->desc), "%s", "由用户快速添加的待办日程");
                     ne->category = (CalendarCategory)state->new_cat;
                     ne->year = state->view_year;
                     ne->month = state->view_month;
@@ -605,7 +605,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
 }
 
 // -------------------------------------------------------------
-// 飞书日历多维渲染器 (Render)
+// Rtodo 多维渲染器 (Render)
 // -------------------------------------------------------------
 
 static void calendar_render(void* inst, RifeCore* core, float client_x, float client_y, float client_w, float client_h) {
@@ -622,7 +622,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     uint32_t border_col = is_dark ? 0x2E2447FF : 0xE2E8F0FF;
     uint32_t text_title = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
     uint32_t text_muted = is_dark ? 0x94A3B8FF : 0x64748BFF;
-    uint32_t feishu_blue = 0x3370FFFF;
+    uint32_t rtodo_blue = 0x3370FFFF;
 
     float header_h = 48.0f;
     float sidebar_w = 190.0f;
@@ -634,8 +634,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     rife_draw_rect(core, client_x, client_y + header_h, client_w, 1.0f, border_col);
 
     // B. 顶部 Header 区域
-    // 1. 左侧飞书品牌标识与精致日历徽章
-    rife_draw_round_rect(core, client_x + 14.0f, client_y + 11.0f, 26.0f, 26.0f, 6.0f, feishu_blue, feishu_blue);
+    // 1. 左侧 Rtodo 品牌标识与精致日历徽章
+    rife_draw_round_rect(core, client_x + 14.0f, client_y + 11.0f, 26.0f, 26.0f, 6.0f, rtodo_blue, rtodo_blue);
     rife_draw_round_rect(core, client_x + 14.0f, client_y + 11.0f, 26.0f, 8.0f, 4.0f, 0x1E40AFFF, 0x1E40AFFF);
     rife_draw_round_rect(core, client_x + 18.0f, client_y + 16.0f, 3.0f, 3.0f, 1.0f, 0xFFFFFFFF, 0xFFFFFFFF);
     rife_draw_round_rect(core, client_x + 24.0f, client_y + 16.0f, 3.0f, 3.0f, 1.0f, 0xFFFFFFFF, 0xFFFFFFFF);
@@ -644,7 +644,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     rife_draw_round_rect(core, client_x + 24.0f, client_y + 22.0f, 3.0f, 3.0f, 1.0f, 0xFFFFFFFF, 0xFFFFFFFF);
     rife_draw_round_rect(core, client_x + 30.0f, client_y + 22.0f, 3.0f, 3.0f, 1.0f, 0xFFFFFFFF, 0xFFFFFFFF);
 
-    rife_draw_text_font(core, client_x + 48.0f, client_y + 14.0f, is_zh ? "飞书日程" : "Calendar", text_title, 1);
+    rife_draw_text_font(core, client_x + 48.0f, client_y + 14.0f, is_zh ? "Rtodo 日程" : "Rtodo", text_title, 1);
 
     // 2. "今天" 按钮
     float today_btn_x = client_x + sidebar_w + 14.0f;
@@ -673,7 +673,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     // 5. "+ 新建日程" 主按钮 (靠右自适应对齐)
     float new_btn_w = 92.0f;
     float new_btn_x = client_x + client_w - new_btn_w - 14.0f;
-    rife_draw_round_rect(core, new_btn_x, client_y + 10.0f, new_btn_w, 28.0f, 6.0f, feishu_blue, feishu_blue);
+    rife_draw_round_rect(core, new_btn_x, client_y + 10.0f, new_btn_w, 28.0f, 6.0f, rtodo_blue, rtodo_blue);
     rife_draw_text_font(core, new_btn_x + 14.0f, client_y + 14.0f, is_zh ? "+ 新建日程" : "+ New Event", 0xFFFFFFFF, 5);
 
     // 6. 视图切换多段药丸 [日] [周] [月] [日程]
@@ -691,7 +691,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         if (is_act) {
             uint32_t act_bg = is_dark ? 0x382A57FF : 0xFFFFFFFF;
             uint32_t act_brd = is_dark ? 0x634E8CFF : 0x93C5FDFF;
-            uint32_t act_txt = is_dark ? 0xF8FAFCFF : feishu_blue;
+            uint32_t act_txt = is_dark ? 0xF8FAFCFF : rtodo_blue;
             rife_draw_round_rect(core, vx, seg_y + 2.0f, 48.0f, 24.0f, 5.0f, act_bg, act_brd);
             rife_draw_text_font(core, vx + (is_zh ? (v == 3 ? 11.0f : 17.0f) : 10.0f), seg_y + 5.0f, is_zh ? view_labels_zh[v] : view_labels_en[v], act_txt, 5);
         } else {
@@ -730,15 +730,15 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         bool is_sel = (d == state->view_day);
 
         if (is_today) {
-            rife_draw_round_rect(core, cx + 2.0f, cy + 2.0f, cell_sz - 4.0f, cell_sz - 4.0f, 10.0f, feishu_blue, feishu_blue);
+            rife_draw_round_rect(core, cx + 2.0f, cy + 2.0f, cell_sz - 4.0f, cell_sz - 4.0f, 10.0f, rtodo_blue, rtodo_blue);
         } else if (is_sel) {
-            rife_draw_round_rect(core, cx + 2.0f, cy + 2.0f, cell_sz - 4.0f, cell_sz - 4.0f, 5.0f, is_dark ? 0x2D214AFF : 0xEFF6FFFF, feishu_blue);
+            rife_draw_round_rect(core, cx + 2.0f, cy + 2.0f, cell_sz - 4.0f, cell_sz - 4.0f, 5.0f, is_dark ? 0x2D214AFF : 0xEFF6FFFF, rtodo_blue);
         }
 
         char d_str[8];
         snprintf(d_str, sizeof(d_str), "%d", d);
         float tx = cx + (d < 10 ? 8.0f : 4.0f);
-        uint32_t tc = is_today ? 0xFFFFFFFF : (is_sel ? (is_dark ? 0xC084FCFF : feishu_blue) : text_title);
+        uint32_t tc = is_today ? 0xFFFFFFFF : (is_sel ? (is_dark ? 0xC084FCFF : rtodo_blue) : text_title);
         rife_draw_text_font(core, tx, cy + 4.0f, d_str, tc, 4);
     }
 
@@ -778,8 +778,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     snprintf(cnt_str, sizeof(cnt_str), "%d 项", state->event_count);
     float badge_w = 42.0f;
     float badge_x = sb_x + sidebar_w - 24.0f - badge_w;
-    rife_draw_round_rect(core, badge_x, summary_y + 7.0f, badge_w, 22.0f, 11.0f, is_dark ? 0x2D214AFF : 0xEFF6FFFF, feishu_blue);
-    rife_draw_text_font(core, badge_x + 8.0f, summary_y + 10.0f, cnt_str, is_dark ? 0xC084FCFF : feishu_blue, 5);
+    rife_draw_round_rect(core, badge_x, summary_y + 7.0f, badge_w, 22.0f, 11.0f, is_dark ? 0x2D214AFF : 0xEFF6FFFF, rtodo_blue);
+    rife_draw_text_font(core, badge_x + 8.0f, summary_y + 10.0f, cnt_str, is_dark ? 0xC084FCFF : rtodo_blue, 5);
 
     // D. 右侧主工作区 (周视图 / 日视图 / 月视图 / 日程列表)
     float main_x = client_x + sidebar_w;
@@ -788,7 +788,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float main_h = client_h - header_h;
 
     // ==========================================
-    // 视图 1：周视图 (Week View - 飞书招牌视图)
+    // 视图 1：周视图 (Week View)
     // ==========================================
     if (state->view_mode == CAL_VIEW_WEEK) {
         float ruler_w = 48.0f;
@@ -817,15 +817,15 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             rife_draw_rect(core, cx, main_y, 1.0f, main_h, border_col);
 
             // 顶部：星期文字水平居中
-            rife_draw_text_font(core, col_mid_x - 12.0f, main_y + 5.0f, wk_names[c], is_col_today ? feishu_blue : text_muted, 3);
+            rife_draw_text_font(core, col_mid_x - 12.0f, main_y + 5.0f, wk_names[c], is_col_today ? rtodo_blue : text_muted, 3);
 
-            // 底部：日期数字水平居中（今天带飞书蓝高光实心圆形胶囊）
+            // 底部：日期数字水平居中（今天带品牌蓝高光实心圆形胶囊）
             char d_buf[8];
             snprintf(d_buf, sizeof(d_buf), "%d", cy_d);
             float d_off = (cy_d >= 10) ? 6.0f : 4.0f;
 
             if (is_col_today) {
-                rife_draw_round_rect(core, col_mid_x - 12.0f, main_y + 20.0f, 24.0f, 24.0f, 12.0f, feishu_blue, feishu_blue);
+                rife_draw_round_rect(core, col_mid_x - 12.0f, main_y + 20.0f, 24.0f, 24.0f, 12.0f, rtodo_blue, rtodo_blue);
                 rife_draw_text_font(core, col_mid_x - d_off, main_y + 24.0f, d_buf, 0xFFFFFFFF, 5);
             } else {
                 rife_draw_text_font(core, col_mid_x - d_off, main_y + 24.0f, d_buf, text_title, 1);
@@ -869,7 +869,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
                     // 卡片背景与边框
                     rife_draw_round_rect(core, cx, cy, cw, ch, 6.0f, cc.bg, cc.border);
-                    // 左侧 3.5px 标志重色强调条 (Feishu Indicator Bar)
+                    // 左侧 3.5px 标志重色强调条 (Accent Indicator Bar)
                     rife_draw_round_rect(core, cx + 1.5f, cy + 2.0f, 3.5f, ch - 4.0f, 1.75f, cc.bar, cc.bar);
 
                     // 标题与时间
@@ -885,7 +885,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             }
         }
 
-        // 4. 飞书实时时间红线 (Current Time Red Indicator Line)
+        // 4. 实时时间红线 (Current Time Red Indicator Line)
         for (int c = 0; c < 7; c++) {
             int cy_y, cy_m, cy_d;
             add_days(mon_y, mon_m, mon_d, c, &cy_y, &cy_m, &cy_d);
@@ -982,7 +982,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             snprintf(d_str, sizeof(d_str), "%d", d);
             bool is_td = (state->view_year == state->cur_year && state->view_month == state->cur_month && d == state->cur_day);
             if (is_td) {
-                rife_draw_round_rect(core, cx + 8.0f, cy + 6.0f, 22.0f, 22.0f, 11.0f, feishu_blue, feishu_blue);
+                rife_draw_round_rect(core, cx + 8.0f, cy + 6.0f, 22.0f, 22.0f, 11.0f, rtodo_blue, rtodo_blue);
                 rife_draw_text_font(core, cx + (d >= 10 ? 12.0f : 15.0f), cy + 8.0f, d_str, 0xFFFFFFFF, 5);
             } else {
                 rife_draw_text_font(core, cx + 10.0f, cy + 8.0f, d_str, text_title, 3);
@@ -1087,8 +1087,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             float bx = mx0 + 16.0f + col * 166.0f;
             float by = pre_y + row * 32.0f;
             bool is_p_act = (state->new_preset_idx == p);
-            rife_draw_round_rect(core, bx, by, 158.0f, 26.0f, 6.0f, is_p_act ? (is_dark ? 0x3D2C63FF : 0xEFF6FFFF) : (is_dark ? 0x1B142BFF : 0xF8FAFCFF), is_p_act ? feishu_blue : border_col);
-            rife_draw_text_font(core, bx + 12.0f, by + 5.0f, presets[p], is_p_act ? (is_dark ? 0xD8B4FEFF : feishu_blue) : text_title, 3);
+            rife_draw_round_rect(core, bx, by, 158.0f, 26.0f, 6.0f, is_p_act ? (is_dark ? 0x3D2C63FF : 0xEFF6FFFF) : (is_dark ? 0x1B142BFF : 0xF8FAFCFF), is_p_act ? rtodo_blue : border_col);
+            rife_draw_text_font(core, bx + 12.0f, by + 5.0f, presets[p], is_p_act ? (is_dark ? 0xD8B4FEFF : rtodo_blue) : text_title, 3);
         }
 
         // 时间选择
@@ -1109,7 +1109,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         rife_draw_round_rect(core, mx0 + mw - 170.0f, btn_y, 66.0f, 30.0f, 6.0f, is_dark ? 0x241D35FF : 0xF1F5F9FF, border_col);
         rife_draw_text_font(core, mx0 + mw - 150.0f, btn_y + 6.0f, is_zh ? "取消" : "Cancel", text_muted, 0);
 
-        rife_draw_round_rect(core, mx0 + mw - 96.0f, btn_y, 80.0f, 30.0f, 6.0f, feishu_blue, feishu_blue);
+        rife_draw_round_rect(core, mx0 + mw - 96.0f, btn_y, 80.0f, 30.0f, 6.0f, rtodo_blue, rtodo_blue);
         rife_draw_text_font(core, mx0 + mw - 80.0f, btn_y + 6.0f, is_zh ? "确认创建" : "Create", 0xFFFFFFFF, 5);
     }
 
@@ -1146,8 +1146,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
             // 操作：标记完成 / 关闭
             float act_y = pop_y + pop_h - 38.0f;
-            rife_draw_round_rect(core, pop_x + 14.0f, act_y, 104.0f, 26.0f, 6.0f, cur_e->is_completed ? 0x10B981FF : (is_dark ? 0x2D2248FF : 0xEFF6FFFF), feishu_blue);
-            rife_draw_text_font(core, pop_x + 24.0f, act_y + 5.0f, cur_e->is_completed ? (is_zh ? "已完成" : "Completed") : (is_zh ? "标记为完成" : "Mark Done"), cur_e->is_completed ? 0xFFFFFFFF : (is_dark ? 0xD8B4FEFF : feishu_blue), 5);
+            rife_draw_round_rect(core, pop_x + 14.0f, act_y, 104.0f, 26.0f, 6.0f, cur_e->is_completed ? 0x10B981FF : (is_dark ? 0x2D2248FF : 0xEFF6FFFF), rtodo_blue);
+            rife_draw_text_font(core, pop_x + 24.0f, act_y + 5.0f, cur_e->is_completed ? (is_zh ? "已完成" : "Completed") : (is_zh ? "标记为完成" : "Mark Done"), cur_e->is_completed ? 0xFFFFFFFF : (is_dark ? 0xD8B4FEFF : rtodo_blue), 5);
 
             rife_draw_round_rect(core, pop_x + pop_w - 68.0f, act_y, 54.0f, 26.0f, 6.0f, is_dark ? 0x231A35FF : 0xF1F5F9FF, border_col);
             rife_draw_text_font(core, pop_x + pop_w - 52.0f, act_y + 5.0f, is_zh ? "关闭" : "Close", text_muted, 0);
@@ -1161,11 +1161,11 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
 const RifePluginApp g_calendar_plugin_app = {
     .app_id = 2002,
-    .id = "calendar",
-    .name_zh = "飞书日程",
-    .name_en = "Calendar",
-    .glyph = "#",
-    .color_top = 0x3370FFFF, // 飞书蓝
+    .id = "rtodo",
+    .name_zh = "Rtodo 日程",
+    .name_en = "Rtodo",
+    .glyph = "R",
+    .color_top = 0x3370FFFF, // Rtodo 品牌蓝
     .color_bot = 0x1E40AFFF,
     .default_w = 900.0f,
     .default_h = 580.0f,

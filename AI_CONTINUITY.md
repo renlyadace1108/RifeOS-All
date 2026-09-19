@@ -167,7 +167,8 @@ d:\MyProjects\VS\RIFEOS
   - [x] 设置窗口黑曜石深色暗晶化（消除原刺眼白底色块，采用 `0x201832` 暗晶底板 + `0x382B54` 紫晶边框）；
   - [x] Windows 纯 GUI 无黑窗口原生安装向导套件（Inno Setup 6 + `build_installer.bat` 一键打包）；
   - [x] 跨账号无缝交接与自动状态同步机制（`GEMINI.md` + `AI_CONTINUITY.md`）；
-  - [x] 原生飞书风格日程系统（`src/app_calendar.c`，包含周/日/月/日程多维视图、实时系统时钟红线、迷你月历与多色分类过滤）。
+  - [x] 原生 Rtodo 多维日程系统（`src/app_calendar.c`，包含周/日/月/日程多维视图、实时系统时钟红线、迷你月历与多色分类过滤）；
+  - [x] Windows 系统默认 UI 字体动态获取与次像素 ClearType 自然抗锯齿渲染。
 
 ---
 
@@ -182,7 +183,8 @@ d:\MyProjects\VS\RIFEOS
 | **Milestone 5** | **Windows 原生商业级安装包与图标**：使用 .NET 绘制 256x256 高清多分辨率 `rifeos.ico`；编写 `resources/rifeos.rc`；引入 Inno Setup 6 编写 `RifeOS_Setup.iss` 与 `build_installer.bat`。 | `resources/`, `assets/`, `installer/`, `scripts/` |
 | **Milestone 6** | **根除控制台 CMD 黑窗口**：CMake 增加 `WIN32` 属性，主程序添加标准 `WinMain` GUI 入口桥接，启动完全纯净无黑窗。 | `CMakeLists.txt`, `src/main.c` |
 | **Milestone 7** | **AI 跨账号连续协同体系与实时状态同步**：建立 `GEMINI.md`（自动加载）、`AGENTS.md` 与 `AI_CONTINUITY.md`，确立实时同步状态机制，实现随时断随时接。 | `AI_CONTINUITY.md`, `GEMINI.md`, `AGENTS.md` |
-| **Milestone 8** | **飞书风格日程系统 (Feishu-Style Calendar App)**：打造原汁原味飞书多维日历，含周视图时间轴（08:00~20:00）、实时系统时钟红线指示器、日/月/日程清单视图、左侧迷你月历、多分类标签过滤、新建日程模态弹窗与详情 Popover；完美适配 Obsidian 黑曜石深色模式与浅色模式。 | `src/app_calendar.h`, `src/app_calendar.c`, `src/app_manifest.c`, `CMakeLists.txt` |
+| **Milestone 8** | **多维日程待办系统雏形 (Rtodo Prototype)**：打造原汁原味多维日历，含周视图时间轴（08:00~20:00）、实时系统时钟红线指示器、日/月/日程清单视图、左侧迷你月历、多分类标签过滤、新建日程模态弹窗与详情 Popover；完美适配 Obsidian 黑曜石深色模式与浅色模式。 | `src/app_calendar.h`, `src/app_calendar.c`, `src/app_manifest.c`, `CMakeLists.txt` |
 | **Milestone 9** | **多窗口焦点置顶与点击防穿透隔离**：彻底修复多窗口同时开启时的画面重叠串色与点击穿透冲突；引入分层双 Pass 渲染保证活动窗口（`active_win_idx`）始终置顶；Dock 与应用抽屉点击支持智能平滑切换（打开新应用自动闭合其他窗口，再次点击已激活应用收起）；为设置窗口添加不透明底板防止背景透光。 | `src/main.c`, `src/app_settings.c` |
-| **Milestone 10** | **宿主工作区初始尺寸扩展与应用窗口自适应防越界**：将 RifeOS 桌面宿主窗口默认尺寸从原受限的 `680x480` 扩展至 `1240x780`（动态依据 `SM_CXSCREEN / SM_CYSCREEN` 智能居中与钳制），为飞书日程等生产力应用提供开阔舒展的桌面工作区；在宿主端加入窗口防越界安全几何约束，杜绝负坐标与边缘裁切；重构飞书日程顶栏自适应排版（侧边栏 190px，顶栏 46px，右靠齐多段切换胶囊与新建日程按钮），消除控件重合与文字遮挡。 | `src/main.c`, `src/app_calendar.c` |
-| **Milestone 11** | **图形排版美学与次像素清晰字体引擎重构**：<br>1. **字体引擎重构**：彻底根治字迹模糊、字符粘连与粗重墨晕；弃用正值高度（Cell Height），改用负值字符实际 EM 高度（`-11px ~ -18px`），引入 `CLEARTYPE_NATURAL_QUALITY` 与严谨字重梯度（`FW_NORMAL` 400 正文、`FW_MEDIUM` 500 次级、`FW_SEMIBOLD` 600 标题/强调）；扩充 6 档字体句柄（含专属 13px SemiBold 药丸与按钮高光字体）。<br>2. **周表头美学重构**：周一至周日 7 列全部采用纵向居中双行排版（上层星期 12px Regular 居中，下层日期 15px SemiBold 居中，当天以 24x24 飞书蓝实心圆点包裹），视感对称典雅。<br>3. **周视图卡片与标尺优化**：卡片引入 `rife_push_scissor` 局部硬件级裁剪，杜绝长标题跨日溢出；重构 3.5px 强调色条与内边距；重新计算标尺高度使 08:00~20:00 完美融入视口，无底部截断；实时系统时间红线加入发光指示圆点。<br>4. **细节与图标精修**：移除所有 ASCII 临时字符（如 `'v'` 和 `'#'`），侧边栏复选框与待办清单改用原生几何矢量对勾；顶栏加入飞书日历专属网格徽标；视图切换药丸采用高对比度柔和天蓝边框与加粗强调态，激活状态一目了然。 | `src/main.c`, `src/app_calendar.c`, `src/app_settings.c` |
+| **Milestone 10** | **宿主工作区初始尺寸扩展与应用窗口自适应防越界**：将 RifeOS 桌面宿主窗口默认尺寸从原受限的 `680x480` 扩展至 `1240x780`（动态依据 `SM_CXSCREEN / SM_CYSCREEN` 智能居中与钳制），为生产力应用提供开阔舒展的桌面工作区；在宿主端加入窗口防越界安全几何约束，杜绝负坐标与边缘裁切；重构日程顶栏自适应排版（侧边栏 190px，顶栏 46px，右靠齐多段切换胶囊与新建日程按钮），消除控件重合与文字遮挡。 | `src/main.c`, `src/app_calendar.c` |
+| **Milestone 11** | **图形排版美学与次像素清晰字体引擎重构**：<br>1. **字体引擎重构**：彻底根治字迹模糊、字符粘连与粗重墨晕；弃用正值高度（Cell Height），改用负值字符实际 EM 高度（`-11px ~ -18px`），引入 `CLEARTYPE_NATURAL_QUALITY` 与严谨字重梯度（`FW_NORMAL` 400 正文、`FW_MEDIUM` 500 次级、`FW_SEMIBOLD` 600 标题/强调）；扩充 6 档字体句柄（含专属 13px SemiBold 药丸与按钮高光字体）。<br>2. **周表头美学重构**：周一至周日 7 列全部采用纵向居中双行排版（上层星期 12px Regular 居中，下层日期 15px SemiBold 居中，当天以 24x24 品牌蓝实心圆点包裹），视感对称典雅。<br>3. **周视图卡片与标尺优化**：卡片引入 `rife_push_scissor` 局部硬件级裁剪，杜绝长标题跨日溢出；重构 3.5px 强调色条与内边距；重新计算标尺高度使 08:00~20:00 完美融入视口，无底部截断；实时系统时间红线加入发光指示圆点。<br>4. **细节与图标精修**：移除所有 ASCII 临时字符（如 `'v'` 和 `'#'`），侧边栏复选框与待办清单改用原生几何矢量对勾；顶栏加入专属网格徽标；视图切换药丸采用高对比度柔和天蓝边框与加粗强调态，激活状态一目了然。 | `src/main.c`, `src/app_calendar.c`, `src/app_settings.c` |
+| **Milestone 12** | **Windows 系统默认 UI 字体动态绑定与 Rtodo 品牌完全合规去三方化**：<br>1. **Windows 原生 UI 字体动态解析**：在 `update_system_fonts` 中通过 `SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ...)` 动态获取系统配置的 UI 字体名称（`ncm.lfMessageFont.lfFaceName`，优雅降级为 `Microsoft YaHei UI`），使文字呈现完全融入宿主操作系统环境风格。<br>2. **Rtodo 品牌合规与品牌字样彻底净化**：根据用户指令彻底移除所有第三方品牌字样及引用，全面重命名为 **Rtodo**（`name_zh = "Rtodo 日程"`, `name_en = "Rtodo"`, `id = "rtodo"`）；同步更新预设示例事件、色彩令牌（`rtodo_blue`）、应用图标与全部代码注释。 | `src/main.c`, `src/app_calendar.h`, `src/app_calendar.c` |
