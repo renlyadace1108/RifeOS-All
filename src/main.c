@@ -96,6 +96,42 @@ typedef struct {
     bool snap_preview;
 } Win32Platform;
 
+static Win32Platform* s_global_plat = NULL;
+static RifeCore* s_global_core = NULL;
+
+void rife_open_app_by_id(const char* app_id) {
+    if (!s_global_plat || !s_global_core || !app_id) return;
+    for (size_t i = 0; i < g_installed_app_count; i++) {
+        if (g_installed_apps[i] && g_installed_apps[i]->id && strcmp(g_installed_apps[i]->id, app_id) == 0) {
+            ActiveWindow* win = &s_global_plat->windows[i];
+            for (size_t k = 0; k < g_installed_app_count; k++) {
+                if (k != i) s_global_plat->windows[k].is_open = false;
+            }
+            if (!win->inst) {
+                win->inst = win->plugin->create(s_global_core);
+            }
+            win->is_open = true;
+            win->anim = 0.0f;
+            if (!win->inited) {
+                float ww = (float)s_global_plat->win_width;
+                float wh = (float)s_global_plat->win_height;
+                win->w = win->plugin->default_w;
+                win->h = win->plugin->default_h;
+                if (win->w > ww - 48.0f) win->w = ww - 48.0f;
+                if (win->h > wh - 110.0f) win->h = wh - 110.0f;
+                if (win->w < 360.0f) win->w = 360.0f;
+                if (win->h < 260.0f) win->h = 260.0f;
+                win->x = (ww - win->w) * 0.5f;
+                win->y = (wh - 80.0f - win->h) * 0.5f;
+                if (win->y < 36.0f) win->y = 36.0f;
+                win->inited = true;
+            }
+            s_global_plat->active_win_idx = (int)i;
+            break;
+        }
+    }
+}
+
 void rife_render_immediate(RifeCore* core);
 
 static inline float rife_clampf(float v, float min_v, float max_v) {
@@ -2582,6 +2618,8 @@ int main(void) {
         rife_core_shutdown(&core);
         return 1;
     }
+    s_global_plat = &plat;
+    s_global_core = &core;
 
     RifeApp launcher_app;
     launcher_app.app_id = 1000;
