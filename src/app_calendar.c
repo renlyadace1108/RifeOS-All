@@ -65,6 +65,16 @@ typedef struct {
 
     float scroll_y;
     float time_scale; // 每小时像素高度 (默认 96.0f，15分钟单位即 24.0f)
+
+    // 时间网格拖拽选区状态 (Drag-to-Select)
+    bool is_dragging_time;
+    int drag_col;             // 周视图被拖拽的列 (0..6)
+    int drag_target_year;
+    int drag_target_month;
+    int drag_target_day;
+    int drag_start_mins;      // 0..1439
+    int drag_cur_mins;        // 0..1439
+    float drag_start_y;       // 初始点击物理 Y 坐标
 } CalendarState;
 
 // -------------------------------------------------------------
@@ -565,6 +575,13 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
     state->cursor_blink_t += 0.04f;
     if (state->cursor_blink_t > 1.0f) state->cursor_blink_t -= 1.0f;
 
+    // ESC 键取消当前拖拽框选
+    if (state->is_dragging_time && input->key_pressed[VK_ESCAPE]) {
+        state->is_dragging_time = false;
+        rife_request_redraw(core);
+        return;
+    }
+
     // 键盘按键与字符文本输入处理
     if (state->active_field > 0) {
         // A. ESC 关闭或失焦
@@ -812,6 +829,67 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
     if (state->active_field == 0 && !state->show_new_modal && !state->show_new_tag_modal) {
         if (input->key_pressed['T'] || input->key_pressed['t'] || input->key_pressed[0x24]) {
             return_to_today(state, core);
+            return;
+        }
+    }
+
+    // 处理时间网格框选拖拽中与释放创建 (Drag-to-select in Week/Day Grid)
+    if (state->is_dragging_time) {
+        float cur_my = input->mouse_y;
+        float h_bar = (state->view_mode == CAL_VIEW_WEEK) ? 52.0f : 36.0f;
+        float g_top = 48.0f + h_bar;
+        float cur_hh = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
+
+        // 计算当前鼠标位置对应的一天分钟数 (0~1439)
+        float cur_exact_h = (cur_my - g_top + state->scroll_y) / cur_hh;
+        int cur_m = (int)floorf(cur_exact_h * 60.0f);
+        if (cur_m < 0) cur_m = 0;
+        if (cur_m > 1439) cur_m = 1439;
+
+        // 1. 拖动中：鼠标按住移动更新结束时间
+        if (input->mouse_down[0] && !input->mouse_released[0]) {
+            if (cur_m != state->drag_cur_mins) {
+                state->drag_cur_mins = cur_m;
+                rife_request_redraw(core);
+            }
+            return;
+        }
+
+        // 2. 释放鼠标：完成拖拽或单击，唤起新建日程弹窗
+        if (input->mouse_released[0] || !input->mouse_down[0]) {
+            int start_m = (state->drag_start_mins < state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
+            int end_m = (state->drag_start_mins > state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
+
+            // 如果拖动位移极小（即普通单击），赋予合理的默认时长 (15 或 30 分钟)
+            if (end_m == start_m || (fabsf(cur_my - state->drag_start_y) < 4.0f && end_m <= start_m + 1)) {
+                int dur_mins = (cur_hh >= 400.0f) ? 15 : 30;
+                end_m = start_m + dur_mins;
+                if (end_m > 1439) end_m = 1439;
+            }
+
+            state->view_year = state->drag_target_year;
+            state->view_month = state->drag_target_month;
+            state->view_day = state->drag_target_day;
+            state->new_hour = start_m / 60;
+            state->new_min = start_m % 60;
+            state->new_end_hour = end_m / 60;
+            state->new_end_min = end_m % 60;
+
+            int total_dur = end_m - start_m;
+            if (total_dur == 1) state->new_duration_idx = 0;
+            else if (total_dur == 15) state->new_duration_idx = 1;
+            else if (total_dur == 30) state->new_duration_idx = 2;
+            else if (total_dur == 60) state->new_duration_idx = 3;
+            else if (total_dur == 120) state->new_duration_idx = 4;
+            else state->new_duration_idx = -1;
+
+            state->show_new_modal = true;
+            state->active_field = 1;
+            state->input_title[0] = '\0';
+            state->input_location[0] = '\0';
+            state->input_desc[0] = '\0';
+            state->is_dragging_time = false;
+            rife_request_redraw(core);
             return;
         }
     }
@@ -1531,7 +1609,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 }
             }
 
-            // B. 点击空白时间网格：快速创建该日该时段日程 (以 1 分钟为单位精准吸附)
+            // B. 点击/框选时间网格：启动拖拽或单击新建日程
             if (my >= grid_top && my <= client_h - 6.0f && mx >= grid_left && mx <= grid_left + 7.0f * col_w) {
                 int c = (int)((mx - grid_left) / col_w);
                 if (c < 0) c = 0; if (c > 6) c = 6;
@@ -1542,22 +1620,15 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
 
                 int target_y, target_m, target_d;
                 add_days(sun_y, sun_m, sun_d, c, &target_y, &target_m, &target_d);
-                state->view_year = target_y;
-                state->view_month = target_m;
-                state->view_day = target_d;
-                state->new_hour = total_mins / 60;
-                state->new_min = total_mins % 60; // 1分钟单位精准吸附 (0-59)
-                int dur_mins = (hour_h >= 400.0f) ? 15 : 30;
-                int end_mins = total_mins + dur_mins;
-                if (end_mins > 1439) end_mins = 1439;
-                state->new_end_hour = end_mins / 60;
-                state->new_end_min = end_mins % 60;
-                state->new_duration_idx = (dur_mins == 15) ? 1 : 2;
-                state->show_new_modal = true;
-                state->active_field = 1;
-                state->input_title[0] = '\0';
-                state->input_location[0] = '\0';
-                state->input_desc[0] = '\0';
+
+                state->is_dragging_time = true;
+                state->drag_col = c;
+                state->drag_target_year = target_y;
+                state->drag_target_month = target_m;
+                state->drag_target_day = target_d;
+                state->drag_start_mins = total_mins;
+                state->drag_cur_mins = total_mins;
+                state->drag_start_y = my;
                 rife_request_redraw(core);
                 return;
             }
@@ -1589,26 +1660,21 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 }
             }
 
-            // B. 点击日视图空白区域新建 (以 1 分钟为单位精准吸附)
+            // B. 点击/框选日视图空白区域新建
             if (my >= day_grid_top && my <= client_h - 6.0f && mx >= ex && mx <= ex + ew) {
                 float exact_h = (my - day_grid_top + state->scroll_y) / day_hour_h;
                 int total_mins = (int)floorf(exact_h * 60.0f);
                 if (total_mins < 0) total_mins = 0;
                 if (total_mins > 1439) total_mins = 1439;
 
-                state->new_hour = total_mins / 60;
-                state->new_min = total_mins % 60; // 1分钟单位精准吸附 (0-59)
-                int dur_mins = (day_hour_h >= 400.0f) ? 15 : 30;
-                int end_mins = total_mins + dur_mins;
-                if (end_mins > 1439) end_mins = 1439;
-                state->new_end_hour = end_mins / 60;
-                state->new_end_min = end_mins % 60;
-                state->new_duration_idx = (dur_mins == 15) ? 1 : 2;
-                state->show_new_modal = true;
-                state->active_field = 1;
-                state->input_title[0] = '\0';
-                state->input_location[0] = '\0';
-                state->input_desc[0] = '\0';
+                state->is_dragging_time = true;
+                state->drag_col = 0;
+                state->drag_target_year = state->view_year;
+                state->drag_target_month = state->view_month;
+                state->drag_target_day = state->view_day;
+                state->drag_start_mins = total_mins;
+                state->drag_cur_mins = total_mins;
+                state->drag_start_y = my;
                 rife_request_redraw(core);
                 return;
             }
@@ -2215,6 +2281,52 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             rife_draw_round_rect(core, sb_bar_x, thumb_y, sb_bar_w, thumb_h, 2.0f, is_dark ? 0x634E8C66 : 0xCBD5E199, 0);
         }
 
+        // 6. 时间网格框选拖拽动态实时预览 (Drag-to-select live preview)
+        if (state->is_dragging_time && state->drag_col >= 0 && state->drag_col < 7) {
+            int start_m = (state->drag_start_mins < state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
+            int end_m = (state->drag_start_mins > state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
+            float cx = grid_left + (float)state->drag_col * col_w + 2.0f;
+            float cw = col_w - 4.0f;
+            float sy1 = grid_top - state->scroll_y + ((float)start_m / 60.0f) * hour_h;
+            float sy2 = grid_top - state->scroll_y + ((float)end_m / 60.0f) * hour_h;
+            float sel_h = sy2 - sy1;
+            if (sel_h < 14.0f) sel_h = 14.0f;
+
+            if (sy1 + sel_h >= grid_top && sy1 <= grid_top + avail_h) {
+                // 液态玻璃高光选区卡片
+                rife_draw_round_rect(core, cx, sy1, cw, sel_h, 6.0f,
+                                     is_dark ? 0x3370FF40 : 0x3370FF24,
+                                     is_dark ? 0x60A5FAAA : 0x3370FFCC);
+                // 顶部晶莹反光镜面
+                rife_draw_round_rect(core, cx + 2.0f, sy1 + 1.0f, cw - 4.0f, 1.0f, 1.0f, 0xFFFFFF88, 0x00000000);
+
+                // 悬浮时间提示药丸徽标
+                int dur = end_m - start_m;
+                char tip_buf[48];
+                if (dur == 0) {
+                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d", start_m / 60, start_m % 60);
+                } else if (dur >= 60) {
+                    if (dur % 60 == 0) {
+                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60);
+                    } else {
+                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh%02dm)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60, dur % 60);
+                    }
+                } else {
+                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%d分)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur);
+                }
+
+                float badge_w = fminf(cw - 4.0f, 130.0f);
+                if (badge_w < 70.0f) badge_w = cw - 4.0f;
+                float badge_x = cx + (cw - badge_w) * 0.5f;
+                float badge_y = sy1 + (sel_h - 20.0f) * 0.5f;
+                if (badge_y < grid_top + 2.0f) badge_y = grid_top + 2.0f;
+                if (badge_y > grid_top + avail_h - 22.0f) badge_y = grid_top + avail_h - 22.0f;
+
+                rife_draw_round_rect(core, badge_x, badge_y, badge_w, 20.0f, 4.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, rtodo_blue);
+                rife_draw_text_rect(core, badge_x, badge_y, badge_w, 20.0f, tip_buf, is_dark ? 0x93C5FDFF : 0x1D4ED8FF, 4, 0);
+            }
+        }
+
         rife_pop_scissor(core);
     }
     // ==========================================
@@ -2386,6 +2498,50 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             if (thumb_h < 36.0f) thumb_h = 36.0f;
             float thumb_y = day_grid_top + (state->scroll_y / max_scroll) * (day_avail_h - thumb_h);
             rife_draw_round_rect(core, sb_bar_x, thumb_y, sb_bar_w, thumb_h, 2.0f, is_dark ? 0x634E8C66 : 0xCBD5E199, 0);
+        }
+
+        // 拖拽选区实时动态预览 (日视图)
+        if (state->is_dragging_time) {
+            int start_m = (state->drag_start_mins < state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
+            int end_m = (state->drag_start_mins > state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
+            float cx = ex;
+            float cw = ew;
+            float sy1 = day_grid_top - state->scroll_y + ((float)start_m / 60.0f) * day_hour_h;
+            float sy2 = day_grid_top - state->scroll_y + ((float)end_m / 60.0f) * day_hour_h;
+            float sel_h = sy2 - sy1;
+            if (sel_h < 14.0f) sel_h = 14.0f;
+
+            if (sy1 + sel_h >= day_grid_top && sy1 <= day_grid_top + day_avail_h) {
+                // 液态玻璃高光选区卡片
+                rife_draw_round_rect(core, cx, sy1, cw, sel_h, 6.0f,
+                                     is_dark ? 0x3370FF40 : 0x3370FF24,
+                                     is_dark ? 0x60A5FAAA : 0x3370FFCC);
+                // 顶部晶莹反光镜面
+                rife_draw_round_rect(core, cx + 2.0f, sy1 + 1.0f, cw - 4.0f, 1.0f, 1.0f, 0xFFFFFF88, 0x00000000);
+
+                int dur = end_m - start_m;
+                char tip_buf[48];
+                if (dur == 0) {
+                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d", start_m / 60, start_m % 60);
+                } else if (dur >= 60) {
+                    if (dur % 60 == 0) {
+                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60);
+                    } else {
+                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh%02dm)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60, dur % 60);
+                    }
+                } else {
+                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%d分)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur);
+                }
+
+                float badge_w = fminf(cw - 8.0f, 140.0f);
+                float badge_x = cx + (cw - badge_w) * 0.5f;
+                float badge_y = sy1 + (sel_h - 22.0f) * 0.5f;
+                if (badge_y < day_grid_top + 2.0f) badge_y = day_grid_top + 2.0f;
+                if (badge_y > day_grid_top + day_avail_h - 24.0f) badge_y = day_grid_top + day_avail_h - 24.0f;
+
+                rife_draw_round_rect(core, badge_x, badge_y, badge_w, 22.0f, 4.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, rtodo_blue);
+                rife_draw_text_rect(core, badge_x, badge_y, badge_w, 22.0f, tip_buf, is_dark ? 0x93C5FDFF : 0x1D4ED8FF, 4, 0);
+            }
         }
 
         rife_pop_scissor(core);

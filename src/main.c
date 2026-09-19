@@ -2063,6 +2063,23 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
         }
     }
 
+    // 鼠标按住拖动 (mouse_down) 与释放 (mouse_released) 分发至当前活动应用窗口 (用于时间网格框选等交互)
+    if (plat->active_win_idx >= 0 && plat->drag_mode == 0) {
+        ActiveWindow* win_act = &plat->windows[plat->active_win_idx];
+        if (win_act->inst && win_act->anim > 0.85f && win_act->is_open && win_act->plugin->update) {
+            if ((input->mouse_down[0] && !input->mouse_pressed[0]) || input->mouse_released[0]) {
+                float cur_x = win_act->is_maximized ? 0.0f : win_act->x;
+                float cur_y = win_act->is_maximized ? 0.0f : win_act->y;
+                float cur_w = win_act->is_maximized ? ww : win_act->w;
+                float cur_h = win_act->is_maximized ? wh : win_act->h;
+                RifeInput client_input = *input;
+                client_input.mouse_x = mx - cur_x;
+                client_input.mouse_y = my - (cur_y + 36.0f);
+                win_act->plugin->update(win_act->inst, core, &client_input, cur_w, cur_h - 36.0f);
+            }
+        }
+    }
+
     // 6. 底部纤细 Dock 浮动与插值判定 (44px)
     float dock_w = ww * (2.0f / 3.0f);
     if (dock_w < 280.0f) dock_w = 280.0f;
