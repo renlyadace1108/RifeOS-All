@@ -26,9 +26,11 @@ static void settings_destroy(void* inst) {
 // 绘制卡片容器
 static inline void draw_settings_card(RifeCore* core, float x, float y, float w, float h, bool is_dark) {
     if (is_dark) {
-        rife_draw_round_rect(core, x, y, w, h, 10.0f, 0x201832FF, 0x382B54FF);
+        rife_draw_round_rect(core, x, y, w, h, 10.0f, 0x201832F0, 0x382B54AA);
+        rife_draw_round_rect(core, x + 3.0f, y + 1.0f, w - 6.0f, 1.0f, 1.0f, 0xFFFFFF15, 0x00000000);
     } else {
-        rife_draw_round_rect(core, x, y, w, h, 10.0f, 0xFFFFFFFF, 0xE2E8F0FF);
+        rife_draw_round_rect(core, x, y, w, h, 10.0f, 0xFFFFFFF0, 0xE2E8F0AA);
+        rife_draw_round_rect(core, x + 3.0f, y + 1.0f, w - 6.0f, 1.0f, 1.0f, 0xFFFFFF55, 0x00000000);
     }
 }
 

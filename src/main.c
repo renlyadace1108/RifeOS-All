@@ -668,6 +668,11 @@ static void rife_blend_round_rect_pixels(Win32Platform* plat, float rx, float ry
             }
 
             if (dist > 0.5f) continue;
+            if (fa <= 0.001f && dist <= -1.5f) continue;
+            if (dist <= -1.5f && fa >= 0.999f) {
+                line[x] = ((uint32_t)fr << 16) | ((uint32_t)fg << 8) | (uint32_t)fb;
+                continue;
+            }
 
             float cov = rife_clampf(0.5f - dist, 0.0f, 1.0f);
             uint32_t orig = line[x];
@@ -1276,35 +1281,8 @@ void rife_render_flush(RifeCore* core) {
             if (a == 0 && ba == 0) {
                 // 完全透明，直接跳过
             }
-            else if (a == 0 && ba > 0) {
-                // 仅描边镂空圆角框
-                uint8_t br = (uint8_t)((curr->border_color >> 24) & 0xFF);
-                uint8_t bg = (uint8_t)((curr->border_color >> 16) & 0xFF);
-                uint8_t bb = (uint8_t)((curr->border_color >> 8) & 0xFF);
-                SetDCPenColor(plat->hdc_mem, RGB(br, bg, bb));
-                SelectObject(plat->hdc_mem, GetStockObject(HOLLOW_BRUSH));
-                RoundRect(plat->hdc_mem, (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h), (int)curr->radius, (int)curr->radius);
-                SelectObject(plat->hdc_mem, GetStockObject(DC_BRUSH));
-            }
-            else if (a == 255 && (ba == 255 || ba == 0)) {
-                // 快速纯色 GDI 绘制
-                uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
-                uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
-                uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
-                if (ba == 0) {
-                    SelectObject(plat->hdc_mem, GetStockObject(NULL_PEN));
-                } else {
-                    uint8_t br = (uint8_t)((curr->border_color >> 24) & 0xFF);
-                    uint8_t bg = (uint8_t)((curr->border_color >> 16) & 0xFF);
-                    uint8_t bb = (uint8_t)((curr->border_color >> 8) & 0xFF);
-                    SetDCPenColor(plat->hdc_mem, RGB(br, bg, bb));
-                }
-                SetDCBrushColor(plat->hdc_mem, RGB(r, g, b));
-                RoundRect(plat->hdc_mem, (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h), (int)curr->radius, (int)curr->radius);
-                if (ba == 0) SelectObject(plat->hdc_mem, GetStockObject(DC_PEN));
-            }
             else {
-                // 亚像素半透明磨砂融合
+                // 统一采用亚像素 SDF 连续距离场抗锯齿渲染（彻底杜绝 Windows GDI RoundRect 狗牙与阶梯锯齿）
                 GdiFlush();
                 rife_blend_round_rect_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color, curr->border_color);
             }
