@@ -58,6 +58,7 @@ typedef struct {
     HBITMAP hbm_old;
     uint32_t* pixels;
     HFONT hfont_panel_title;
+    HFONT hfont_display;
     HFONT hfont_title;
     HFONT hfont_body;
     HFONT hfont_bold;
@@ -150,6 +151,7 @@ static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
     else if (scale == FONT_SCALE_150) factor = 1.50f;
 
     if (plat->hfont_panel_title) DeleteObject(plat->hfont_panel_title);
+    if (plat->hfont_display) DeleteObject(plat->hfont_display);
     if (plat->hfont_title) DeleteObject(plat->hfont_title);
     if (plat->hfont_body) DeleteObject(plat->hfont_body);
     if (plat->hfont_bold) DeleteObject(plat->hfont_bold);
@@ -168,13 +170,15 @@ static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
     }
 
     // 使用负值获得纯粹字符 EM 像素高度 (Pixel EM Height)，杜绝正值导致字符被额外挤压模糊
-    int s_panel = -(int)(18 * factor + 0.5f);
-    int s_title = -(int)(15 * factor + 0.5f);
-    int s_body  = -(int)(13 * factor + 0.5f);
-    int s_bold  = -(int)(13 * factor + 0.5f);
-    int s_sm    = -(int)(12 * factor + 0.5f);
-    int s_cap   = -(int)(11 * factor + 0.5f);
+    int s_display = -(int)(21 * factor + 0.5f);
+    int s_panel   = -(int)(18 * factor + 0.5f);
+    int s_title   = -(int)(15 * factor + 0.5f);
+    int s_body    = -(int)(13 * factor + 0.5f);
+    int s_bold    = -(int)(13 * factor + 0.5f);
+    int s_sm      = -(int)(12 * factor + 0.5f);
+    int s_cap     = -(int)(11 * factor + 0.5f);
 
+    plat->hfont_display = CreateFontW(s_display, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
     plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
     plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
     plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
@@ -905,13 +909,21 @@ void rife_render_flush(RifeCore* core) {
             float target_h = win->is_maximized ? wh : win->h;
             float target_r = win->is_maximized ? 0.0f : 22.0f;
 
-            float ease = rife_smootherstep(win->anim);
-
-            float cur_x = rife_lerpf(orig_x, target_x, ease);
-            float cur_y = rife_lerpf(orig_y, target_y, ease);
-            float cur_w = rife_lerpf(col_size, target_w, ease);
-            float cur_h = rife_lerpf(col_size, target_h, ease);
-            float cur_r = rife_lerpf(col_size * 0.5f, target_r, ease);
+            float cur_x, cur_y, cur_w, cur_h, cur_r;
+            if (win->anim >= 0.999f) {
+                cur_x = target_x;
+                cur_y = target_y;
+                cur_w = target_w;
+                cur_h = target_h;
+                cur_r = target_r;
+            } else {
+                float ease = rife_smootherstep(win->anim);
+                cur_x = floorf(rife_lerpf(orig_x, target_x, ease));
+                cur_y = floorf(rife_lerpf(orig_y, target_y, ease));
+                cur_w = floorf(rife_lerpf(col_size, target_w, ease));
+                cur_h = floorf(rife_lerpf(col_size, target_h, ease));
+                cur_r = rife_lerpf(col_size * 0.5f, target_r, ease);
+            }
 
             rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, is_obsidian ? 0.96f : 0.94f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
         }
@@ -1104,15 +1116,23 @@ void rife_render_flush(RifeCore* core) {
             float target_w = win->is_maximized ? ww : win->w;
             float target_h = win->is_maximized ? wh : win->h;
 
-            float ease = rife_smootherstep(win->anim);
-
-            float cur_x = rife_lerpf(orig_x, target_x, ease);
-            float cur_y = rife_lerpf(orig_y, target_y, ease);
-            float cur_w = rife_lerpf(col_size, target_w, ease);
-            float cur_h = rife_lerpf(col_size, target_h, ease);
+            float cur_x, cur_y, cur_w, cur_h;
+            if (win->anim >= 0.999f) {
+                cur_x = target_x;
+                cur_y = target_y;
+                cur_w = target_w;
+                cur_h = target_h;
+            } else {
+                float ease = rife_smootherstep(win->anim);
+                cur_x = floorf(rife_lerpf(orig_x, target_x, ease));
+                cur_y = floorf(rife_lerpf(orig_y, target_y, ease));
+                cur_w = floorf(rife_lerpf(col_size, target_w, ease));
+                cur_h = floorf(rife_lerpf(col_size, target_h, ease));
+            }
 
             // 控制灯自微球中心向两翼平滑展开
-            float light_scale = rife_clampf(ease * 1.6f, 0.0f, 1.0f);
+            float ease_lamp = (win->anim >= 0.999f) ? 1.0f : rife_smootherstep(win->anim);
+            float light_scale = rife_clampf(ease_lamp * 1.6f, 0.0f, 1.0f);
             if (light_scale > 0.05f) {
                 float l_sz = 12.0f * light_scale;
                 float l_r = l_sz * 0.5f;
@@ -1134,7 +1154,10 @@ void rife_render_flush(RifeCore* core) {
                 float target_r = win->is_maximized ? 0.0f : 20.0f;
                 // 窗口专用安全圆角视口裁剪：严格限制在窗口底板边缘圆角以内，内缩 1px 保护反光边缘，杜绝直角溢出
                 rife_push_scissor_round(core, cur_x + 1.0f, cur_y + 36.0f, cur_w - 2.0f, cur_h - 37.0f, target_r);
-                win->plugin->render(win->inst, core, cur_x + 1.0f, cur_y + 36.0f, cur_w - 2.0f, cur_h - 37.0f);
+                // 展开动画过程中以目标基准尺寸稳定排版渲染，结合视口硬件裁切，根除每帧重新排版计算导致的抖动 (Anti-jitter)
+                float app_w = (win->anim >= 0.999f) ? (cur_w - 2.0f) : (target_w - 2.0f);
+                float app_h = (win->anim >= 0.999f) ? (cur_h - 37.0f) : (target_h - 37.0f);
+                win->plugin->render(win->inst, core, cur_x + 1.0f, cur_y + 36.0f, app_w, app_h);
                 rife_pop_scissor(core);
             }
         }
@@ -1149,6 +1172,7 @@ void rife_render_flush(RifeCore* core) {
             else if (curr->font_id == 3) SelectObject(plat->hdc_mem, plat->hfont_sm);
             else if (curr->font_id == 4) SelectObject(plat->hdc_mem, plat->hfont_caption);
             else if (curr->font_id == 5) SelectObject(plat->hdc_mem, plat->hfont_bold);
+            else if (curr->font_id == 6) SelectObject(plat->hdc_mem, plat->hfont_display);
             else SelectObject(plat->hdc_mem, plat->hfont_body);
 
             uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
@@ -1503,6 +1527,7 @@ bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, 
     ReleaseDC(plat->hwnd, hdc);
 
     plat->hfont_panel_title = NULL;
+    plat->hfont_display = NULL;
     plat->hfont_title = NULL;
     plat->hfont_body = NULL;
     plat->hfont_bold = NULL;
@@ -1537,6 +1562,7 @@ void rife_platform_shutdown(Win32Platform* plat) {
         DeleteDC(plat->hdc_mem);
     }
     if (plat->hfont_panel_title) DeleteObject(plat->hfont_panel_title);
+    if (plat->hfont_display) DeleteObject(plat->hfont_display);
     if (plat->hfont_title) DeleteObject(plat->hfont_title);
     if (plat->hfont_body) DeleteObject(plat->hfont_body);
     if (plat->hfont_bold) DeleteObject(plat->hfont_bold);
@@ -1682,9 +1708,13 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
         if (!win->inst) continue;
 
         float target = win->is_open ? 1.0f : 0.0f;
-        win->anim = rife_fluid_decay(win->anim, target, 14.0f, dt_sec);
+        win->anim = rife_fluid_decay(win->anim, target, 22.0f, dt_sec);
+        if (win->is_open && win->anim >= 0.985f) {
+            win->anim = 1.0f;
+        }
 
-        if (!win->is_open && win->anim < 0.01f) {
+        if (!win->is_open && win->anim < 0.015f) {
+            win->anim = 0.0f;
             win->plugin->destroy(win->inst);
             win->inst = NULL;
             if (plat->active_win_idx == (int)i) plat->active_win_idx = -1;

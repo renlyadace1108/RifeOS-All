@@ -169,7 +169,9 @@ d:\MyProjects\VS\RIFEOS
   - [x] 跨账号无缝交接与自动状态同步机制（`GEMINI.md` + `AI_CONTINUITY.md`）；
   - [x] 原生 Rtodo 多维日程系统（`src/app_calendar.c`，严格确立为 Rtodo 品牌，提供通透轻盈美学布局、周/日/月/日程多维视图、实时系统时钟红线、迷你月历与多色分类过滤）；
   - [x] 亚像素窗口圆角视口安全裁剪引擎（`rife_push_scissor_round` 复合裁切防直角溢出）；
-  - [x] Windows 系统默认 UI 字体动态获取与次像素 ClearType 自然抗锯齿渲染。
+  - [x] Windows 系统默认 UI 字体动态获取与次像素 ClearType 自然抗锯齿渲染；
+  - [x] 窗口展开 1 秒抖动彻底根除引擎（整数栅格量化、临界 snap 截断与固定目标排版+硬件圆角裁切过渡）；
+  - [x] 飞书原生质感极简日程界面对齐（周日首列、21px 加粗日期标头、右下角蓝底悬浮 FAB 按钮、通透顶栏）。
 
 ---
 
@@ -190,3 +192,4 @@ d:\MyProjects\VS\RIFEOS
 | **Milestone 11** | **图形排版美学与次像素清晰字体引擎重构**：<br>1. **字体引擎重构**：彻底根治字迹模糊、字符粘连与粗重墨晕；弃用正值高度（Cell Height），改用负值字符实际 EM 高度（`-11px ~ -18px`），引入 `CLEARTYPE_NATURAL_QUALITY` 与严谨字重梯度（`FW_NORMAL` 400 正文、`FW_MEDIUM` 500 次级、`FW_SEMIBOLD` 600 标题/强调）；扩充 6 档字体句柄（含专属 13px SemiBold 药丸与按钮高光字体）。<br>2. **周表头美学重构**：周一至周日 7 列全部采用纵向居中双行排版（上层星期 12px Regular 居中，下层日期 15px SemiBold 居中，当天以 24x24 品牌蓝实心圆点包裹），视感对称典雅。<br>3. **周视图卡片与标尺优化**：卡片引入 `rife_push_scissor` 局部硬件级裁剪，杜绝长标题跨日溢出；重构 3.5px 强调色条与内边距；重新计算标尺高度使 08:00~20:00 完美融入视口，无底部截断；实时系统时间红线加入发光指示圆点。<br>4. **细节与图标精修**：移除所有 ASCII 临时字符（如 `'v'` 和 `'#'`），侧边栏复选框与待办清单改用原生几何矢量对勾；顶栏加入专属网格徽标；视图切换药丸采用高对比度柔和天蓝边框与加粗强调态，激活状态一目了然。 | `src/main.c`, `src/app_calendar.c`, `src/app_settings.c` |
 | **Milestone 12** | **Windows 系统默认 UI 字体动态绑定与品牌字样彻底净化**：<br>1. **Windows 原生 UI 字体动态解析**：在 `update_system_fonts` 中通过 `SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ...)` 动态获取系统配置的 UI 字体名称（`ncm.lfMessageFont.lfFaceName`，优雅降级为 `Microsoft YaHei UI`），使文字呈现完全融入宿主操作系统环境风格。<br>2. **第三方字样彻底净化**：彻底移除所有第三方品牌字样及引用，全面更名为 **Rtodo**（`id = "rtodo"`）。 | `src/main.c`, `src/app_calendar.h`, `src/app_calendar.c` |
 | **Milestone 13** | **窗口圆角裁剪防直角溢出、通透轻盈界面重构与 Rtodo 品牌严格落地**：<br>1. **复合圆角安全视口裁剪引擎**：扩展 `rife_push_scissor_round` 与 `CMD_SCISSOR_PUSH` 底层 GDI 裁剪逻辑。针对独立应用窗口，自动构建组合区域（`CreateRoundRectRgn` 结合 `CreateRectRgn` 进行 `CombineRgn(..., RGN_AND)`），使窗口内容顶部紧密贴合标题栏下方平直边缘，底部双角严格契合 20px squircle 亚像素圆角，并内缩 1px 保护窗口外缘晶莹反光高光边缘，彻底消除右下角与左下角白色矩形直角溢出。<br>2. **通透轻盈美学重塑 (Airy & Lightweight UI)**：彻底摒弃原有臃肿感，大幅增加呼吸留白：<br>   - 移除侧边栏底部厚重卡片，侧边栏精简至 180px，强化垂直通透感；<br>   - 顶栏精炼至 44px 高度，"+ 新建日程" 按钮向内收拢 20px 边距杜绝裁切；<br>   - 周网格线由深色重线调整为极简微淡线（`#F3F4F6`，深色模式 `#201933`），卡片强调条精简为 2px，卡片边距 2px，重塑通透灵动感。<br>3. **Rtodo 品牌严格规范**：中文与英文显示名严格确立为 **Rtodo**（杜绝 "Rtodo 日程" 或任何第三方品牌词），同步更新应用清单、窗口标题与全局代码注释。 | `src/rife_core.h`, `src/rife_core.c`, `src/main.c`, `src/app_calendar.c`, `AI_CONTINUITY.md` |
+| **Milestone 14** | **根除窗口打开颤抖与飞书原生极简美学全面对齐**：<br>1. **窗口颤抖根治 (Anti-jitter Engine)**：将衰减速度提升至 `lambda = 22.0f` 并引入 `anim >= 0.985f` 临界硬切断；动画期间使用 `floorf()` 整数栅格量化杜绝亚像素振荡；展开动画中锁定目标排版尺寸，配合底层硬件圆角裁剪平滑揭示，彻底消除了每帧重排计算引起的字符颤抖。<br>2. **飞书原生纯净美学重塑**：顶栏移除挤占空间的 "+ 新建日程" 按钮，改由右下角 44x44px 飞书蓝圆形悬浮按钮（FAB）唤起；全线支持周日首列自然周历（`get_day_of_week_sun` / `get_week_sunday`）；引入 21px 加粗大号日期排版，配以淡雅星期名与文雅 `GMT+8` 标注，视觉通透清爽、绝无臃肿感。 | `src/main.c`, `src/app_calendar.c`, `AI_CONTINUITY.md` |
