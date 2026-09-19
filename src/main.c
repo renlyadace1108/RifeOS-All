@@ -95,6 +95,7 @@ typedef struct {
     float drag_start_mx, drag_start_my;
     float drag_start_wx, drag_start_wy, drag_start_ww, drag_start_wh;
     bool snap_preview;
+    int preview_win_idx;
 } Win32Platform;
 
 static Win32Platform* s_global_plat = NULL;
@@ -1083,8 +1084,8 @@ void rife_render_flush(RifeCore* core) {
     if (exp_w < needed_w) exp_w = needed_w;
     if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
 
-    float col_size = (bg_count > 0) ? (28.0f + (float)bg_count * 20.0f + 4.0f) : 22.0f;
-    float col_h = (bg_count > 0) ? 24.0f : 22.0f;
+    float col_size = 22.0f;
+    float col_h = 22.0f;
     float orig_x = (ww - col_size) * 0.5f;
     float orig_y = 10.0f;
 
@@ -1121,7 +1122,7 @@ void rife_render_flush(RifeCore* core) {
 
         // 仿生非对称呼吸灯 (与光场色彩预设同步联动)
         if (plat->cloud_anim < 0.25f) {
-            float cx = (bg_count > 0) ? (cloud_x + 13.0f) : (cloud_x + cloud_w * 0.5f);
+            float cx = cloud_x + cloud_w * 0.5f;
             float cy = cloud_y + cloud_h * 0.5f;
             float norm_breath = (expf(sinf(plat->breath_t)) - 0.367879f) / 2.350402f;
             float m_dist = sqrtf((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
@@ -1333,6 +1334,22 @@ void rife_render_flush(RifeCore* core) {
         }
     }
 
+    // 3.5 桌面实时预览窗口底板 (当鼠标悬停在流体云后台任务胶囊时在桌面呈现)
+    if (plat->preview_win_idx >= 0 && plat->preview_win_idx < (int)g_installed_app_count) {
+        ActiveWindow* pwin = &plat->windows[plat->preview_win_idx];
+        if (pwin->inst && !pwin->is_open) {
+            float pw = (pwin->w > 100.0f) ? pwin->w : (ww * 0.7f);
+            float ph = (pwin->h > 100.0f) ? pwin->h : (wh * 0.7f);
+            float px = pwin->is_maximized ? 0.0f : (pwin->x > 0.0f ? pwin->x : (ww - pw) * 0.5f);
+            float py = pwin->is_maximized ? 56.0f : pwin->y;
+            if (py < 56.0f) py = 56.0f; // 保护顶部流体云，防止重叠
+            if (pwin->is_maximized) ph = wh - 56.0f;
+            float pr = pwin->is_maximized ? 0.0f : 22.0f;
+
+            rife_draw_subpixel_liquid_glass(plat, px, py, pw, ph, pr, is_obsidian ? 0.95f : 0.92f, true, true, is_obsidian ? 0x161122 : 0xFFFFFF);
+        }
+    }
+
     // 4. 桌面快捷方式
     for (size_t i = 0; i < plat->shortcut_count; i++) {
         DesktopShortcut* sc = &plat->shortcuts[i];
@@ -1363,20 +1380,7 @@ void rife_render_flush(RifeCore* core) {
 
     // 7.0 流体云后台任务内容渲染 (GDI 文字与图标)
     if (plat->drawer_anim < 0.99f) {
-        if (plat->cloud_anim < 0.25f && bg_count > 0) {
-            // 静止胶囊模式：在右侧从右往左横向排列正在后台驻留的应用小徽标
-            float mini_right = cloud_x + cloud_w - 8.0f;
-            for (size_t i = 0; i < g_installed_app_count; i++) {
-                ActiveWindow* win = &plat->windows[i];
-                if (!win->inst || win->is_open || !win->is_minimized) continue;
-                float mini_x = mini_right - 16.0f;
-                float mini_y = cloud_y + (cloud_h - 16.0f) * 0.5f;
-                rife_draw_procedural_icon_direct(plat->hdc_mem, mini_x, mini_y, 16.0f,
-                    win->plugin->color_top, win->plugin->color_bot, win->plugin->glyph, NULL, false);
-                mini_right -= 20.0f;
-            }
-        }
-        else if (plat->cloud_anim > 0.35f) {
+        if (plat->cloud_anim > 0.35f) {
             // 展开流体云模式：纯净流体玻璃与纯图符胶囊 (零冗余文字)
             // 右侧：从右往左依次挂载后台任务紧凑图符胶囊
             if (bg_count > 0) {
@@ -1645,6 +1649,42 @@ void rife_render_flush(RifeCore* core) {
                 float app_w = (win->anim >= 0.999f) ? (cur_w - 2.0f) : (target_w - 2.0f);
                 float app_h = (win->anim >= 0.999f) ? (cur_h - 37.0f) : (target_h - 37.0f);
                 win->plugin->render(win->inst, core, cur_x + 1.0f, cur_y + 36.0f, app_w, app_h);
+                rife_pop_scissor(core);
+            }
+        }
+    }
+
+    // 10.5 桌面实时预览窗口内容渲染 (悬停后台程序胶囊时在桌面呈现)
+    if (plat->preview_win_idx >= 0 && plat->preview_win_idx < (int)g_installed_app_count) {
+        ActiveWindow* pwin = &plat->windows[plat->preview_win_idx];
+        if (pwin->inst && !pwin->is_open) {
+            float pw = (pwin->w > 100.0f) ? pwin->w : (ww * 0.7f);
+            float ph = (pwin->h > 100.0f) ? pwin->h : (wh * 0.7f);
+            float px = pwin->is_maximized ? 0.0f : (pwin->x > 0.0f ? pwin->x : (ww - pw) * 0.5f);
+            float py = pwin->is_maximized ? 56.0f : pwin->y;
+            if (py < 56.0f) py = 56.0f;
+            if (pwin->is_maximized) ph = wh - 56.0f;
+            float pr = pwin->is_maximized ? 0.0f : 20.0f;
+
+            // 控制灯 (预览态三色圆钮)
+            float l_sz = 12.0f;
+            float l_r = l_sz * 0.5f;
+            float l_y = py + 14.0f;
+            rife_draw_round_rect(core, px + 16.0f, l_y, l_sz, l_sz, l_r, 0xFF5F56FF, 0xE0443EFF);
+            rife_draw_round_rect(core, px + 34.0f, l_y, l_sz, l_sz, l_r, 0xFFBD2EFF, 0xDEA123FF);
+            rife_draw_round_rect(core, px + 52.0f, l_y, l_sz, l_sz, l_r, 0x27C93FFF, 0x1AAB29FF);
+
+            // 窗口标题与预览徽标 (高对比度晶莹紫调)
+            char ptitle[128];
+            snprintf(ptitle, sizeof(ptitle), "%s  ·  %s",
+                is_zh ? pwin->plugin->name_zh : pwin->plugin->name_en,
+                is_zh ? "桌面实时预览" : "Desktop Live Preview");
+            rife_draw_text_font(core, px + 78.0f, py + 10.0f, ptitle, is_obsidian ? 0xC4B5FDFF : 0x6366F1FF, 1);
+
+            // 插件真实界面内容渲染 (圆角视口硬件安全保护)
+            if (pwin->plugin->render && ph > 46.0f && pw > 120.0f) {
+                rife_push_scissor_round(core, px + 1.0f, py + 36.0f, pw - 2.0f, ph - 37.0f, pr);
+                pwin->plugin->render(pwin->inst, core, px + 1.0f, py + 36.0f, pw - 2.0f, ph - 37.0f);
                 rife_pop_scissor(core);
             }
         }
@@ -1994,8 +2034,8 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         float exp_w = (float)plat->win_width * 0.36f;
         if (exp_w < needed_w) exp_w = needed_w;
         if (exp_w > (float)plat->win_width - 32.0f) exp_w = (float)plat->win_width - 32.0f;
-        float col_size = (bg_cnt > 0) ? (28.0f + (float)bg_cnt * 20.0f + 4.0f) : 22.0f;
-        float col_h = (bg_cnt > 0) ? 24.0f : 22.0f;
+        float col_size = 22.0f;
+        float col_h = 22.0f;
         float cur_cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
         float cur_cloud_h = rife_lerpf(col_h, 42.0f, plat->cloud_anim);
         float cur_cloud_x = ((float)plat->win_width - cur_cloud_w) * 0.5f;
@@ -2227,7 +2267,10 @@ void rife_platform_shutdown(Win32Platform* plat) {
 }
 
 bool desktop_launcher_init(RifeApp* self, RifeCore* core) {
-    (void)self; (void)core; return true;
+    (void)self;
+    Win32Platform* plat = (Win32Platform*)core->platform_data;
+    if (plat) plat->preview_win_idx = -1;
+    return true;
 }
 
 void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* input, bool is_focused, uint64_t dt_ns) {
@@ -2258,6 +2301,50 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
     float target_cloud = plat->cloud_expanded ? 1.0f : 0.0f;
     plat->cloud_anim = rife_fluid_decay(plat->cloud_anim, target_cloud, 14.0f, dt_sec);
     if (fabsf(plat->cloud_anim - target_cloud) < 0.001f) plat->cloud_anim = target_cloud;
+
+    // 1.5 鼠标悬停后台程序胶囊时触发桌面实时窗口预览
+    int hovered_bg_win = -1;
+    if (plat->cloud_expanded && plat->cloud_anim > 0.35f) {
+        int bg_cnt = 0;
+        for (size_t k = 0; k < g_installed_app_count; k++) {
+            if (plat->windows[k].inst && !plat->windows[k].is_open && plat->windows[k].is_minimized) bg_cnt++;
+        }
+        if (bg_cnt > 0) {
+            float tasks_w = ((float)bg_cnt * 38.0f + (float)(bg_cnt - 1) * 6.0f);
+            if (bg_cnt >= 2) tasks_w += 32.0f;
+            float needed_w = 110.0f + tasks_w + 24.0f;
+            float exp_w = ww * 0.36f;
+            if (exp_w < needed_w) exp_w = needed_w;
+            if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
+
+            float cur_cloud_w = rife_lerpf(22.0f, exp_w, plat->cloud_anim);
+            float cur_cloud_h = rife_lerpf(22.0f, 42.0f, plat->cloud_anim);
+            float cur_cloud_x = (ww - cur_cloud_w) * 0.5f;
+            float cur_cloud_y = 10.0f;
+
+            float cur_right = cur_cloud_x + cur_cloud_w - 10.0f;
+            for (size_t k = 0; k < g_installed_app_count; k++) {
+                ActiveWindow* win_k = &plat->windows[k];
+                if (!win_k->inst || win_k->is_open || !win_k->is_minimized) continue;
+
+                float task_w = 38.0f;
+                float task_h = 28.0f;
+                float task_x = cur_right - task_w;
+                float task_y = cur_cloud_y + (cur_cloud_h - task_h) * 0.5f;
+
+                if (mx >= task_x && mx <= task_x + task_w && my >= task_y && my <= task_y + task_h) {
+                    hovered_bg_win = (int)k;
+                    break;
+                }
+
+                cur_right -= (task_w + 6.0f);
+            }
+        }
+    }
+    if (plat->preview_win_idx != hovered_bg_win) {
+        plat->preview_win_idx = hovered_bg_win;
+        rife_request_redraw(core);
+    }
 
     // 微球吞噬光子扩散衰减
     if (plat->absorption_ripple_t > 0.0f) {
@@ -2532,6 +2619,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
         (fabsf(plat->drawer_anim - target_drawer) > 0.001f) ||
         (fabsf(plat->cloud_anim - target_cloud) > 0.001f) ||
         (plat->absorption_ripple_t > 0.001f) ||
+        (plat->preview_win_idx >= 0) ||
         (plat->cloud_anim < 0.25f) ||
         (plat->hover_resize_dir > 0) ||
         cfg->aura_animated || plat->drag_mode != 0;
@@ -2564,8 +2652,8 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
         if (exp_w < needed_w) exp_w = needed_w;
         if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
 
-        float col_size = (bg_count > 0) ? (28.0f + (float)bg_count * 20.0f + 4.0f) : 22.0f;
-        float col_h = (bg_count > 0) ? 24.0f : 22.0f;
+        float col_size = 22.0f;
+        float col_h = 22.0f;
         float exp_h = 42.0f; // 始终固定 42px 高度！
 
         float cur_cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
@@ -2612,6 +2700,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                                 }
                                 win_k->inst = NULL;
                                 win_k->is_minimized = false;
+                                plat->preview_win_idx = -1;
                                 plat->absorption_ripple_t = 1.0f;
                                 rife_request_redraw(core);
                                 return;
@@ -2628,6 +2717,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                             win_k->is_minimized = false;
                             win_k->anim = 0.0f;
                             plat->active_win_idx = (int)k;
+                            plat->preview_win_idx = -1;
                             plat->cloud_expanded = false;
                             rife_request_redraw(core);
                             return;
@@ -2653,6 +2743,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                                     win_k->is_minimized = false;
                                 }
                             }
+                            plat->preview_win_idx = -1;
                             plat->absorption_ripple_t = 1.0f;
                             plat->cloud_expanded = false;
                             rife_request_redraw(core);
@@ -2662,6 +2753,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                 }
 
                 // 点击其他空白区域 -> 收起流体云
+                plat->preview_win_idx = -1;
                 plat->cloud_expanded = false;
             }
             else {
@@ -2672,6 +2764,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
         }
         else {
             if (plat->cloud_expanded) {
+                plat->preview_win_idx = -1;
                 plat->cloud_expanded = false;
                 rife_request_redraw(core);
             }
