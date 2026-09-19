@@ -492,7 +492,7 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
 
     // 应用标题与图标
     rife_draw_round_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, 6.0f, 0x6366F1FF, 0x818CF8FF);
-    rife_draw_text_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, "时", 0xFFFFFFFF, 3, 0);
+    rife_draw_text_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, "Rc", 0xFFFFFFFF, 3, 0);
     rife_draw_text_font(core, client_x + 48.0f, client_y + 13.0f, "Rclock 时钟图", col_txt_main, 5);
 
     // 日期切换器 [<] [ 今天 ] [>]
@@ -946,7 +946,7 @@ const RifePluginApp g_clock_plugin_app = {
     .id = "rclock",
     .name_zh = "Rclock",
     .name_en = "Rclock",
-    .glyph = "时",
+    .glyph = "Rc",
     .color_top = 0x6366F1FF, // 暮光靛蓝
     .color_bot = 0x4338CAFF,
     .default_w = 880.0f,

@@ -948,10 +948,11 @@ void rife_draw_procedural_icon_direct(HDC hdc, float x, float y, float size, uin
     }
     else if (glyph && glyph[0]) {
         SetTextColor(hdc, RGB(255, 255, 255));
-        int tx = (int)(x + size * 0.32f);
-        int ty = (int)(y + size * 0.22f);
-        if (strlen(glyph) > 1) tx = (int)(x + size * 0.20f);
-        rife_draw_text_u8(hdc, tx, ty, glyph);
+        SetBkMode(hdc, TRANSPARENT);
+        wchar_t wglyph[16] = { 0 };
+        MultiByteToWideChar(CP_UTF8, 0, glyph, -1, wglyph, 16);
+        RECT rc = { (int)x, (int)y, (int)(x + size), (int)(y + size) };
+        DrawTextW(hdc, wglyph, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 }
 
