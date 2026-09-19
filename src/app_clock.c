@@ -346,16 +346,9 @@ static void clock_update(void* inst, RifeCore* core, const RifeInput* input, flo
             }
 
             // 制式切换 [ 24小时制 ] / [ 12小时制 ]
-            float mode_btn_x = client_w - 230.0f;
-            if (mx >= mode_btn_x && mx <= mode_btn_x + 96.0f && my >= 8.0f && my <= 34.0f) {
+            float mode_btn_x = client_w - 116.0f;
+            if (mx >= mode_btn_x && mx <= mode_btn_x + 100.0f && my >= 8.0f && my <= 34.0f) {
                 state->dial_mode = (state->dial_mode == CLOCK_DIAL_24H) ? CLOCK_DIAL_12H : CLOCK_DIAL_24H;
-                return;
-            }
-
-            // 打开 Rtodo 联动胶囊按钮 [ 打开 Rtodo ]
-            float rtodo_btn_x = client_w - 124.0f;
-            if (mx >= rtodo_btn_x && mx <= rtodo_btn_x + 110.0f && my >= 8.0f && my <= 34.0f) {
-                rife_open_app_by_id("rtodo");
                 return;
             }
         }
@@ -463,14 +456,9 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     rife_draw_text_font(core, client_x + 296.0f, client_y + 14.0f, date_buf, col_txt_sub, 3);
 
     // 右侧制式切换胶囊 [ 24小时制 ]
-    float mode_btn_x = client_x + client_w - 230.0f;
-    rife_draw_round_rect(core, mode_btn_x, client_y + 8.0f, 96.0f, 26.0f, 13.0f, is_dark ? 0x312E8188 : 0xEEF2FFCC, 0x6366F1AA);
-    rife_draw_text_rect(core, mode_btn_x, client_y + 8.0f, 96.0f, 26.0f, (state->dial_mode == CLOCK_DIAL_24H) ? "24小时制" : "12小时制", is_dark ? 0xC7D2FEFF : 0x4338CAFF, 3, 0);
-
-    // [ 打开 Rtodo ] 联动胶囊按钮
-    float rtodo_btn_x = client_x + client_w - 124.0f;
-    rife_draw_round_rect(core, rtodo_btn_x, client_y + 8.0f, 110.0f, 26.0f, 6.0f, 0x3370FFFF, 0x60A5FAFF);
-    rife_draw_text_rect(core, rtodo_btn_x, client_y + 8.0f, 110.0f, 26.0f, "打开 Rtodo", 0xFFFFFFFF, 5, 0);
+    float mode_btn_x = client_x + client_w - 116.0f;
+    rife_draw_round_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, 13.0f, is_dark ? 0x312E8188 : 0xEEF2FFCC, 0x6366F1AA);
+    rife_draw_text_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, (state->dial_mode == CLOCK_DIAL_24H) ? "24小时制" : "12小时制", is_dark ? 0xC7D2FEFF : 0x4338CAFF, 3, 0);
 
     // ---------------------------------------------------------
     // 2. 左侧圆形时钟图 (Radial Clock Dial)
@@ -976,7 +964,7 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
 
         if (an.total_events == 0) {
             rife_draw_text_font(core, cx + 14.0f, ay + 32.0f, "今日暂无日程安排，时间完全由你掌控。", col_txt_main, 4);
-            rife_draw_text_font(core, cx + 14.0f, ay + 50.0f, "点击上方「打开 Rtodo」即可规划充实一天。", col_txt_mute, 4);
+            rife_draw_text_font(core, cx + 14.0f, ay + 50.0f, "可在 Rtodo 中添加日程，数据实时同步。", col_txt_mute, 4);
         } else if (an.completed_events == an.total_events) {
             rife_draw_text_font(core, cx + 14.0f, ay + 32.0f, "太棒了！今日规划的全部日程已 100% 达成！", 0x10B981FF, 4);
             rife_draw_text_font(core, cx + 14.0f, ay + 50.0f, "执行力极佳，尽情享受美妙的闲暇时光吧。", col_txt_main, 4);
