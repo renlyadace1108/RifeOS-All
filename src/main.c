@@ -1388,6 +1388,18 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         core->input.mouse_y = (float)HIWORD(lparam);
         rife_request_redraw(core);
         return 0;
+    case WM_MOUSEWHEEL: {
+        POINT pt;
+        pt.x = (short)LOWORD(lparam);
+        pt.y = (short)HIWORD(lparam);
+        ScreenToClient(hwnd, &pt);
+        core->input.mouse_x = (float)pt.x;
+        core->input.mouse_y = (float)pt.y;
+        short delta = GET_WHEEL_DELTA_WPARAM(wparam);
+        core->input.scroll_delta += (float)delta / (float)WHEEL_DELTA;
+        rife_request_redraw(core);
+        return 0;
+    }
     case WM_LBUTTONDOWN: {
         core->input.mouse_down[0] = 1;
         SetCapture(hwnd);
@@ -1794,6 +1806,18 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                 return;
             }
         }
+
+        // 鼠标滚轮事件分发至应用窗口
+        if (input->scroll_delta != 0.0f && win->anim > 0.85f && win->is_open) {
+            if (win->plugin->update && mx >= cur_x && mx <= cur_x + cur_w && my >= cur_y + 36.0f && my <= cur_y + cur_h) {
+                plat->active_win_idx = (int)i;
+                RifeInput client_input = *input;
+                client_input.mouse_x = mx - cur_x;
+                client_input.mouse_y = my - (cur_y + 36.0f);
+                win->plugin->update(win->inst, core, &client_input, cur_w, cur_h - 36.0f);
+                rife_request_redraw(core);
+            }
+        }
     }
 
     // 6. 底部纤细 Dock 浮动与插值判定 (44px)
@@ -1825,7 +1849,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
             }
         }
     }
-    if (is_animating || input->mouse_pressed[0] || input->mouse_down[0]) {
+    if (is_animating || input->mouse_pressed[0] || input->mouse_down[0] || input->scroll_delta != 0.0f) {
         rife_request_redraw(core);
     }
 

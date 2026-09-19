@@ -171,7 +171,8 @@ d:\MyProjects\VS\RIFEOS
   - [x] 亚像素窗口圆角视口安全裁剪引擎（`rife_push_scissor_round` 复合裁切防直角溢出）；
   - [x] Windows 系统默认 UI 字体动态获取与次像素 ClearType 自然抗锯齿渲染；
   - [x] 窗口展开 1 秒抖动彻底根除引擎（整数栅格量化、临界 snap 截断与固定目标排版+硬件圆角裁切过渡）；
-  - [x] 飞书原生质感极简日程界面对齐（周日首列、21px 加粗日期标头、右下角蓝底悬浮 FAB 按钮、通透顶栏）。
+  - [x] 飞书原生质感极简日程界面对齐（周日首列、21px 加粗日期标头、右下角蓝底悬浮 FAB 按钮、通透顶栏）；
+  - [x] 舒展大时间网格与纵向平滑滚动引擎（60px 大小时格、24小时全天候、顶栏固定、原生鼠标滚轮驱动与微动滚动条）。
 
 ---
 
@@ -193,3 +194,4 @@ d:\MyProjects\VS\RIFEOS
 | **Milestone 12** | **Windows 系统默认 UI 字体动态绑定与品牌字样彻底净化**：<br>1. **Windows 原生 UI 字体动态解析**：在 `update_system_fonts` 中通过 `SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ...)` 动态获取系统配置的 UI 字体名称（`ncm.lfMessageFont.lfFaceName`，优雅降级为 `Microsoft YaHei UI`），使文字呈现完全融入宿主操作系统环境风格。<br>2. **第三方字样彻底净化**：彻底移除所有第三方品牌字样及引用，全面更名为 **Rtodo**（`id = "rtodo"`）。 | `src/main.c`, `src/app_calendar.h`, `src/app_calendar.c` |
 | **Milestone 13** | **窗口圆角裁剪防直角溢出、通透轻盈界面重构与 Rtodo 品牌严格落地**：<br>1. **复合圆角安全视口裁剪引擎**：扩展 `rife_push_scissor_round` 与 `CMD_SCISSOR_PUSH` 底层 GDI 裁剪逻辑。针对独立应用窗口，自动构建组合区域（`CreateRoundRectRgn` 结合 `CreateRectRgn` 进行 `CombineRgn(..., RGN_AND)`），使窗口内容顶部紧密贴合标题栏下方平直边缘，底部双角严格契合 20px squircle 亚像素圆角，并内缩 1px 保护窗口外缘晶莹反光高光边缘，彻底消除右下角与左下角白色矩形直角溢出。<br>2. **通透轻盈美学重塑 (Airy & Lightweight UI)**：彻底摒弃原有臃肿感，大幅增加呼吸留白：<br>   - 移除侧边栏底部厚重卡片，侧边栏精简至 180px，强化垂直通透感；<br>   - 顶栏精炼至 44px 高度，"+ 新建日程" 按钮向内收拢 20px 边距杜绝裁切；<br>   - 周网格线由深色重线调整为极简微淡线（`#F3F4F6`，深色模式 `#201933`），卡片强调条精简为 2px，卡片边距 2px，重塑通透灵动感。<br>3. **Rtodo 品牌严格规范**：中文与英文显示名严格确立为 **Rtodo**（杜绝 "Rtodo 日程" 或任何第三方品牌词），同步更新应用清单、窗口标题与全局代码注释。 | `src/rife_core.h`, `src/rife_core.c`, `src/main.c`, `src/app_calendar.c`, `AI_CONTINUITY.md` |
 | **Milestone 14** | **根除窗口打开颤抖与飞书原生极简美学全面对齐**：<br>1. **窗口颤抖根治 (Anti-jitter Engine)**：将衰减速度提升至 `lambda = 22.0f` 并引入 `anim >= 0.985f` 临界硬切断；动画期间使用 `floorf()` 整数栅格量化杜绝亚像素振荡；展开动画中锁定目标排版尺寸，配合底层硬件圆角裁剪平滑揭示，彻底消除了每帧重排计算引起的字符颤抖。<br>2. **飞书原生纯净美学重塑**：顶栏移除挤占空间的 "+ 新建日程" 按钮，改由右下角 44x44px 飞书蓝圆形悬浮按钮（FAB）唤起；全线支持周日首列自然周历（`get_day_of_week_sun` / `get_week_sunday`）；引入 21px 加粗大号日期排版，配以淡雅星期名与文雅 `GMT+8` 标注，视觉通透清爽、绝无臃肿感。 | `src/main.c`, `src/app_calendar.c`, `AI_CONTINUITY.md` |
+| **Milestone 15** | **舒展大时间网格与纵向平滑滚动引擎 (Spacious Grid & Vertical Scrolling)**：<br>1. **全天候 24 小时大格子舒展排布**：彻底摒弃挤压小时格子的做法，将每小时行高提升至 **60px（1px = 1min 黄金比例）**，支持 00:00~24:00 全天候排布与多行富文本日程卡片呈现。<br>2. **顶栏固定与硬件视口平滑滚动**：周表头（`周日`..`周六` 及 21px 大号日期）在顶端始终保持固定置顶，下方时间网格、事件卡片与当前时间红线随滚轮平滑上下移动，由底层硬件视口精准裁切。<br>3. **原生鼠标滚轮驱动与微动滚动条**：在宿主 `WndProc` 中捕获 `WM_MOUSEWHEEL` 并精确转换屏幕坐标至客户区坐标，主循环自动转发至悬停窗口；右侧内嵌 4px 极简微动圆角滚动滑块指示器。<br>4. **智能定位与快捷重置**：窗口初始打开及点击 "[ 今天 ]" 按钮时，自动智能平滑定位于当天核心工作时段（08:00 AM），视觉开箱即舒服舒展。 | `src/main.c`, `src/app_calendar.c`, `AI_CONTINUITY.md` |

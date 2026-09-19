@@ -267,6 +267,7 @@ static void* calendar_create(RifeCore* core) {
     state->new_preset_idx = 0;
 
     init_preset_events(state);
+    state->scroll_y = 8.0f * 60.0f; // 默认平滑定位于早 08:00 工作时段
     return state;
 }
 
@@ -325,6 +326,24 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
     if (!state) return;
 
     sync_system_clock(state);
+
+    // 鼠标滚轮纵向平滑滚动 (周视图与日视图大表格上下滚动)
+    if (input->scroll_delta != 0.0f) {
+        if (state->view_mode == CAL_VIEW_WEEK || state->view_mode == CAL_VIEW_DAY) {
+            float hour_h = 60.0f;
+            float header_bar_h = (state->view_mode == CAL_VIEW_WEEK) ? 52.0f : 36.0f;
+            float avail_h = (client_h - 44.0f) - header_bar_h - 4.0f;
+            float total_h = 24.0f * hour_h;
+            float max_scroll = total_h - avail_h;
+            if (max_scroll < 0.0f) max_scroll = 0.0f;
+
+            state->scroll_y -= input->scroll_delta * 48.0f;
+            if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
+            if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
+            rife_request_redraw(core);
+            return;
+        }
+    }
 
     if (!input->mouse_pressed[0]) return;
 
@@ -465,6 +484,10 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
             state->view_year = state->cur_year;
             state->view_month = state->cur_month;
             state->view_day = state->cur_day;
+            float hour_h = 60.0f;
+            int target_h = (state->cur_hour >= 2) ? (state->cur_hour - 2) : 0;
+            if (target_h > 16) target_h = 16;
+            state->scroll_y = (float)target_h * hour_h;
             rife_request_redraw(core);
             return;
         }
@@ -586,22 +609,17 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
         }
     }
 
-    // 6. 右侧工作区交互：周视图日程块点击
+    // 6. 右侧工作区交互：周视图 / 日视图日程块点击
     if (mx > sidebar_w && my > header_h) {
         if (state->view_mode == CAL_VIEW_WEEK) {
             float main_x = sidebar_w;
             float main_w = client_w - sidebar_w;
             float ruler_w = 46.0f;
             float grid_left = main_x + ruler_w;
-            float col_w = (main_w - ruler_w) / 7.0f;
+            float col_w = (main_w - ruler_w - 6.0f) / 7.0f;
             float header_bar_h = 52.0f;
             float grid_top = header_h + header_bar_h;
-            float avail_h = (client_h - header_h) - header_bar_h - 18.0f;
-            float hour_h = 40.0f;
-            if (hour_h * 15.0f > avail_h) {
-                hour_h = floorf(avail_h / 15.0f);
-                if (hour_h < 32.0f) hour_h = 32.0f;
-            }
+            float hour_h = 60.0f;
 
             int sun_y, sun_m, sun_d;
             get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
@@ -616,18 +634,43 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                     if (e->year == col_y && e->month == col_m && e->day == col_d) {
                         float cx = grid_left + (float)c * col_w + 2.0f;
                         float cw = col_w - 4.0f;
-                        float start_f = (float)(e->start_hour - 8) + (float)e->start_min / 60.0f;
-                        float end_f = (float)(e->end_hour - 8) + (float)e->end_min / 60.0f;
-                        if (start_f < 0.0f) start_f = 0.0f;
-                        float cy = grid_top + start_f * hour_h + 1.0f;
+                        float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
+                        float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
+                        float cy = grid_top - state->scroll_y + start_f * hour_h + 1.0f;
                         float ch = (end_f - start_f) * hour_h - 2.0f;
-                        if (ch < 22.0f) ch = 22.0f;
+                        if (ch < 24.0f) ch = 24.0f;
 
-                        if (mx >= cx && mx <= cx + cw && my >= cy && my <= cy + ch) {
+                        if (my >= grid_top && my <= client_h - 6.0f && mx >= cx && mx <= cx + cw && my >= cy && my <= cy + ch) {
                             state->selected_event_id = (int)e->id;
                             rife_request_redraw(core);
                             return;
                         }
+                    }
+                }
+            }
+        }
+        else if (state->view_mode == CAL_VIEW_DAY) {
+            float day_ruler_w = 56.0f;
+            float day_header_h = 36.0f;
+            float day_grid_top = header_h + day_header_h;
+            float day_hour_h = 60.0f;
+            float ex = sidebar_w + day_ruler_w + 14.0f;
+            float ew = client_w - sidebar_w - day_ruler_w - 32.0f;
+
+            for (int i = 0; i < state->event_count; i++) {
+                CalendarEvent* e = &state->events[i];
+                if (!state->filter_category[e->category]) continue;
+                if (e->year == state->view_year && e->month == state->view_month && e->day == state->view_day) {
+                    float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
+                    float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
+                    float ey = day_grid_top - state->scroll_y + start_f * day_hour_h;
+                    float eh = (end_f - start_f) * day_hour_h;
+                    if (eh < 34.0f) eh = 34.0f;
+
+                    if (my >= day_grid_top && my <= client_h - 6.0f && mx >= ex && mx <= ex + ew && my >= ey && my <= ey + eh) {
+                        state->selected_event_id = (int)e->id;
+                        rife_request_redraw(core);
+                        return;
                     }
                 }
             }
@@ -809,28 +852,29 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     uint32_t grid_line_col = is_dark ? 0x201933FF : 0xF2F3F5FF; // 极简微淡网格线
 
     // ==========================================
-    // 视图 1：周视图 (Week View)
+    // 视图 1：周视图 (Week View - 纵向滚动舒展大表格)
     // ==========================================
     if (state->view_mode == CAL_VIEW_WEEK) {
         float ruler_w = 46.0f;
         float grid_left = main_x + ruler_w;
-        float col_w = (main_w - ruler_w) / 7.0f;
+        float col_w = (main_w - ruler_w - 6.0f) / 7.0f;
         float header_bar_h = 52.0f;
         float grid_top = main_y + header_bar_h;
-        float avail_h = main_h - header_bar_h - 18.0f;
-        float hour_h = 40.0f;
-        if (hour_h * 15.0f > avail_h) {
-            hour_h = floorf(avail_h / 15.0f);
-            if (hour_h < 32.0f) hour_h = 32.0f;
-        }
+        float avail_h = main_h - header_bar_h - 4.0f;
+        float hour_h = 60.0f; // 舒适大格子，每小时 60px
+        float total_content_h = 24.0f * hour_h;
+        float max_scroll = total_content_h - avail_h;
+        if (max_scroll < 0.0f) max_scroll = 0.0f;
+        if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
+        if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
 
         int sun_y, sun_m, sun_d;
         get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
 
-        // 标尺顶端 GMT+8 时区标识
+        // 1. 周列头固定顶栏 (周日首位，上层星期，下层21px醒目大数字)
+        rife_draw_rect(core, main_x, main_y, main_w, header_bar_h, bg_main);
         rife_draw_text_font(core, main_x + 6.0f, main_y + 12.0f, "GMT+8", text_muted, 4);
 
-        // 1. 周列头 (周日首位，上层星期，下层21px醒目大数字)
         const char* wk_names[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
         const char* wk_names_en[7] = { "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
 
@@ -841,8 +885,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             add_days(sun_y, sun_m, sun_d, c, &cy_y, &cy_m, &cy_d);
             bool is_col_today = (cy_y == state->cur_year && cy_m == state->cur_month && cy_d == state->cur_day);
 
-            // 列分割细线
-            rife_draw_rect(core, cx, main_y, 1.0f, main_h - 14.0f, grid_line_col);
+            // 列分割细线 (表头)
+            rife_draw_rect(core, cx, main_y, 1.0f, header_bar_h, grid_line_col);
 
             // 上层：星期文字居中 (11px)
             rife_draw_text_font(core, col_mid_x - 11.0f, main_y + 8.0f, is_zh ? wk_names[c] : wk_names_en[c], is_col_today ? rtodo_blue : text_muted, 4);
@@ -856,18 +900,28 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         // 表头下边缘底线
         rife_draw_rect(core, main_x, grid_top, main_w, 1.0f, border_col);
 
-        // 2. 时间标尺 (08:00 ~ 22:00)
-        for (int h = 8; h <= 22; h++) {
-            float hy = grid_top + (float)(h - 8) * hour_h;
-            if (hy > client_y + client_h - 14.0f) break;
+        // 2. 纵向可滚动时间网格区域 (硬件视口裁剪)
+        rife_push_scissor(core, main_x, grid_top + 1.0f, main_w, avail_h);
+
+        // 绘制 7 列纵向贯通网格线
+        for (int c = 0; c < 7; c++) {
+            float cx = grid_left + (float)c * col_w;
+            rife_draw_rect(core, cx, grid_top, 1.0f, avail_h, grid_line_col);
+        }
+        rife_draw_rect(core, grid_left + 7.0f * col_w, grid_top, 1.0f, avail_h, grid_line_col);
+
+        // 时间标尺与横向网格线 (00:00 ~ 24:00 共 24 小时大格子)
+        for (int h = 0; h <= 24; h++) {
+            float hy = grid_top - state->scroll_y + (float)h * hour_h;
+            if (hy + 20.0f < grid_top || hy - 20.0f > grid_top + avail_h) continue;
 
             char h_str[8];
             snprintf(h_str, sizeof(h_str), "%02d:00", h);
             rife_draw_text_font(core, main_x + 8.0f, hy - 6.0f, h_str, text_muted, 4);
-            rife_draw_rect(core, grid_left, hy, main_w - ruler_w, 1.0f, grid_line_col);
+            rife_draw_rect(core, grid_left, hy, col_w * 7.0f, 1.0f, grid_line_col);
         }
 
-        // 3. 渲染事件卡片 (轻灵浮动卡片)
+        // 3. 渲染事件卡片 (舒展大格卡片)
         for (int i = 0; i < state->event_count; i++) {
             CalendarEvent* e = &state->events[i];
             if (!state->filter_category[e->category]) continue;
@@ -878,24 +932,28 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
                 if (e->year == cy_y && e->month == cy_m && e->day == cy_d) {
                     float cx = grid_left + (float)c * col_w + 2.0f;
                     float cw = col_w - 4.0f;
-                    float start_f = (float)(e->start_hour - 8) + (float)e->start_min / 60.0f;
-                    float end_f = (float)(e->end_hour - 8) + (float)e->end_min / 60.0f;
-                    if (start_f < 0.0f) start_f = 0.0f;
-                    float cy = grid_top + start_f * hour_h + 1.0f;
+                    float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
+                    float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
+                    float cy = grid_top - state->scroll_y + start_f * hour_h + 1.0f;
                     float ch = (end_f - start_f) * hour_h - 2.0f;
-                    if (ch < 22.0f) ch = 22.0f;
+                    if (ch < 24.0f) ch = 24.0f;
+
+                    if (cy + ch < grid_top || cy > grid_top + avail_h) continue;
 
                     CategoryColor cc = get_category_color(e->category, is_dark);
 
                     rife_push_scissor(core, cx + 1.0f, cy, cw - 2.0f, ch);
-                    rife_draw_round_rect(core, cx, cy, cw, ch, 4.0f, cc.bg, cc.border);
-                    rife_draw_round_rect(core, cx + 1.0f, cy + 2.0f, 2.0f, ch - 4.0f, 1.0f, cc.bar, cc.bar);
+                    rife_draw_round_rect(core, cx, cy, cw, ch, 6.0f, cc.bg, cc.border);
+                    rife_draw_round_rect(core, cx + 2.0f, cy + 3.0f, 3.0f, ch - 6.0f, 1.5f, cc.bar, cc.bar);
 
-                    rife_draw_text_font(core, cx + 6.0f, cy + 3.0f, e->title, cc.text, 3);
-                    if (ch >= 32.0f) {
+                    rife_draw_text_font(core, cx + 8.0f, cy + 4.0f, e->title, cc.text, 3);
+                    if (ch >= 36.0f) {
                         char time_buf[32];
                         snprintf(time_buf, sizeof(time_buf), "%02d:%02d-%02d:%02d", e->start_hour, e->start_min, e->end_hour, e->end_min);
-                        rife_draw_text_font(core, cx + 6.0f, cy + 17.0f, time_buf, text_muted, 4);
+                        rife_draw_text_font(core, cx + 8.0f, cy + 20.0f, time_buf, text_muted, 4);
+                    }
+                    if (ch >= 52.0f && e->location[0]) {
+                        rife_draw_text_font(core, cx + 8.0f, cy + 34.0f, e->location, text_muted, 4);
                     }
                     rife_pop_scissor(core);
                 }
@@ -903,57 +961,85 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         }
 
         // 4. 实时时间红线 (Current Time Red Indicator Line)
-        if (state->cur_hour >= 8 && state->cur_hour <= 22) {
-            float cur_f = (float)(state->cur_hour - 8) + (float)state->cur_min / 60.0f;
-            float red_y = grid_top + cur_f * hour_h;
-            if (red_y <= client_y + client_h - 14.0f) {
-                char red_str[16];
-                snprintf(red_str, sizeof(red_str), "%02d:%02d", state->cur_hour, state->cur_min);
-                rife_draw_text_font(core, main_x + 6.0f, red_y - 6.0f, red_str, 0xF53F3FFF, 4);
-                rife_draw_rect(core, grid_left, red_y - 0.5f, main_w - ruler_w, 1.0f, 0xF53F3FFF);
+        float cur_f = (float)state->cur_hour + (float)state->cur_min / 60.0f;
+        float red_y = grid_top - state->scroll_y + cur_f * hour_h;
+        if (red_y >= grid_top && red_y <= grid_top + avail_h) {
+            char red_str[16];
+            snprintf(red_str, sizeof(red_str), "%02d:%02d", state->cur_hour, state->cur_min);
+            rife_draw_text_font(core, main_x + 6.0f, red_y - 6.0f, red_str, 0xF53F3FFF, 4);
+            rife_draw_rect(core, grid_left, red_y - 0.5f, col_w * 7.0f, 1.5f, 0xF53F3FFF);
 
-                for (int c = 0; c < 7; c++) {
-                    int cy_y, cy_m, cy_d;
-                    add_days(sun_y, sun_m, sun_d, c, &cy_y, &cy_m, &cy_d);
-                    if (cy_y == state->cur_year && cy_m == state->cur_month && cy_d == state->cur_day) {
-                        float red_dot_x = grid_left + (float)c * col_w;
-                        rife_draw_round_rect(core, red_dot_x - 3.0f, red_y - 3.0f, 6.0f, 6.0f, 3.0f, 0xF53F3FFF, 0xFFFFFFFF);
-                        break;
-                    }
+            for (int c = 0; c < 7; c++) {
+                int cy_y, cy_m, cy_d;
+                add_days(sun_y, sun_m, sun_d, c, &cy_y, &cy_m, &cy_d);
+                if (cy_y == state->cur_year && cy_m == state->cur_month && cy_d == state->cur_day) {
+                    float red_dot_x = grid_left + (float)c * col_w;
+                    rife_draw_round_rect(core, red_dot_x - 3.0f, red_y - 3.0f, 6.0f, 6.0f, 3.0f, 0xF53F3FFF, 0xFFFFFFFF);
+                    break;
                 }
             }
         }
+
+        // 5. 右侧微动滚动条 (Scrollbar Thumb)
+        if (max_scroll > 0.0f) {
+            float sb_bar_w = 4.0f;
+            float sb_bar_x = main_x + main_w - sb_bar_w - 2.0f;
+            float thumb_h = avail_h * (avail_h / total_content_h);
+            if (thumb_h < 36.0f) thumb_h = 36.0f;
+            float thumb_y = grid_top + (state->scroll_y / max_scroll) * (avail_h - thumb_h);
+            rife_draw_round_rect(core, sb_bar_x, thumb_y, sb_bar_w, thumb_h, 2.0f, is_dark ? 0x634E8C66 : 0xCBD5E199, 0);
+        }
+
+        rife_pop_scissor(core);
     }
     // ==========================================
-    // 视图 2：日视图 (Day View - 高信息密度单日)
+    // 视图 2：日视图 (Day View - 纵向滚动大时间轴)
     // ==========================================
     else if (state->view_mode == CAL_VIEW_DAY) {
-        float day_ruler_w = 60.0f;
-        float day_grid_top = main_y + 12.0f;
-        float day_hour_h = 42.0f;
+        float day_ruler_w = 56.0f;
+        float day_header_h = 36.0f;
+        float day_grid_top = main_y + day_header_h;
+        float day_avail_h = main_h - day_header_h - 4.0f;
+        float day_hour_h = 60.0f;
+        float total_day_h = 24.0f * day_hour_h;
+        float max_scroll = total_day_h - day_avail_h;
+        if (max_scroll < 0.0f) max_scroll = 0.0f;
+        if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
+        if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
 
-        rife_draw_text_font(core, main_x + 18.0f, day_grid_top, is_zh ? "今日重点时间轴" : "Daily Agenda Timeline", text_title, 1);
+        // 固定顶栏标题
+        rife_draw_rect(core, main_x, main_y, main_w, day_header_h, bg_main);
+        rife_draw_text_font(core, main_x + 18.0f, main_y + 10.0f, is_zh ? "今日重点时间轴" : "Daily Agenda Timeline", text_title, 1);
+        rife_draw_rect(core, main_x, day_grid_top, main_w, 1.0f, border_col);
 
-        for (int h = 8; h <= 20; h++) {
-            float hy = day_grid_top + 32.0f + (float)(h - 8) * day_hour_h;
+        rife_push_scissor(core, main_x, day_grid_top + 1.0f, main_w, day_avail_h);
+
+        // 时间刻度 00:00 ~ 24:00
+        for (int h = 0; h <= 24; h++) {
+            float hy = day_grid_top - state->scroll_y + (float)h * day_hour_h;
+            if (hy + 20.0f < day_grid_top || hy - 20.0f > day_grid_top + day_avail_h) continue;
+
             char h_str[8];
             snprintf(h_str, sizeof(h_str), "%02d:00", h);
-            rife_draw_text_font(core, main_x + 18.0f, hy - 7.0f, h_str, text_muted, 4);
+            rife_draw_text_font(core, main_x + 14.0f, hy - 6.0f, h_str, text_muted, 4);
             rife_draw_rect(core, main_x + day_ruler_w + 14.0f, hy, main_w - day_ruler_w - 30.0f, 1.0f, is_dark ? 0x1F182EFF : 0xF1F5F9FF);
         }
 
         // 渲染单日大日程卡片
+        float ex = main_x + day_ruler_w + 14.0f;
+        float ew = main_w - day_ruler_w - 32.0f;
+
         for (int i = 0; i < state->event_count; i++) {
             CalendarEvent* e = &state->events[i];
             if (!state->filter_category[e->category]) continue;
             if (e->year == state->view_year && e->month == state->view_month && e->day == state->view_day) {
-                float start_f = (float)(e->start_hour - 8) + (float)e->start_min / 60.0f;
-                float end_f = (float)(e->end_hour - 8) + (float)e->end_min / 60.0f;
-                float ey = day_grid_top + 32.0f + start_f * day_hour_h;
+                float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
+                float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
+                float ey = day_grid_top - state->scroll_y + start_f * day_hour_h;
                 float eh = (end_f - start_f) * day_hour_h;
                 if (eh < 34.0f) eh = 34.0f;
-                float ex = main_x + day_ruler_w + 24.0f;
-                float ew = main_w - day_ruler_w - 50.0f;
+
+                if (ey + eh < day_grid_top || ey > day_grid_top + day_avail_h) continue;
 
                 CategoryColor cc = get_category_color(e->category, is_dark);
                 rife_push_scissor(core, ex, ey, ew, eh);
@@ -965,10 +1051,35 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
                 char t_sub[64];
                 snprintf(t_sub, sizeof(t_sub), "%02d:%02d - %02d:%02d · %s", e->start_hour, e->start_min, e->end_hour, e->end_min, e->location);
                 rife_draw_text_font(core, ex + 14.0f, ey + 24.0f, t_sub, text_muted, 3);
+                if (eh >= 56.0f && e->desc[0]) {
+                    rife_draw_text_font(core, ex + 14.0f, ey + 42.0f, e->desc, text_muted, 4);
+                }
 
                 rife_pop_scissor(core);
             }
         }
+
+        // 当前时间红线 (日视图)
+        float cur_f = (float)state->cur_hour + (float)state->cur_min / 60.0f;
+        float red_y = day_grid_top - state->scroll_y + cur_f * day_hour_h;
+        if (red_y >= day_grid_top && red_y <= day_grid_top + day_avail_h) {
+            char red_str[16];
+            snprintf(red_str, sizeof(red_str), "%02d:%02d", state->cur_hour, state->cur_min);
+            rife_draw_text_font(core, main_x + 10.0f, red_y - 6.0f, red_str, 0xF53F3FFF, 4);
+            rife_draw_rect(core, ex, red_y - 0.5f, ew, 1.5f, 0xF53F3FFF);
+        }
+
+        // 滚动条
+        if (max_scroll > 0.0f) {
+            float sb_bar_w = 4.0f;
+            float sb_bar_x = main_x + main_w - sb_bar_w - 2.0f;
+            float thumb_h = day_avail_h * (day_avail_h / total_day_h);
+            if (thumb_h < 36.0f) thumb_h = 36.0f;
+            float thumb_y = day_grid_top + (state->scroll_y / max_scroll) * (day_avail_h - thumb_h);
+            rife_draw_round_rect(core, sb_bar_x, thumb_y, sb_bar_w, thumb_h, 2.0f, is_dark ? 0x634E8C66 : 0xCBD5E199, 0);
+        }
+
+        rife_pop_scissor(core);
     }
     // ==========================================
     // 视图 3：月视图 (Month View - 35/42格大月历)
