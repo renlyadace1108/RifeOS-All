@@ -59,6 +59,7 @@ typedef struct {
     int new_tag_color_idx; // 0..5
 
     float scroll_y;
+    float time_scale; // 每小时像素高度 (默认 96.0f，15分钟单位即 24.0f)
 } CalendarState;
 
 // -------------------------------------------------------------
@@ -221,13 +222,13 @@ static void utf8_pop_back(char* str) {
 }
 
 static void calc_event_end_time(int start_h, int start_m, int duration_idx, int* end_h, int* end_m) {
-    int duration_mins = 60;
+    int duration_mins = 15;
     switch (duration_idx) {
-        case 0: duration_mins = 30; break;
-        case 1: duration_mins = 60; break;
-        case 2: duration_mins = 90; break;
+        case 0: duration_mins = 15; break;
+        case 1: duration_mins = 30; break;
+        case 2: duration_mins = 60; break;
         case 3: duration_mins = 120; break;
-        default: duration_mins = 60; break;
+        default: duration_mins = 15; break;
     }
     int total_mins = start_h * 60 + start_m + duration_mins;
     *end_h = total_mins / 60;
@@ -377,13 +378,14 @@ static void* calendar_create(RifeCore* core) {
     state->modal_tag_idx = 0;
     state->new_hour = 10;
     state->new_min = 0;
-    state->new_duration_idx = 1; // 1h
+    state->new_duration_idx = 0; // 默认 15 分钟
     state->active_field = 0;
     state->cursor_blink_t = 0.0f;
     state->show_new_tag_modal = false;
     state->new_tag_color_idx = 0;
 
-    state->scroll_y = 8.0f * 60.0f; // 默认平滑定位于早 08:00 工作时段
+    state->time_scale = 96.0f; // 舒适大格子，默认 96px/小时 (15分钟单位 = 24px)
+    state->scroll_y = 8.0f * state->time_scale; // 默认平滑定位于早 08:00 工作时段
     return state;
 }
 
@@ -400,7 +402,7 @@ static void return_to_today(CalendarState* state, RifeCore* core) {
     state->view_year = state->cur_year;
     state->view_month = state->cur_month;
     state->view_day = state->cur_day;
-    float hour_h = 60.0f;
+    float hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
     int target_h = (state->cur_hour >= 2) ? (state->cur_hour - 2) : 0;
     if (target_h > 16) target_h = 16;
     state->scroll_y = (float)target_h * hour_h;
@@ -613,21 +615,54 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
         }
     }
 
-    // 鼠标滚轮纵向平滑滚动 (周视图与日视图大表格上下滚动)
-    if (input->scroll_delta != 0.0f) {
+    // 鼠标滚轮纵向平滑滚动或 Ctrl+滚轮缩放时间轴 (周视图与日视图大表格)
+    if (!state->show_new_modal && !state->show_new_tag_modal && input->scroll_delta != 0.0f) {
         if (state->view_mode == CAL_VIEW_WEEK || state->view_mode == CAL_VIEW_DAY) {
-            float hour_h = 60.0f;
+            float cur_hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
             float header_bar_h = (state->view_mode == CAL_VIEW_WEEK) ? 52.0f : 36.0f;
             float avail_h = (client_h - 44.0f) - header_bar_h - 4.0f;
-            float total_h = 24.0f * hour_h;
-            float max_scroll = total_h - avail_h;
-            if (max_scroll < 0.0f) max_scroll = 0.0f;
 
-            state->scroll_y -= input->scroll_delta * 48.0f;
-            if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
-            if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
-            rife_request_redraw(core);
-            return;
+            bool is_ctrl = (input->key_down[VK_CONTROL] != 0) || ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
+            if (is_ctrl) {
+                // Ctrl + 滚轮：动态平滑缩放时间轴刻度 (以鼠标位置为锚点 Zoom to Mouse Anchor)
+                float old_h = cur_hour_h;
+                float zoom_step = input->scroll_delta * 14.0f;
+                float new_h = old_h + zoom_step;
+                if (new_h < 44.0f) new_h = 44.0f;
+                if (new_h > 240.0f) new_h = 240.0f;
+
+                if (new_h != old_h) {
+                    float grid_y_offset = 44.0f + header_bar_h;
+                    float mouse_rel_y = input->mouse_y - grid_y_offset;
+                    if (mouse_rel_y < 0.0f) mouse_rel_y = 0.0f;
+                    if (mouse_rel_y > avail_h) mouse_rel_y = avail_h;
+
+                    float focus_time_h = (mouse_rel_y + state->scroll_y) / old_h;
+
+                    state->time_scale = new_h;
+                    float new_total_h = 24.0f * new_h;
+                    float max_scroll = new_total_h - avail_h;
+                    if (max_scroll < 0.0f) max_scroll = 0.0f;
+
+                    state->scroll_y = focus_time_h * new_h - mouse_rel_y;
+                    if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
+                    if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
+
+                    rife_request_redraw(core);
+                    return;
+                }
+            } else {
+                // 普通滚轮：纵向滚动大表格
+                float total_h = 24.0f * cur_hour_h;
+                float max_scroll = total_h - avail_h;
+                if (max_scroll < 0.0f) max_scroll = 0.0f;
+
+                state->scroll_y -= input->scroll_delta * 48.0f;
+                if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
+                if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
+                rife_request_redraw(core);
+                return;
+            }
         }
     }
 
@@ -754,9 +789,9 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 rife_request_redraw(core);
                 return;
             }
-            // 分钟切换 (00 / 30)
+            // 分钟微调切换 (按 15 分钟循环步进: 00 -> 15 -> 30 -> 45 -> 00)
             if (mx >= mx0 + 84.0f && mx <= mx0 + 128.0f && my >= time_y && my <= time_y + 24.0f) {
-                state->new_min = (state->new_min == 0) ? 30 : 0;
+                state->new_min = (state->new_min + 15) % 60;
                 rife_request_redraw(core);
                 return;
             }
@@ -1040,7 +1075,39 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
 
         for (int c = 0; c < state->tag_count; c++) {
             float row_y = sec_y + 24.0f + (float)c * 26.0f;
-            if (mx >= 16.0f && mx <= sidebar_w - 16.0f && my >= row_y && my <= row_y + 24.0f) {
+            float del_x = sidebar_w - 28.0f;
+            float del_y = row_y + 4.0f;
+
+            // 点击右侧 [×] 彻底删除此标签 (支持添加与删除)
+            if (mx >= del_x - 4.0f && mx <= del_x + 18.0f && my >= del_y - 2.0f && my <= del_y + 18.0f) {
+                for (int k = c; k < state->tag_count - 1; k++) {
+                    state->tags[k] = state->tags[k + 1];
+                }
+                state->tag_count--;
+
+                // 更新所有日程关联的 tag_idx
+                for (int i = 0; i < state->event_count; i++) {
+                    if (state->events[i].tag_idx == c) {
+                        state->events[i].tag_idx = 0;
+                    } else if (state->events[i].tag_idx > c) {
+                        state->events[i].tag_idx--;
+                    }
+                }
+
+                // 更新弹窗所选标签索引
+                if (state->modal_tag_idx == c) {
+                    state->modal_tag_idx = 0;
+                } else if (state->modal_tag_idx > c) {
+                    state->modal_tag_idx--;
+                }
+
+                save_calendar_data(state);
+                rife_request_redraw(core);
+                return;
+            }
+
+            // 点击左侧勾选框与标签名：切换显示/隐藏过滤状态
+            if (mx >= 16.0f && mx < del_x - 4.0f && my >= row_y && my <= row_y + 24.0f) {
                 state->tags[c].is_enabled = !state->tags[c].is_enabled;
                 save_calendar_data(state);
                 rife_request_redraw(core);
@@ -1059,7 +1126,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
             float col_w = (main_w - ruler_w - 6.0f) / 7.0f;
             float header_bar_h = 52.0f;
             float grid_top = header_h + header_bar_h;
-            float hour_h = 60.0f;
+            float hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
 
             int sun_y, sun_m, sun_d;
             get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
@@ -1079,7 +1146,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                         float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
                         float cy = grid_top - state->scroll_y + start_f * hour_h + 1.0f;
                         float ch = (end_f - start_f) * hour_h - 2.0f;
-                        if (ch < 24.0f) ch = 24.0f;
+                        if (ch < 18.0f) ch = 18.0f;
 
                         if (my >= grid_top && my <= client_h - 6.0f && mx >= cx && mx <= cx + cw && my >= cy && my <= cy + ch) {
                             state->selected_event_id = (int)e->id;
@@ -1090,12 +1157,15 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 }
             }
 
-            // B. 点击空白时间网格：快速创建该日该时段日程
+            // B. 点击空白时间网格：快速创建该日该时段日程 (以 15 分钟为单位精准吸附)
             if (my >= grid_top && my <= client_h - 6.0f && mx >= grid_left && mx <= grid_left + 7.0f * col_w) {
                 int c = (int)((mx - grid_left) / col_w);
                 if (c < 0) c = 0; if (c > 6) c = 6;
-                int h = (int)floorf((my - grid_top + state->scroll_y) / hour_h);
+                float exact_h = (my - grid_top + state->scroll_y) / hour_h;
+                int h = (int)floorf(exact_h);
                 if (h < 0) h = 0; if (h > 23) h = 23;
+                int quarter = (int)floorf((exact_h - (float)h) * 4.0f);
+                if (quarter < 0) quarter = 0; if (quarter > 3) quarter = 3;
 
                 int target_y, target_m, target_d;
                 add_days(sun_y, sun_m, sun_d, c, &target_y, &target_m, &target_d);
@@ -1103,7 +1173,8 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 state->view_month = target_m;
                 state->view_day = target_d;
                 state->new_hour = h;
-                state->new_min = 0;
+                state->new_min = quarter * 15; // 15分钟单位精准吸附 (0, 15, 30, 45)
+                state->new_duration_idx = 0;   // 默认时长 15 分钟
                 state->show_new_modal = true;
                 state->active_field = 1;
                 state->input_title[0] = '\0';
@@ -1117,7 +1188,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
             float day_ruler_w = 56.0f;
             float day_header_h = 36.0f;
             float day_grid_top = header_h + day_header_h;
-            float day_hour_h = 60.0f;
+            float day_hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
             float ex = sidebar_w + day_ruler_w + 14.0f;
             float ew = client_w - sidebar_w - day_ruler_w - 32.0f;
 
@@ -1130,7 +1201,7 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                     float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
                     float ey = day_grid_top - state->scroll_y + start_f * day_hour_h;
                     float eh = (end_f - start_f) * day_hour_h;
-                    if (eh < 34.0f) eh = 34.0f;
+                    if (eh < 22.0f) eh = 22.0f;
 
                     if (my >= day_grid_top && my <= client_h - 6.0f && mx >= ex && mx <= ex + ew && my >= ey && my <= ey + eh) {
                         state->selected_event_id = (int)e->id;
@@ -1140,12 +1211,17 @@ static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, 
                 }
             }
 
-            // B. 点击日视图空白区域新建
+            // B. 点击日视图空白区域新建 (以 15 分钟为单位精准吸附)
             if (my >= day_grid_top && my <= client_h - 6.0f && mx >= ex && mx <= ex + ew) {
-                int h = (int)floorf((my - day_grid_top + state->scroll_y) / day_hour_h);
+                float exact_h = (my - day_grid_top + state->scroll_y) / day_hour_h;
+                int h = (int)floorf(exact_h);
                 if (h < 0) h = 0; if (h > 23) h = 23;
+                int quarter = (int)floorf((exact_h - (float)h) * 4.0f);
+                if (quarter < 0) quarter = 0; if (quarter > 3) quarter = 3;
+
                 state->new_hour = h;
-                state->new_min = 0;
+                state->new_min = quarter * 15; // 15分钟单位精准吸附 (0, 15, 30, 45)
+                state->new_duration_idx = 0;   // 默认时长 15 分钟
                 state->show_new_modal = true;
                 state->active_field = 1;
                 state->input_title[0] = '\0';
@@ -1438,10 +1514,10 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     rife_draw_text_font(core, sb_x + 28.0f, search_y + (28.0f - 11.0f) * 0.5f, is_zh ? "🔍 搜索日程、会议..." : "🔍 Search...", text_muted, 4);
     rife_draw_text_font(core, sb_x + 16.0f + search_w - 18.0f, search_y + (28.0f - 15.0f) * 0.5f, "+", text_muted, 1);
 
-    // 5. 用户自定义分类/日历列表 (动态展示自定义标签)
+    // 5. 用户自定义标签列表 (动态展示自定义标签)
     float sec_y = search_y + 36.0f;
-    rife_draw_text_font(core, sb_x + 16.0f, sec_y, is_zh ? "我的日历" : "My Calendars", text_title, 5);
-    // 侧边栏新建分类快捷 [+] 按钮
+    rife_draw_text_font(core, sb_x + 16.0f, sec_y, is_zh ? "标签" : "Tags", text_title, 5);
+    // 侧边栏新建标签快捷 [+] 按钮
     rife_draw_liquid_glass_button(core, sb_x + sidebar_w - 32.0f, sec_y - 2.0f, 18.0f, 18.0f, 9.0f, "+", 4, rtodo_blue, false, 0, false, is_dark);
 
     for (int c = 0; c < state->tag_count; c++) {
@@ -1460,6 +1536,18 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         }
 
         rife_draw_text_font(core, sb_x + 36.0f, row_y + 1.0f, tag->name, text_title, 3);
+
+        // 标签删除操作按钮 (×)
+        float del_x = sb_x + sidebar_w - 28.0f;
+        float del_y = row_y + 4.0f;
+        bool is_del_hover = (core->input.mouse_x >= del_x - 2.0f && core->input.mouse_x <= del_x + 18.0f &&
+                             core->input.mouse_y >= del_y - 2.0f && core->input.mouse_y <= del_y + 18.0f);
+        if (is_del_hover) {
+            rife_draw_round_rect(core, del_x, del_y, 16.0f, 16.0f, 8.0f, is_dark ? 0x44FF3B30 : 0x22FF3B30, 0x00000000);
+            rife_draw_text_rect(core, del_x, del_y, 16.0f, 16.0f, "×", 0xFF3B30FF, 3, 0);
+        } else {
+            rife_draw_text_rect(core, del_x, del_y, 16.0f, 16.0f, "×", is_dark ? 0x8A80A044 : 0x8A80A055, 3, 0);
+        }
     }
 
     // D. 右侧主工作区 (周视图 / 日视图 / 月视图)
@@ -1475,7 +1563,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         float header_bar_h = 52.0f;
         float grid_top = main_y + header_bar_h;
         float avail_h = main_h - header_bar_h - 4.0f;
-        float hour_h = 60.0f; // 舒适大格子，每小时 60px
+        float hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f; // 舒适大格子，支持Ctrl+滚轮平滑缩放
         float total_content_h = 24.0f * hour_h;
         float max_scroll = total_content_h - avail_h;
         if (max_scroll < 0.0f) max_scroll = 0.0f;
@@ -1522,15 +1610,45 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         }
         rife_draw_rect(core, grid_left + 7.0f * col_w, grid_top, 1.0f, avail_h, grid_line_col);
 
-        // 时间标尺与横向网格线 (00:00 ~ 24:00 共 24 小时大格子)
+        // 时间标尺与横向网格线 (以 15 分钟为基础单位细分)
         for (int h = 0; h <= 24; h++) {
             float hy = grid_top - state->scroll_y + (float)h * hour_h;
-            if (hy + 20.0f < grid_top || hy - 20.0f > grid_top + avail_h) continue;
 
-            char h_str[8];
-            snprintf(h_str, sizeof(h_str), "%02d:00", h);
-            rife_draw_text_font(core, main_x + 8.0f, hy - 6.0f, h_str, text_muted, 4);
-            rife_draw_rect(core, grid_left, hy, col_w * 7.0f, 1.0f, grid_line_col);
+            if (hy >= grid_top - 12.0f && hy <= grid_top + avail_h + 12.0f) {
+                char h_str[8];
+                snprintf(h_str, sizeof(h_str), "%02d:00", h);
+                rife_draw_text_font(core, main_x + 8.0f, hy - 6.0f, h_str, text_muted, 4);
+                rife_draw_rect(core, grid_left, hy, col_w * 7.0f, 1.0f, grid_line_col);
+            }
+
+            // 每小时内部的 15 分钟细分子线 (:15, :30, :45)
+            if (h < 24) {
+                float quarter_h = hour_h * 0.25f;
+                for (int q = 1; q <= 3; q++) {
+                    float qy = hy + (float)q * quarter_h;
+                    if (qy < grid_top || qy > grid_top + avail_h) continue;
+
+                    if (q == 2) {
+                        // :30 半点线 (清晰微淡实线)
+                        uint32_t line_30 = is_dark ? 0x38285526 : 0x0000000C;
+                        rife_draw_rect(core, grid_left, qy, col_w * 7.0f, 1.0f, line_30);
+                        if (hour_h >= 64.0f) {
+                            char m30_str[8];
+                            snprintf(m30_str, sizeof(m30_str), "%02d:30", h);
+                            rife_draw_text_font(core, main_x + 8.0f, qy - 6.0f, m30_str, is_dark ? 0x8A80A055 : 0x8A80A066, 4);
+                        }
+                    } else {
+                        // :15 和 :45 刻度细分子线 (极微淡轻柔分割)
+                        uint32_t line_15 = is_dark ? 0x38285514 : 0x00000006;
+                        rife_draw_rect(core, grid_left, qy, col_w * 7.0f, 1.0f, line_15);
+                        if (hour_h >= 110.0f) {
+                            char mq_str[8];
+                            snprintf(mq_str, sizeof(mq_str), "%02d:%02d", h, q * 15);
+                            rife_draw_text_font(core, main_x + 8.0f, qy - 6.0f, mq_str, is_dark ? 0x8A80A044 : 0x8A80A055, 4);
+                        }
+                    }
+                }
+            }
         }
 
         // 3. 渲染事件卡片 (舒展大格卡片)
@@ -1548,7 +1666,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
                     float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
                     float cy = grid_top - state->scroll_y + start_f * hour_h + 1.0f;
                     float ch = (end_f - start_f) * hour_h - 2.0f;
-                    if (ch < 24.0f) ch = 24.0f;
+                    if (ch < 18.0f) ch = 18.0f;
 
                     if (cy + ch < grid_top || cy > grid_top + avail_h) continue;
 
@@ -1559,7 +1677,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
                     rife_draw_round_rect(core, cx + 2.0f, cy + 3.0f, 3.0f, ch - 6.0f, 1.5f, cc.bar, cc.bar);
 
                     rife_draw_text_font(core, cx + 8.0f, cy + 4.0f, e->title, cc.text, 3);
-                    if (ch >= 36.0f) {
+                    if (ch >= 32.0f) {
                         char time_buf[32];
                         snprintf(time_buf, sizeof(time_buf), "%02d:%02d-%02d:%02d", e->start_hour, e->start_min, e->end_hour, e->end_min);
                         rife_draw_text_font(core, cx + 8.0f, cy + 20.0f, time_buf, text_muted, 4);
@@ -1613,7 +1731,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         float day_header_h = 36.0f;
         float day_grid_top = main_y + day_header_h;
         float day_avail_h = main_h - day_header_h - 4.0f;
-        float day_hour_h = 60.0f;
+        float day_hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
         float total_day_h = 24.0f * day_hour_h;
         float max_scroll = total_day_h - day_avail_h;
         if (max_scroll < 0.0f) max_scroll = 0.0f;
@@ -1627,21 +1745,49 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
         rife_push_scissor(core, main_x, day_grid_top + 1.0f, main_w, day_avail_h);
 
-        // 时间刻度 00:00 ~ 24:00
-        for (int h = 0; h <= 24; h++) {
-            float hy = day_grid_top - state->scroll_y + (float)h * day_hour_h;
-            if (hy + 20.0f < day_grid_top || hy - 20.0f > day_grid_top + day_avail_h) continue;
-
-            char h_str[8];
-            snprintf(h_str, sizeof(h_str), "%02d:00", h);
-            rife_draw_text_font(core, main_x + 14.0f, hy - 6.0f, h_str, text_muted, 4);
-            rife_draw_rect(core, main_x + day_ruler_w + 14.0f, hy, main_w - day_ruler_w - 30.0f, 1.0f, grid_line_col);
-        }
-
-        // 渲染单日大日程卡片
         float ex = main_x + day_ruler_w + 14.0f;
         float ew = main_w - day_ruler_w - 32.0f;
 
+        // 时间标尺与横向网格线 (以 15 分钟为基础单位细分)
+        for (int h = 0; h <= 24; h++) {
+            float hy = day_grid_top - state->scroll_y + (float)h * day_hour_h;
+
+            if (hy >= day_grid_top - 12.0f && hy <= day_grid_top + day_avail_h + 12.0f) {
+                char h_str[8];
+                snprintf(h_str, sizeof(h_str), "%02d:00", h);
+                rife_draw_text_font(core, main_x + 14.0f, hy - 6.0f, h_str, text_muted, 4);
+                rife_draw_rect(core, main_x + day_ruler_w + 14.0f, hy, main_w - day_ruler_w - 30.0f, 1.0f, grid_line_col);
+            }
+
+            // 每小时内部的 15 分钟细分子线 (:15, :30, :45)
+            if (h < 24) {
+                float quarter_h = day_hour_h * 0.25f;
+                for (int q = 1; q <= 3; q++) {
+                    float qy = hy + (float)q * quarter_h;
+                    if (qy < day_grid_top || qy > day_grid_top + day_avail_h) continue;
+
+                    if (q == 2) {
+                        uint32_t line_30 = is_dark ? 0x38285526 : 0x0000000C;
+                        rife_draw_rect(core, ex, qy, ew, 1.0f, line_30);
+                        if (day_hour_h >= 64.0f) {
+                            char m30_str[8];
+                            snprintf(m30_str, sizeof(m30_str), "%02d:30", h);
+                            rife_draw_text_font(core, main_x + 14.0f, qy - 6.0f, m30_str, is_dark ? 0x8A80A055 : 0x8A80A066, 4);
+                        }
+                    } else {
+                        uint32_t line_15 = is_dark ? 0x38285514 : 0x00000006;
+                        rife_draw_rect(core, ex, qy, ew, 1.0f, line_15);
+                        if (day_hour_h >= 110.0f) {
+                            char mq_str[8];
+                            snprintf(mq_str, sizeof(mq_str), "%02d:%02d", h, q * 15);
+                            rife_draw_text_font(core, main_x + 14.0f, qy - 6.0f, mq_str, is_dark ? 0x8A80A044 : 0x8A80A055, 4);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 渲染单日大日程卡片
         for (int i = 0; i < state->event_count; i++) {
             CalendarEvent* e = &state->events[i];
             if (!is_event_visible(state, e)) continue;
@@ -1650,7 +1796,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
                 float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
                 float ey = day_grid_top - state->scroll_y + start_f * day_hour_h;
                 float eh = (end_f - start_f) * day_hour_h;
-                if (eh < 34.0f) eh = 34.0f;
+                if (eh < 22.0f) eh = 22.0f;
 
                 if (ey + eh < day_grid_top || ey > day_grid_top + day_avail_h) continue;
 
@@ -1899,8 +2045,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 
         // 时长选择器 (液态玻璃)
         rife_draw_text_font(core, mx0 + 168.0f, time_y + 4.0f, is_zh ? "时长:" : "Dur:", text_muted, 3);
-        const char* dur_labels_zh[4] = { "30分", "1小时", "1.5时", "2小时" };
-        const char* dur_labels_en[4] = { "30m", "1h", "1.5h", "2h" };
+        const char* dur_labels_zh[4] = { "15分", "30分", "1小时", "2小时" };
+        const char* dur_labels_en[4] = { "15m", "30m", "1h", "2h" };
         for (int d = 0; d < 4; d++) {
             float bx = mx0 + 204.0f + (float)d * 45.0f;
             bool is_d_act = (state->new_duration_idx == d);
