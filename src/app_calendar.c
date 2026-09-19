@@ -291,26 +291,26 @@ static CategoryColor get_category_color(CalendarCategory cat, bool is_dark) {
     if (is_dark) {
         switch (cat) {
             case CAL_CAT_WORK: // 科技蓝
-                c.bg = 0x1A284AFF; c.border = 0x274380FF; c.bar = 0x3B82F6FF; c.text = 0xBFDBFEFF; break;
+                c.bg = 0x1A284AB8; c.border = 0x274380CC; c.bar = 0x3B82F6FF; c.text = 0xBFDBFEFF; break;
             case CAL_CAT_REVIEW: // 紫晶
-                c.bg = 0x2A1A4AFF; c.border = 0x472B80FF; c.bar = 0xA855F7FF; c.text = 0xE9D5FFFF; break;
+                c.bg = 0x2A1A4AB8; c.border = 0x472B80CC; c.bar = 0xA855F7FF; c.text = 0xE9D5FFFF; break;
             case CAL_CAT_PERSONAL: // 翡翠
-                c.bg = 0x0F3325FF; c.border = 0x1A593FFF; c.bar = 0x10B981FF; c.text = 0xA7F3D0FF; break;
+                c.bg = 0x0F3325B8; c.border = 0x1A593FCC; c.bar = 0x10B981FF; c.text = 0xA7F3D0FF; break;
             case CAL_CAT_MILESTONE: // 琥珀
             default:
-                c.bg = 0x38240AFF; c.border = 0x613D0EFF; c.bar = 0xF59E0BFF; c.text = 0xFDE68AFF; break;
+                c.bg = 0x38240AB8; c.border = 0x613D0ECC; c.bar = 0xF59E0BFF; c.text = 0xFDE68AFF; break;
         }
     } else {
         switch (cat) {
             case CAL_CAT_WORK: // Rtodo 品牌蓝 (Feishu Soft Blue)
-                c.bg = 0xF0F5FFFF; c.border = 0xCFE0FEFF; c.bar = 0x3370FFFF; c.text = 0x1E40AFFF; break;
+                c.bg = 0xF0F5FFD4; c.border = 0xCFE0FED4; c.bar = 0x3370FFFF; c.text = 0x1E40AFFF; break;
             case CAL_CAT_REVIEW: // 薰衣紫
-                c.bg = 0xFBF7FFFF; c.border = 0xEEDBFFFF; c.bar = 0x8B5CF6FF; c.text = 0x6B21A8FF; break;
+                c.bg = 0xFBF7FFD4; c.border = 0xEEDBFFD4; c.bar = 0x8B5CF6FF; c.text = 0x6B21A8FF; break;
             case CAL_CAT_PERSONAL: // 薄荷绿
-                c.bg = 0xF0FDF4FF; c.border = 0xBBF7D0FF; c.bar = 0x10B981FF; c.text = 0x065F46FF; break;
+                c.bg = 0xF0FDF4D4; c.border = 0xBBF7D0D4; c.bar = 0x10B981FF; c.text = 0x065F46FF; break;
             case CAL_CAT_MILESTONE: // 温暖橙
             default:
-                c.bg = 0xFFFBEBFF; c.border = 0xFDE68AFF; c.bar = 0xF59E0BFF; c.text = 0x92400EFF; break;
+                c.bg = 0xFFFBEBD4; c.border = 0xFDE68AD4; c.bar = 0xF59E0BFF; c.text = 0x92400EFF; break;
         }
     }
     return c;
@@ -690,10 +690,9 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     bool is_zh = (cfg->language == LANG_ZH_CN);
     bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
 
-    // 主色与背景令牌
-    uint32_t bg_main = is_dark ? 0x161122FF : 0xFFFFFFFF;
-    uint32_t bg_sidebar = is_dark ? 0x1A1428FF : 0xF8FAFCFF;
-    uint32_t border_col = is_dark ? 0x2E2447FF : 0xE2E8F0FF;
+    // 主色与背景令牌 (液态玻璃全景透光)
+    uint32_t bg_sidebar = is_dark ? 0x16112235 : 0xFFFFFF28;
+    uint32_t border_col = is_dark ? 0x47346A55 : 0x00000014;
     uint32_t text_title = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
     uint32_t text_muted = is_dark ? 0x94A3B8FF : 0x64748BFF;
     uint32_t rtodo_blue = 0x3370FFFF;
@@ -701,12 +700,11 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float header_h = 48.0f;
     float sidebar_w = 185.0f;
 
-    // A. 基础容器底色 (使用圆角矩形贴合窗口，极致通透纯白)
-    rife_draw_round_rect(core, client_x, client_y, client_w, client_h, 18.0f, bg_main, bg_main);
-    rife_draw_round_rect(core, client_x, client_y, sidebar_w, client_h, 18.0f, bg_sidebar, bg_sidebar);
-    // 侧边栏右上/右下平直过渡与极轻微浅灰分割线
-    rife_draw_rect(core, client_x + sidebar_w - 18.0f, client_y, 18.0f, client_h, bg_sidebar);
-    rife_draw_rect(core, client_x, client_y, sidebar_w, 20.0f, bg_sidebar);
+    // A. 基础容器底色 (液态玻璃全透贯通，左侧细腻磨砂侧栏)
+    if ((bg_sidebar & 0xFF) > 0) {
+        rife_draw_round_rect(core, client_x, client_y, sidebar_w, client_h, 18.0f, bg_sidebar, 0x00000000);
+        rife_draw_rect(core, client_x + sidebar_w - 18.0f, client_y, 18.0f, client_h, bg_sidebar);
+    }
     rife_draw_rect(core, client_x + sidebar_w, client_y, 1.0f, client_h, border_col);
     rife_draw_rect(core, client_x + sidebar_w, client_y + header_h, client_w - sidebar_w, 1.0f, border_col);
 
@@ -716,22 +714,22 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float main_y = client_y + header_h;
     float main_h = client_h - header_h;
 
-    // 1. "今天" 按钮 (50x28, 优雅圆角)
+    // 1. "今天" 按钮 (50x28, 优雅晶莹微倒角)
     float today_btn_x = main_x + 16.0f;
     float today_btn_y = client_y + 10.0f;
-    rife_draw_round_rect(core, today_btn_x, today_btn_y, 50.0f, 28.0f, 6.0f, is_dark ? 0x221A33FF : 0xFFFFFFFF, border_col);
+    rife_draw_round_rect(core, today_btn_x, today_btn_y, 50.0f, 28.0f, 6.0f, is_dark ? 0x221A3388 : 0xFFFFFF88, border_col);
     rife_draw_text_font(core, today_btn_x + 12.0f, today_btn_y + 6.0f, is_zh ? "今天" : "Today", text_title, 0);
 
     // 2. 前翻 / 后翻箭头按钮
     float nav_x = today_btn_x + 56.0f;
-    rife_draw_round_rect(core, nav_x, today_btn_y, 26.0f, 28.0f, 6.0f, is_dark ? 0x221A33FF : 0xFFFFFFFF, border_col);
+    rife_draw_round_rect(core, nav_x, today_btn_y, 26.0f, 28.0f, 6.0f, is_dark ? 0x221A3388 : 0xFFFFFF88, border_col);
     rife_draw_text_font(core, nav_x + 9.0f, today_btn_y + 6.0f, "<", text_title, 0);
 
     float nav_r_x = nav_x + 30.0f;
-    rife_draw_round_rect(core, nav_r_x, today_btn_y, 26.0f, 28.0f, 6.0f, is_dark ? 0x221A33FF : 0xFFFFFFFF, border_col);
+    rife_draw_round_rect(core, nav_r_x, today_btn_y, 26.0f, 28.0f, 6.0f, is_dark ? 0x221A3388 : 0xFFFFFF88, border_col);
     rife_draw_text_font(core, nav_r_x + 9.0f, today_btn_y + 6.0f, ">", text_title, 0);
 
-    // 3. 当前年月大标题 (18px Bold)
+    // 3. 当前年月大标题 (18px Normal)
     char title_buf[64];
     static const char* mon_names[13] = { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
     if (is_zh) {
@@ -750,14 +748,14 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float seg_w = 3.0f * seg_item_w + 4.0f;
     float seg_x = client_x + client_w - seg_w - 20.0f;
     float seg_y = today_btn_y;
-    rife_draw_round_rect(core, seg_x, seg_y, seg_w, 28.0f, 6.0f, is_dark ? 0x1E172CFF : 0xF2F3F5FF, border_col);
+    rife_draw_round_rect(core, seg_x, seg_y, seg_w, 28.0f, 6.0f, is_dark ? 0x1E172C66 : 0x0000000A, border_col);
 
     for (int v = 0; v < 3; v++) {
         float vx = seg_x + 2.0f + (float)v * seg_item_w;
         bool is_act = (state->view_mode == s_tab_modes[v]);
         if (is_act) {
-            uint32_t act_bg = is_dark ? 0x382A57FF : 0xFFFFFFFF;
-            uint32_t act_brd = is_dark ? 0x634E8CFF : 0xCBD5E1FF;
+            uint32_t act_bg = is_dark ? 0x382A57CC : 0xFFFFFFCC;
+            uint32_t act_brd = is_dark ? 0x634E8CFF : 0xCBD5E1CC;
             rife_draw_round_rect(core, vx, seg_y + 1.5f, seg_item_w, 25.0f, 5.0f, act_bg, act_brd);
             rife_draw_text_font(core, vx + (is_zh ? 16.0f : 8.0f), seg_y + 5.0f, is_zh ? view_labels_zh[v] : view_labels_en[v], rtodo_blue, 5);
         } else {
@@ -849,7 +847,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     }
 
     // D. 右侧主工作区 (周视图 / 日视图 / 月视图)
-    uint32_t grid_line_col = is_dark ? 0x201933FF : 0xF2F3F5FF; // 极简微淡网格线
+    uint32_t grid_line_col = is_dark ? 0x38285533 : 0x0000000E; // 极简微淡网格线
 
     // ==========================================
     // 视图 1：周视图 (Week View - 纵向滚动舒展大表格)
@@ -872,7 +870,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
 
         // 1. 周列头固定顶栏 (周日首位，上层星期，下层21px醒目大数字)
-        rife_draw_rect(core, main_x, main_y, main_w, header_bar_h, bg_main);
+        rife_draw_rect(core, main_x, main_y, main_w, header_bar_h, is_dark ? 0x16112240 : 0xFFFFFF35);
         rife_draw_text_font(core, main_x + 6.0f, main_y + 12.0f, "GMT+8", text_muted, 4);
 
         const char* wk_names[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
@@ -966,7 +964,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         if (red_y >= grid_top && red_y <= grid_top + avail_h) {
             char red_str[16];
             snprintf(red_str, sizeof(red_str), "%02d:%02d", state->cur_hour, state->cur_min);
-            rife_draw_text_font(core, main_x + 6.0f, red_y - 6.0f, red_str, 0xF53F3FFF, 4);
+            rife_draw_round_rect(core, main_x + 4.0f, red_y - 8.0f, 38.0f, 16.0f, 4.0f, 0xF53F3FFF, 0xF53F3FFF);
+            rife_draw_text_font(core, main_x + 7.0f, red_y - 7.0f, red_str, 0xFFFFFFFF, 4);
             rife_draw_rect(core, grid_left, red_y - 0.5f, col_w * 7.0f, 1.5f, 0xF53F3FFF);
 
             for (int c = 0; c < 7; c++) {
@@ -1007,8 +1006,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
         if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
 
-        // 固定顶栏标题
-        rife_draw_rect(core, main_x, main_y, main_w, day_header_h, bg_main);
+        // 固定顶栏标题 (磨砂毛玻璃)
+        rife_draw_rect(core, main_x, main_y, main_w, day_header_h, is_dark ? 0x16112240 : 0xFFFFFF35);
         rife_draw_text_font(core, main_x + 18.0f, main_y + 10.0f, is_zh ? "今日重点时间轴" : "Daily Agenda Timeline", text_title, 1);
         rife_draw_rect(core, main_x, day_grid_top, main_w, 1.0f, border_col);
 
@@ -1022,7 +1021,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             char h_str[8];
             snprintf(h_str, sizeof(h_str), "%02d:00", h);
             rife_draw_text_font(core, main_x + 14.0f, hy - 6.0f, h_str, text_muted, 4);
-            rife_draw_rect(core, main_x + day_ruler_w + 14.0f, hy, main_w - day_ruler_w - 30.0f, 1.0f, is_dark ? 0x1F182EFF : 0xF1F5F9FF);
+            rife_draw_rect(core, main_x + day_ruler_w + 14.0f, hy, main_w - day_ruler_w - 30.0f, 1.0f, grid_line_col);
         }
 
         // 渲染单日大日程卡片
@@ -1059,13 +1058,14 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             }
         }
 
-        // 当前时间红线 (日视图)
+        // 当前时间红线 (日视图 - 红色防重叠圆角胶囊徽标)
         float cur_f = (float)state->cur_hour + (float)state->cur_min / 60.0f;
         float red_y = day_grid_top - state->scroll_y + cur_f * day_hour_h;
         if (red_y >= day_grid_top && red_y <= day_grid_top + day_avail_h) {
             char red_str[16];
             snprintf(red_str, sizeof(red_str), "%02d:%02d", state->cur_hour, state->cur_min);
-            rife_draw_text_font(core, main_x + 10.0f, red_y - 6.0f, red_str, 0xF53F3FFF, 4);
+            rife_draw_round_rect(core, main_x + 6.0f, red_y - 8.0f, 38.0f, 16.0f, 4.0f, 0xF53F3FFF, 0xF53F3FFF);
+            rife_draw_text_font(core, main_x + 9.0f, red_y - 7.0f, red_str, 0xFFFFFFFF, 4);
             rife_draw_rect(core, ex, red_y - 0.5f, ew, 1.5f, 0xF53F3FFF);
         }
 
@@ -1108,7 +1108,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             float cx = main_x + (float)c * m_col_w;
             float cy = m_top + (float)r * m_row_h;
 
-            rife_draw_rect(core, cx, cy, m_col_w, m_row_h, border_col);
+            rife_draw_round_rect(core, cx, cy, m_col_w, m_row_h, 0.0f, 0x00000000, border_col);
 
             char d_str[8];
             snprintf(d_str, sizeof(d_str), "%d", d);
@@ -1202,8 +1202,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         float mx0 = client_x + (client_w - mw) * 0.5f;
         float my0 = client_y + (client_h - mh) * 0.5f;
 
-        // 暗晶柔和阴影与卡片底板
-        rife_draw_round_rect(core, mx0, my0, mw, mh, 12.0f, is_dark ? 0x231A38FF : 0xFFFFFFFF, is_dark ? 0x4D3678FF : 0xCBD5E1FF);
+        // 暗晶柔和阴影与卡片底板 (磨砂毛玻璃浮层)
+        rife_draw_round_rect(core, mx0, my0, mw, mh, 12.0f, is_dark ? 0x231A38F2 : 0xFFFFFFF2, is_dark ? 0x4D3678FF : 0xCBD5E1FF);
 
         // 标题
         rife_draw_text_font(core, mx0 + 16.0f, my0 + 16.0f, is_zh ? "快速创建日程" : "Quick New Event", text_title, 1);
@@ -1276,7 +1276,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             float pop_x = client_x + client_w - pop_w - 20.0f;
             float pop_y = client_y + 60.0f;
 
-            rife_draw_round_rect(core, pop_x, pop_y, pop_w, pop_h, 10.0f, is_dark ? 0x221838FF : 0xFFFFFFFF, is_dark ? 0x47336EFF : 0xCBD5E1FF);
+            rife_draw_round_rect(core, pop_x, pop_y, pop_w, pop_h, 10.0f, is_dark ? 0x221838F2 : 0xFFFFFFF2, is_dark ? 0x47336EFF : 0xCBD5E1FF);
 
             CategoryColor cc = get_category_color(cur_e->category, is_dark);
             rife_draw_round_rect(core, pop_x + 14.0f, pop_y + 14.0f, 64.0f, 20.0f, 4.0f, cc.bg, cc.border);

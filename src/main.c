@@ -178,13 +178,13 @@ static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
     int s_sm      = -(int)(12 * factor + 0.5f);
     int s_cap     = -(int)(11 * factor + 0.5f);
 
-    plat->hfont_display = CreateFontW(s_display, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_bold = CreateFontW(s_bold, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_sm = CreateFontW(s_sm, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_caption = CreateFontW(s_cap, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_display = CreateFontW(s_display, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_bold = CreateFontW(s_bold, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_sm = CreateFontW(s_sm, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    plat->hfont_caption = CreateFontW(s_cap, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
 
     plat->current_font_scale = scale;
 }
@@ -601,6 +601,95 @@ void rife_draw_subpixel_circle(Win32Platform* plat, float cx, float cy, float ra
             uint32_t final_g = (uint32_t)rife_clampf(rife_lerpf(og, g, coverage), 0.0f, 255.0f);
             uint32_t final_b = (uint32_t)rife_clampf(rife_lerpf(ob, b, coverage), 0.0f, 255.0f);
             line[x] = (final_r << 16) | (final_g << 8) | final_b;
+        }
+    }
+}
+
+static void rife_blend_round_rect_pixels(Win32Platform* plat, float rx, float ry, float rw, float rh, float radius, uint32_t color, uint32_t border_color) {
+    if (!plat || !plat->pixels || rw <= 0.0f || rh <= 0.0f) return;
+    int x0 = (int)floorf(rx);
+    int y0 = (int)floorf(ry);
+    int x1 = (int)ceilf(rx + rw);
+    int y1 = (int)ceilf(ry + rh);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > plat->win_width) x1 = plat->win_width;
+    if (y1 > plat->win_height) y1 = plat->win_height;
+
+    RECT clip_rc;
+    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+        if (x0 < clip_rc.left) x0 = clip_rc.left;
+        if (y0 < clip_rc.top) y0 = clip_rc.top;
+        if (x1 > clip_rc.right) x1 = clip_rc.right;
+        if (y1 > clip_rc.bottom) y1 = clip_rc.bottom;
+    }
+    if (x0 >= x1 || y0 >= y1) return;
+
+    float fr = (float)((color >> 24) & 0xFF);
+    float fg = (float)((color >> 16) & 0xFF);
+    float fb = (float)((color >> 8) & 0xFF);
+    float fa = (float)(color & 0xFF) / 255.0f;
+
+    float br = (float)((border_color >> 24) & 0xFF);
+    float bg = (float)((border_color >> 16) & 0xFF);
+    float bb = (float)((border_color >> 8) & 0xFF);
+    float ba = (float)(border_color & 0xFF) / 255.0f;
+
+    float half_w = rw * 0.5f;
+    float half_h = rh * 0.5f;
+    float center_x = rx + half_w;
+    float center_y = ry + half_h;
+    float r_clamped = radius;
+    if (r_clamped > half_w) r_clamped = half_w;
+    if (r_clamped > half_h) r_clamped = half_h;
+    float inner_w = half_w - r_clamped;
+    float inner_h = half_h - r_clamped;
+    int width = plat->win_width;
+
+    for (int y = y0; y < y1; y++) {
+        float py = (float)y + 0.5f;
+        uint32_t* line = &plat->pixels[y * width];
+        float qy = fabsf(py - center_y) - inner_h;
+
+        for (int x = x0; x < x1; x++) {
+            float px = (float)x + 0.5f;
+            float qx = fabsf(px - center_x) - inner_w;
+            float dist;
+
+            if (qx <= 0.0f && qy <= 0.0f) {
+                float in_val = (qx > qy) ? qx : qy;
+                dist = in_val - r_clamped;
+            } else if (qx > 0.0f && qy <= 0.0f) {
+                dist = qx - r_clamped;
+            } else if (qx <= 0.0f && qy > 0.0f) {
+                dist = qy - r_clamped;
+            } else {
+                dist = sqrtf(qx * qx + qy * qy) - r_clamped;
+            }
+
+            if (dist > 0.5f) continue;
+
+            float cov = rife_clampf(0.5f - dist, 0.0f, 1.0f);
+            uint32_t orig = line[x];
+            float ob = (float)(orig & 0xFF);
+            float og = (float)((orig >> 8) & 0xFF);
+            float or_ = (float)((orig >> 16) & 0xFF);
+
+            float r = fr, g = fg, b = fb, a = fa;
+            if (ba > 0.0f) {
+                float stroke = rife_clampf(1.0f - fabsf(dist + 0.5f), 0.0f, 1.0f);
+                r = rife_lerpf(r, br, stroke);
+                g = rife_lerpf(g, bg, stroke);
+                b = rife_lerpf(b, bb, stroke);
+                a = rife_lerpf(a, ba, stroke);
+            }
+            float eff_a = a * cov;
+            float inv_a = 1.0f - eff_a;
+
+            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + r * eff_a, 0.0f, 255.0f);
+            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + g * eff_a, 0.0f, 255.0f);
+            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + b * eff_a, 0.0f, 255.0f);
+            line[x] = (nr << 16) | (ng << 8) | nb;
         }
     }
 }
@@ -1182,24 +1271,99 @@ void rife_render_flush(RifeCore* core) {
             rife_draw_text_u8(plat->hdc_mem, (int)curr->x, (int)curr->y, curr->text);
         }
         else if (curr->type == CMD_ROUND_RECT) {
-            uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
-            uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
-            uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
-            uint8_t br = (uint8_t)((curr->border_color >> 24) & 0xFF);
-            uint8_t bg = (uint8_t)((curr->border_color >> 16) & 0xFF);
-            uint8_t bb = (uint8_t)((curr->border_color >> 8) & 0xFF);
-            SetDCPenColor(plat->hdc_mem, RGB(br, bg, bb));
-            SetDCBrushColor(plat->hdc_mem, RGB(r, g, b));
-            RoundRect(plat->hdc_mem, (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h), (int)curr->radius, (int)curr->radius);
+            uint8_t a = (uint8_t)(curr->color & 0xFF);
+            uint8_t ba = (uint8_t)(curr->border_color & 0xFF);
+            if (a == 0 && ba == 0) {
+                // 完全透明，直接跳过
+            }
+            else if (a == 0 && ba > 0) {
+                // 仅描边镂空圆角框
+                uint8_t br = (uint8_t)((curr->border_color >> 24) & 0xFF);
+                uint8_t bg = (uint8_t)((curr->border_color >> 16) & 0xFF);
+                uint8_t bb = (uint8_t)((curr->border_color >> 8) & 0xFF);
+                SetDCPenColor(plat->hdc_mem, RGB(br, bg, bb));
+                SelectObject(plat->hdc_mem, GetStockObject(HOLLOW_BRUSH));
+                RoundRect(plat->hdc_mem, (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h), (int)curr->radius, (int)curr->radius);
+                SelectObject(plat->hdc_mem, GetStockObject(DC_BRUSH));
+            }
+            else if (a == 255 && (ba == 255 || ba == 0)) {
+                // 快速纯色 GDI 绘制
+                uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
+                uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
+                uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
+                if (ba == 0) {
+                    SelectObject(plat->hdc_mem, GetStockObject(NULL_PEN));
+                } else {
+                    uint8_t br = (uint8_t)((curr->border_color >> 24) & 0xFF);
+                    uint8_t bg = (uint8_t)((curr->border_color >> 16) & 0xFF);
+                    uint8_t bb = (uint8_t)((curr->border_color >> 8) & 0xFF);
+                    SetDCPenColor(plat->hdc_mem, RGB(br, bg, bb));
+                }
+                SetDCBrushColor(plat->hdc_mem, RGB(r, g, b));
+                RoundRect(plat->hdc_mem, (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h), (int)curr->radius, (int)curr->radius);
+                if (ba == 0) SelectObject(plat->hdc_mem, GetStockObject(DC_PEN));
+            }
+            else {
+                // 亚像素半透明磨砂融合
+                GdiFlush();
+                rife_blend_round_rect_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color, curr->border_color);
+            }
         }
         else if (curr->type == CMD_RECT) {
-            uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
-            uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
-            uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
-            SetDCPenColor(plat->hdc_mem, RGB(r, g, b));
-            SetDCBrushColor(plat->hdc_mem, RGB(r, g, b));
-            RECT rc = { (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h) };
-            FillRect(plat->hdc_mem, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
+            uint8_t a = (uint8_t)(curr->color & 0xFF);
+            if (a == 0) {
+                // 完全透明，直接跳过
+            }
+            else if (a == 255) {
+                uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
+                uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
+                uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
+                SetDCPenColor(plat->hdc_mem, RGB(r, g, b));
+                SetDCBrushColor(plat->hdc_mem, RGB(r, g, b));
+                RECT rc = { (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h) };
+                FillRect(plat->hdc_mem, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
+            }
+            else {
+                // 亚像素软件半透明 Alpha 混合
+                GdiFlush();
+                int rx0 = (int)curr->x;
+                int ry0 = (int)curr->y;
+                int rx1 = (int)(curr->x + curr->w);
+                int ry1 = (int)(curr->y + curr->h);
+                if (rx0 < 0) rx0 = 0;
+                if (ry0 < 0) ry0 = 0;
+                if (rx1 > plat->win_width) rx1 = plat->win_width;
+                if (ry1 > plat->win_height) ry1 = plat->win_height;
+
+                RECT clip_rc;
+                if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+                    if (rx0 < clip_rc.left) rx0 = clip_rc.left;
+                    if (ry0 < clip_rc.top) ry0 = clip_rc.top;
+                    if (rx1 > clip_rc.right) rx1 = clip_rc.right;
+                    if (ry1 > clip_rc.bottom) ry1 = clip_rc.bottom;
+                }
+
+                if (rx0 < rx1 && ry0 < ry1) {
+                    float fa = (float)a / 255.0f;
+                    float inv_a = 1.0f - fa;
+                    float fr = (float)((curr->color >> 24) & 0xFF);
+                    float fg = (float)((curr->color >> 16) & 0xFF);
+                    float fb = (float)((curr->color >> 8) & 0xFF);
+                    for (int y = ry0; y < ry1; y++) {
+                        uint32_t* line = &plat->pixels[y * plat->win_width];
+                        for (int x = rx0; x < rx1; x++) {
+                            uint32_t orig = line[x];
+                            float ob = (float)(orig & 0xFF);
+                            float og = (float)((orig >> 8) & 0xFF);
+                            float or_ = (float)((orig >> 16) & 0xFF);
+                            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + fr * fa, 0.0f, 255.0f);
+                            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + fg * fa, 0.0f, 255.0f);
+                            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + fb * fa, 0.0f, 255.0f);
+                            line[x] = (nr << 16) | (ng << 8) | nb;
+                        }
+                    }
+                }
+            }
         }
         else if (curr->type == CMD_SCISSOR_PUSH) {
             SaveDC(plat->hdc_mem);
