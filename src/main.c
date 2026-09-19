@@ -1076,14 +1076,19 @@ void rife_render_flush(RifeCore* core) {
         }
     }
 
-    float col_size = (bg_count > 0) ? (24.0f + (float)bg_count * 20.0f + 6.0f) : 22.0f;
+    float tasks_w = (bg_count > 0) ? ((float)bg_count * 96.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
+    if (bg_count >= 2) tasks_w += 50.0f;
+    float needed_w = 110.0f + tasks_w + 24.0f;
+    float exp_w = ww * 0.42f;
+    if (exp_w < needed_w) exp_w = needed_w;
+    if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
+
+    float col_size = (bg_count > 0) ? (32.0f + (float)bg_count * 22.0f + 4.0f) : 22.0f;
     float col_h = (bg_count > 0) ? 24.0f : 22.0f;
     float orig_x = (ww - col_size) * 0.5f;
     float orig_y = 10.0f;
 
-    float exp_w = ww * 0.42f;
-    if (exp_w < 340.0f) exp_w = 340.0f;
-    float exp_h = (bg_count > 0) ? (48.0f + (float)bg_count * 46.0f + 12.0f) : 74.0f;
+    float exp_h = 42.0f; // 始终维持经典 42px 高度，回归优雅的横向流体云布局
 
     float cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
     float cloud_h = rife_lerpf(col_h, exp_h, plat->cloud_anim);
@@ -1234,18 +1239,41 @@ void rife_render_flush(RifeCore* core) {
             }
         }
 
-        if (plat->cloud_anim > 0.35f && bg_count > 0) {
-            int card_i = 0;
-            for (size_t i = 0; i < g_installed_app_count; i++) {
-                ActiveWindow* win = &plat->windows[i];
-                if (!win->inst || win->is_open || !win->is_minimized) continue;
-                float card_y = cloud_y + 40.0f + (float)card_i * 46.0f;
-                float card_w = cloud_w - 24.0f;
-                float card_x = cloud_x + 12.0f;
-                float card_h = 40.0f;
-                rife_draw_subpixel_liquid_glass(plat, card_x, card_y, card_w, card_h, 8.0f,
-                    is_obsidian ? 0.90f : 0.85f, false, specular_rim, is_obsidian ? 0x221836 : 0xF8FAFC);
-                card_i++;
+        if (plat->cloud_anim > 0.35f) {
+            // 左侧：三色控制圆钮 (关闭/最小化/全屏，与之前经典流体云一致)
+            float ly = cloud_y + cloud_h * 0.5f;
+            rife_draw_subpixel_circle(plat, cloud_x + 24.0f, ly, 5.5f, 0xFF5F56, 0xE0443E);
+            rife_draw_subpixel_circle(plat, cloud_x + 44.0f, ly, 5.5f, 0xFFBD2E, 0xDEA123);
+            rife_draw_subpixel_circle(plat, cloud_x + 64.0f, ly, 5.5f, 0x27C93F, 0x1AAB29);
+
+            // 右侧：从右往左排列后台任务胶囊底板
+            if (bg_count > 0) {
+                float cur_right = cloud_x + cloud_w - 10.0f;
+                for (size_t i = 0; i < g_installed_app_count; i++) {
+                    ActiveWindow* win = &plat->windows[i];
+                    if (!win->inst || win->is_open || !win->is_minimized) continue;
+
+                    float task_w = 96.0f;
+                    float task_h = 28.0f;
+                    float task_x = cur_right - task_w;
+                    float task_y = cloud_y + (cloud_h - task_h) * 0.5f;
+                    bool is_task_hvr = (mx >= task_x && mx <= task_x + task_w && my >= task_y && my <= task_y + task_h);
+
+                    rife_draw_subpixel_liquid_glass(plat, task_x, task_y, task_w, task_h, 8.0f,
+                        is_obsidian ? 0.90f : 0.85f, is_task_hvr, specular_rim, is_obsidian ? 0x221836 : 0xF8FAFC);
+
+                    cur_right -= (task_w + 6.0f);
+                }
+
+                if (bg_count >= 2) {
+                    float clr_w = 44.0f;
+                    float clr_h = 28.0f;
+                    float clr_x = cur_right - clr_w;
+                    float clr_y = cloud_y + (cloud_h - clr_h) * 0.5f;
+                    bool is_clr_hvr = (mx >= clr_x && mx <= clr_x + clr_w && my >= clr_y && my <= clr_y + clr_h);
+                    rife_draw_subpixel_liquid_glass(plat, clr_x, clr_y, clr_w, clr_h, 8.0f,
+                        is_obsidian ? 0.88f : 0.82f, is_clr_hvr, specular_rim, is_obsidian ? 0x2a1b38 : 0xEFF6FF);
+                }
             }
         }
     }
@@ -1333,76 +1361,74 @@ void rife_render_flush(RifeCore* core) {
     SetTextColor(plat->hdc_mem, is_obsidian ? RGB(167, 139, 250) : RGB(148, 163, 184));
     rife_draw_text_u8(plat->hdc_mem, (int)(ww - 88.0f), (int)(wh - 14.0f), "Made by Renly");
 
-    // 7.0 流体云后台任务中心内容 (GDI 文字与图标)
+    // 7.0 流体云后台任务内容渲染 (GDI 文字与图标)
     if (plat->drawer_anim < 0.99f) {
         if (plat->cloud_anim < 0.25f && bg_count > 0) {
-            // 静止胶囊模式：在呼吸灯右侧横向排列正在后台驻留的应用小徽标
-            float start_gx = cloud_x + 24.0f;
+            // 静止胶囊模式：在右侧从右往左横向排列正在后台驻留的应用小徽标
+            float mini_right = cloud_x + cloud_w - 8.0f;
             for (size_t i = 0; i < g_installed_app_count; i++) {
                 ActiveWindow* win = &plat->windows[i];
                 if (!win->inst || win->is_open || !win->is_minimized) continue;
-                rife_draw_procedural_icon_direct(plat->hdc_mem, start_gx, cloud_y + 4.0f, 16.0f,
+                float mini_x = mini_right - 16.0f;
+                float mini_y = cloud_y + (cloud_h - 16.0f) * 0.5f;
+                rife_draw_procedural_icon_direct(plat->hdc_mem, mini_x, mini_y, 16.0f,
                     win->plugin->color_top, win->plugin->color_bot, win->plugin->glyph, NULL, false);
-                start_gx += 20.0f;
+                mini_right -= 20.0f;
             }
         }
         else if (plat->cloud_anim > 0.35f) {
-            // 展开多任务后台中心
-            SelectObject(plat->hdc_mem, plat->hfont_bold);
-            SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
-            char cloud_title[64];
-            snprintf(cloud_title, sizeof(cloud_title), is_zh ? "流体云 · 后台任务 (%d)" : "Fluid Cloud · Tasks (%d)", bg_count);
-            rife_draw_text_u8(plat->hdc_mem, (int)(cloud_x + 16.0f), (int)(cloud_y + 12.0f), cloud_title);
+            // 展开流体云模式：保持 42px 高度与之前一致的流体云布局
+            // 左侧：三色控制钮 (红/黄/绿)
+            // 中间：若无后台任务则显示就绪提示
+            if (bg_count == 0) {
+                SelectObject(plat->hdc_mem, plat->hfont_caption);
+                SetTextColor(plat->hdc_mem, is_obsidian ? RGB(167, 139, 250) : RGB(100, 116, 139));
+                rife_draw_text_u8(plat->hdc_mem, (int)(cloud_x + 86.0f), (int)(cloud_y + 14.0f),
+                    is_zh ? "系统流体云 · 暂无后台任务" : "Fluid Cloud · Ready");
+            }
 
+            // 右侧：从右往左依次挂载后台任务胶囊
             if (bg_count > 0) {
-                // 一键清理按钮 [ 一键清理 ]
-                float clr_btn_x = cloud_x + cloud_w - 86.0f;
-                float clr_btn_y = cloud_y + 10.0f;
-                SetTextColor(plat->hdc_mem, is_obsidian ? RGB(167, 139, 250) : RGB(99, 102, 241));
-                SelectObject(plat->hdc_mem, plat->hfont_sm);
-                rife_draw_text_u8(plat->hdc_mem, (int)(clr_btn_x + 8.0f), (int)(clr_btn_y + 4.0f), is_zh ? "一键清理" : "Clear All");
-
-                int card_i = 0;
+                float cur_right = cloud_x + cloud_w - 10.0f;
                 for (size_t i = 0; i < g_installed_app_count; i++) {
                     ActiveWindow* win = &plat->windows[i];
                     if (!win->inst || win->is_open || !win->is_minimized) continue;
-                    float card_y = cloud_y + 40.0f + (float)card_i * 46.0f;
-                    float card_w = cloud_w - 24.0f;
-                    float card_x = cloud_x + 12.0f;
 
-                    // 应用图标
-                    rife_draw_procedural_icon_direct(plat->hdc_mem, card_x + 8.0f, card_y + 7.0f, 26.0f,
+                    float task_w = 96.0f;
+                    float task_h = 28.0f;
+                    float task_x = cur_right - task_w;
+                    float task_y = cloud_y + (cloud_h - task_h) * 0.5f;
+
+                    // 应用图标 (20x20)
+                    rife_draw_procedural_icon_direct(plat->hdc_mem, task_x + 4.0f, task_y + 4.0f, 20.0f,
                         win->plugin->color_top, win->plugin->color_bot, win->plugin->glyph, NULL, false);
 
                     // 应用名
-                    SelectObject(plat->hdc_mem, plat->hfont_bold);
-                    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(card_x + 42.0f), (int)(card_y + 6.0f), is_zh ? win->plugin->name_zh : win->plugin->name_en);
-
-                    // 状态: 🟢 运行中 · 内存驻留
-                    SelectObject(plat->hdc_mem, plat->hfont_caption);
-                    SetTextColor(plat->hdc_mem, RGB(16, 185, 129));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(card_x + 42.0f), (int)(card_y + 23.0f), is_zh ? "● 运行中 · 内存驻留" : "● Resident in memory");
-
-                    // 恢复与关闭操作符
-                    float res_btn_x = card_x + card_w - 82.0f;
-                    float del_btn_x = card_x + card_w - 28.0f;
-                    float btn_cy = card_y + 9.0f;
-
                     SelectObject(plat->hdc_mem, plat->hfont_sm);
-                    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(96, 165, 250) : RGB(37, 99, 235));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(res_btn_x + 8.0f), (int)(btn_cy + 3.0f), is_zh ? "恢复" : "Resume");
+                    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
+                    rife_draw_text_u8(plat->hdc_mem, (int)(task_x + 28.0f), (int)(task_y + 6.0f),
+                        is_zh ? win->plugin->name_zh : win->plugin->name_en);
 
-                    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(239, 68, 68) : RGB(220, 38, 38));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(del_btn_x + 8.0f), (int)(btn_cy + 3.0f), "×");
+                    // 关闭按钮 ×
+                    bool close_hvr = (mx >= task_x + task_w - 20.0f && mx <= task_x + task_w - 2.0f &&
+                                      my >= task_y && my <= task_y + task_h);
+                    SelectObject(plat->hdc_mem, plat->hfont_sm);
+                    SetTextColor(plat->hdc_mem, close_hvr ? RGB(239, 68, 68) : (is_obsidian ? RGB(156, 163, 175) : RGB(148, 163, 184)));
+                    rife_draw_text_u8(plat->hdc_mem, (int)(task_x + task_w - 15.0f), (int)(task_y + 6.0f), "×");
 
-                    card_i++;
+                    cur_right -= (task_w + 6.0f);
                 }
-            } else {
-                SelectObject(plat->hdc_mem, plat->hfont_sm);
-                SetTextColor(plat->hdc_mem, is_obsidian ? RGB(148, 163, 184) : RGB(100, 116, 139));
-                rife_draw_text_u8(plat->hdc_mem, (int)(cloud_x + 20.0f), (int)(cloud_y + 42.0f),
-                    is_zh ? "暂无后台任务 · 点击应用窗口减号可最小化保活至此" : "No background tasks · Minimize apps to tuck here");
+
+                if (bg_count >= 2) {
+                    float clr_w = 44.0f;
+                    float clr_h = 28.0f;
+                    float clr_x = cur_right - clr_w;
+                    float clr_y = cloud_y + (cloud_h - clr_h) * 0.5f;
+                    bool is_clr_hvr = (mx >= clr_x && mx <= clr_x + clr_w && my >= clr_y && my <= clr_y + clr_h);
+                    SelectObject(plat->hdc_mem, plat->hfont_caption);
+                    SetTextColor(plat->hdc_mem, is_clr_hvr ? (is_obsidian ? RGB(248, 113, 113) : RGB(220, 38, 38)) : (is_obsidian ? RGB(196, 181, 253) : RGB(99, 102, 241)));
+                    rife_draw_text_u8(plat->hdc_mem, (int)(clr_x + 10.0f), (int)(clr_y + 7.0f), is_zh ? "清理" : "Clear");
+                }
             }
         }
     }
@@ -1964,11 +1990,20 @@ LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
         if (t) return HTTOP;
         if (u) return HTBOTTOM;
 
-        float col_size = 22.0f;
-        float exp_w = (float)plat->win_width * 0.50f;
-        if (exp_w < 300.0f) exp_w = 300.0f;
+        int bg_cnt = 0;
+        for (size_t i = 0; i < g_installed_app_count; i++) {
+            if (plat->windows[i].inst && !plat->windows[i].is_open && plat->windows[i].is_minimized) bg_cnt++;
+        }
+        float tasks_w = (bg_cnt > 0) ? ((float)bg_cnt * 96.0f + (float)(bg_cnt - 1) * 6.0f) : 0.0f;
+        if (bg_cnt >= 2) tasks_w += 50.0f;
+        float needed_w = 110.0f + tasks_w + 24.0f;
+        float exp_w = (float)plat->win_width * 0.42f;
+        if (exp_w < needed_w) exp_w = needed_w;
+        if (exp_w > (float)plat->win_width - 32.0f) exp_w = (float)plat->win_width - 32.0f;
+        float col_size = (bg_cnt > 0) ? (32.0f + (float)bg_cnt * 22.0f + 4.0f) : 22.0f;
+        float col_h = (bg_cnt > 0) ? 24.0f : 22.0f;
         float cur_cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
-        float cur_cloud_h = rife_lerpf(col_size, 42.0f, plat->cloud_anim);
+        float cur_cloud_h = rife_lerpf(col_h, 42.0f, plat->cloud_anim);
         float cur_cloud_x = ((float)plat->win_width - cur_cloud_w) * 0.5f;
 
         if (pt.y >= 6 && pt.y <= 10 + cur_cloud_h + 4 && pt.x >= cur_cloud_x - 4 && pt.x <= cur_cloud_x + cur_cloud_w + 4) {
@@ -2521,18 +2556,24 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
 
     // 7. 点击调度与分发
     if (is_focused && input->mouse_pressed[0]) {
-        // A. 顶部流体云自身点击 (后台任务中心)
+        // A. 顶部流体云自身点击 (经典 42px 横向流体云)
         int bg_count = 0;
         for (size_t k = 0; k < g_installed_app_count; k++) {
             if (plat->windows[k].inst && !plat->windows[k].is_open && plat->windows[k].is_minimized) {
                 bg_count++;
             }
         }
-        float col_size = (bg_count > 0) ? (24.0f + (float)bg_count * 20.0f + 6.0f) : 22.0f;
-        float col_h = (bg_count > 0) ? 24.0f : 22.0f;
+        float tasks_w = (bg_count > 0) ? ((float)bg_count * 96.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
+        if (bg_count >= 2) tasks_w += 50.0f;
+        float needed_w = 110.0f + tasks_w + 24.0f;
         float exp_w = ww * 0.42f;
-        if (exp_w < 340.0f) exp_w = 340.0f;
-        float exp_h = (bg_count > 0) ? (48.0f + (float)bg_count * 46.0f + 12.0f) : 74.0f;
+        if (exp_w < needed_w) exp_w = needed_w;
+        if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
+
+        float col_size = (bg_count > 0) ? (32.0f + (float)bg_count * 22.0f + 4.0f) : 22.0f;
+        float col_h = (bg_count > 0) ? 24.0f : 22.0f;
+        float exp_h = 42.0f; // 始终固定 42px 高度！
+
         float cur_cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
         float cur_cloud_h = rife_lerpf(col_h, exp_h, plat->cloud_anim);
         float cur_cloud_x = (ww - cur_cloud_w) * 0.5f;
@@ -2540,40 +2581,38 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
 
         if (mx >= cur_cloud_x && mx <= cur_cloud_x + cur_cloud_w && my >= cur_cloud_y && my <= cur_cloud_y + cur_cloud_h) {
             if (plat->cloud_expanded) {
-                // 1. 点击右上角 [ 一键清理 ]
-                if (bg_count > 0 && mx >= cur_cloud_x + cur_cloud_w - 90.0f && mx <= cur_cloud_x + cur_cloud_w - 6.0f &&
-                    my >= cur_cloud_y + 6.0f && my <= cur_cloud_y + 34.0f) {
-                    for (size_t k = 0; k < g_installed_app_count; k++) {
-                        ActiveWindow* win_k = &plat->windows[k];
-                        if (win_k->inst && !win_k->is_open && win_k->is_minimized) {
-                            if (win_k->plugin && win_k->plugin->destroy) {
-                                win_k->plugin->destroy(win_k->inst);
-                            }
-                            win_k->inst = NULL;
-                            win_k->is_minimized = false;
-                        }
-                    }
-                    plat->absorption_ripple_t = 1.0f;
-                    plat->cloud_expanded = false;
-                    rife_request_redraw(core);
+                // 1. 左侧三色控制圆钮点击 (与之前流体云完全一致)
+                if (mx >= cur_cloud_x + 14.0f && mx <= cur_cloud_x + 34.0f) {
+                    set_system_taskbar_visible(true);
+                    core->running = false;
+                    DestroyWindow(plat->hwnd);
+                    return;
+                }
+                if (mx >= cur_cloud_x + 35.0f && mx <= cur_cloud_x + 54.0f) {
+                    set_system_taskbar_visible(true);
+                    ShowWindow(plat->hwnd, SW_MINIMIZE);
+                    return;
+                }
+                if (mx >= cur_cloud_x + 55.0f && mx <= cur_cloud_x + 75.0f) {
+                    toggle_immersion_fullscreen(plat);
                     return;
                 }
 
-                // 2. 点击后台任务卡片
-                if (bg_count > 0 && my >= cur_cloud_y + 38.0f) {
-                    int card_i = 0;
+                // 2. 右侧后台任务点击 (从右往左依次判定)
+                if (bg_count > 0) {
+                    float cur_right = cur_cloud_x + cur_cloud_w - 10.0f;
                     for (size_t k = 0; k < g_installed_app_count; k++) {
                         ActiveWindow* win_k = &plat->windows[k];
                         if (!win_k->inst || win_k->is_open || !win_k->is_minimized) continue;
-                        float card_y = cur_cloud_y + 40.0f + (float)card_i * 46.0f;
-                        float card_w = cur_cloud_w - 24.0f;
-                        float card_x = cur_cloud_x + 12.0f;
-                        float card_h = 40.0f;
 
-                        if (mx >= card_x && mx <= card_x + card_w && my >= card_y && my <= card_y + card_h) {
+                        float task_w = 96.0f;
+                        float task_h = 28.0f;
+                        float task_x = cur_right - task_w;
+                        float task_y = cur_cloud_y + (cur_cloud_h - task_h) * 0.5f;
+
+                        if (mx >= task_x && mx <= task_x + task_w && my >= task_y && my <= task_y + task_h) {
                             // 单个卡片点击 [ × ] 结束任务并物理回收内存
-                            float del_btn_x = card_x + card_w - 32.0f;
-                            if (mx >= del_btn_x - 4.0f && mx <= del_btn_x + 24.0f) {
+                            if (mx >= task_x + task_w - 20.0f) {
                                 if (win_k->plugin && win_k->plugin->destroy) {
                                     win_k->plugin->destroy(win_k->inst);
                                 }
@@ -2599,7 +2638,32 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                             rife_request_redraw(core);
                             return;
                         }
-                        card_i++;
+
+                        cur_right -= (task_w + 6.0f);
+                    }
+
+                    // 3. 点击一键清理 (当 >= 2 个任务时)
+                    if (bg_count >= 2) {
+                        float clr_w = 44.0f;
+                        float clr_h = 28.0f;
+                        float clr_x = cur_right - clr_w;
+                        float clr_y = cur_cloud_y + (cur_cloud_h - clr_h) * 0.5f;
+                        if (mx >= clr_x && mx <= clr_x + clr_w && my >= clr_y && my <= clr_y + clr_h) {
+                            for (size_t k = 0; k < g_installed_app_count; k++) {
+                                ActiveWindow* win_k = &plat->windows[k];
+                                if (win_k->inst && !win_k->is_open && win_k->is_minimized) {
+                                    if (win_k->plugin && win_k->plugin->destroy) {
+                                        win_k->plugin->destroy(win_k->inst);
+                                    }
+                                    win_k->inst = NULL;
+                                    win_k->is_minimized = false;
+                                }
+                            }
+                            plat->absorption_ripple_t = 1.0f;
+                            plat->cloud_expanded = false;
+                            rife_request_redraw(core);
+                            return;
+                        }
                     }
                 }
 
