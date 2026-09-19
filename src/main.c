@@ -101,6 +101,12 @@ typedef struct {
 static Win32Platform* s_global_plat = NULL;
 static RifeCore* s_global_core = NULL;
 
+// 强制操作系统紧凑进程堆并回收未使用的物理工作集页 (OS Working Set Trim)
+static inline void rife_reclaim_physical_memory(void) {
+    HeapCompact(GetProcessHeap(), 0);
+    SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
+}
+
 void rife_open_app_by_id(const char* app_id) {
     if (!s_global_plat || !s_global_core || !app_id) return;
     for (size_t i = 0; i < g_installed_app_count; i++) {
@@ -2464,6 +2470,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                     win->plugin->destroy(win->inst);
                 }
                 win->inst = NULL;
+                rife_reclaim_physical_memory();
             }
             if (plat->active_win_idx == (int)i) plat->active_win_idx = -1;
             plat->absorption_ripple_t = 1.0f; // 触发微球吞噬光子扩散波
@@ -2702,6 +2709,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                                 win_k->is_minimized = false;
                                 plat->preview_win_idx = -1;
                                 plat->absorption_ripple_t = 1.0f;
+                                rife_reclaim_physical_memory();
                                 rife_request_redraw(core);
                                 return;
                             }
@@ -2746,6 +2754,7 @@ void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* inp
                             plat->preview_win_idx = -1;
                             plat->absorption_ripple_t = 1.0f;
                             plat->cloud_expanded = false;
+                            rife_reclaim_physical_memory();
                             rife_request_redraw(core);
                             return;
                         }
@@ -2979,11 +2988,19 @@ int main(void) {
         return 1;
     }
 
+    int initial_trim_frames = 0;
     while (core.running) {
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+
+        if (initial_trim_frames < 30) {
+            initial_trim_frames++;
+            if (initial_trim_frames == 30) {
+                rife_reclaim_physical_memory();
+            }
         }
 
         RifeSystemConfig* cfg = rife_get_system_config();
