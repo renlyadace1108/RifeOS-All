@@ -3,6 +3,7 @@
 #include "app_manifest.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 typedef struct {
@@ -90,7 +91,7 @@ static inline void draw_row_header(RifeCore* core, float card_x, float row_y, co
     rife_draw_text_font(core, card_x + 16.0f, row_y + 27.0f, subtitle, s_col, 3);
 }
 
-static void settings_update(void* inst, RifeCore* core, const RifeInput* input, float client_w, float client_h) {
+static void settings_update_internal(void* inst, RifeCore* core, const RifeInput* input, float client_w, float client_h) {
     (void)client_w; (void)client_h;
     SettingsState* state = (SettingsState*)inst;
     if (!state || !input->mouse_pressed[0]) return;
@@ -337,6 +338,17 @@ static void settings_update(void* inst, RifeCore* core, const RifeInput* input, 
             rife_request_redraw(core);
             return;
         }
+    }
+}
+
+static void settings_update(void* inst, RifeCore* core, const RifeInput* input, float client_w, float client_h) {
+    RifeSystemConfig* cfg = rife_get_system_config();
+    RifeSystemConfig prev_cfg = *cfg;
+
+    settings_update_internal(inst, core, input, client_w, client_h);
+
+    if (memcmp(&prev_cfg, cfg, sizeof(RifeSystemConfig)) != 0) {
+        rife_save_system_config();
     }
 }
 

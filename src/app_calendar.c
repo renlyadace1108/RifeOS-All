@@ -264,8 +264,50 @@ static void init_default_tags(CalendarState* state) {
     state->event_count = 0; // 干净初始状态：绝不注入假测试数据
 }
 
+static void get_rtodo_storage_path(char* out_path, size_t max_len) {
+    // 1. 优先检查当前运行目录是否存在现有的 rtodo_data.bin (便携模式)
+    FILE* test_fp = fopen("rtodo_data.bin", "rb");
+    if (test_fp) {
+        fclose(test_fp);
+        snprintf(out_path, max_len, "rtodo_data.bin");
+        return;
+    }
+
+    char exe_path[MAX_PATH] = { 0 };
+    if (GetModuleFileNameA(NULL, exe_path, MAX_PATH) > 0) {
+        char* last_slash = strrchr(exe_path, '\\');
+        if (last_slash) {
+            *last_slash = '\0';
+            char exe_bin[MAX_PATH];
+            snprintf(exe_bin, sizeof(exe_bin), "%s\\rtodo_data.bin", exe_path);
+            FILE* exe_fp = fopen(exe_bin, "rb");
+            if (exe_fp) {
+                fclose(exe_fp);
+                snprintf(out_path, max_len, "%s", exe_bin);
+                return;
+            }
+        }
+    }
+
+    // 2. 采用标准的 Windows %APPDATA%\RifeOS 目录 (永久稳定持久化，权限安全，更新不丢失)
+    char appdata[MAX_PATH] = { 0 };
+    DWORD len = GetEnvironmentVariableA("APPDATA", appdata, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        char rife_dir[MAX_PATH];
+        snprintf(rife_dir, sizeof(rife_dir), "%s\\RifeOS", appdata);
+        CreateDirectoryA(rife_dir, NULL);
+        snprintf(out_path, max_len, "%s\\rtodo_data.bin", rife_dir);
+        return;
+    }
+
+    // 3. 兜底当前相对目录
+    snprintf(out_path, max_len, "rtodo_data.bin");
+}
+
 static void save_calendar_data(const CalendarState* state) {
-    FILE* fp = fopen("rtodo_data.bin", "wb");
+    char path[MAX_PATH];
+    get_rtodo_storage_path(path, sizeof(path));
+    FILE* fp = fopen(path, "wb");
     if (!fp) return;
     RtodoStorage store;
     memset(&store, 0, sizeof(RtodoStorage));
@@ -286,7 +328,9 @@ static void save_calendar_data(const CalendarState* state) {
 }
 
 static void load_calendar_data(CalendarState* state) {
-    FILE* fp = fopen("rtodo_data.bin", "rb");
+    char path[MAX_PATH];
+    get_rtodo_storage_path(path, sizeof(path));
+    FILE* fp = fopen(path, "rb");
     if (!fp) {
         init_default_tags(state);
         return;
@@ -301,7 +345,7 @@ static void load_calendar_data(CalendarState* state) {
         state->event_count = store.event_count;
         if (state->event_count > CAL_MAX_EVENTS) state->event_count = CAL_MAX_EVENTS;
         if (state->event_count > 0) {
-            memcpy(state->events, store.events, sizeof(CalendarEvent) * store.event_count);
+            memcpy(state->events, store.events, sizeof(CalendarEvent) * state->event_count);
         }
     } else {
         init_default_tags(state);

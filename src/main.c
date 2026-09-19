@@ -2288,6 +2288,7 @@ void desktop_launcher_shutdown(RifeApp* self, RifeCore* core) {
 
 int main(void) {
     timeBeginPeriod(1);
+    rife_load_system_config();
     static RifeCore core;
     static Win32Platform plat;
 

@@ -35,3 +35,57 @@ static RifeSystemConfig g_system_config = {
 RifeSystemConfig* rife_get_system_config(void) {
     return &g_system_config;
 }
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <stdio.h>
+
+#define RIFE_CONFIG_MAGIC 0x43464947 // "CFIG"
+#define RIFE_CONFIG_VERSION 1
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    RifeSystemConfig config;
+} RifeConfigStorage;
+
+static void get_system_config_path(char* out_path, size_t max_len) {
+    char appdata[MAX_PATH] = { 0 };
+    DWORD len = GetEnvironmentVariableA("APPDATA", appdata, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        char rife_dir[MAX_PATH];
+        snprintf(rife_dir, sizeof(rife_dir), "%s\\RifeOS", appdata);
+        CreateDirectoryA(rife_dir, NULL);
+        snprintf(out_path, max_len, "%s\\system_config.bin", rife_dir);
+        return;
+    }
+    snprintf(out_path, max_len, "system_config.bin");
+}
+
+void rife_save_system_config(void) {
+    char path[MAX_PATH];
+    get_system_config_path(path, sizeof(path));
+    FILE* fp = fopen(path, "wb");
+    if (!fp) return;
+    RifeConfigStorage store;
+    store.magic = RIFE_CONFIG_MAGIC;
+    store.version = RIFE_CONFIG_VERSION;
+    store.config = g_system_config;
+    fwrite(&store, sizeof(RifeConfigStorage), 1, fp);
+    fclose(fp);
+}
+
+void rife_load_system_config(void) {
+    char path[MAX_PATH];
+    get_system_config_path(path, sizeof(path));
+    FILE* fp = fopen(path, "rb");
+    if (!fp) return;
+    RifeConfigStorage store;
+    if (fread(&store, sizeof(RifeConfigStorage), 1, fp) == 1 &&
+        store.magic == RIFE_CONFIG_MAGIC && store.version == RIFE_CONFIG_VERSION) {
+        g_system_config = store.config;
+    }
+    fclose(fp);
+}
