@@ -416,12 +416,12 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     RifeSystemConfig* cfg = rife_get_system_config();
     bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
 
-    uint32_t col_txt_main = is_dark ? 0xE8EAEDFF : 0x202124FF;
-    uint32_t col_txt_sub  = is_dark ? 0x9AA0A6FF : 0x5F6368FF;
-    uint32_t col_txt_mute = is_dark ? 0x80868BFF : 0x80868BFF;
-    uint32_t col_border   = is_dark ? 0x3C4043FF : 0xDADCE0FF;
-    uint32_t col_card_bg  = is_dark ? 0x1E1F22FF : 0xFFFFFFFF;
-    uint32_t col_blue     = is_dark ? 0x8AB4F8FF : 0x1A73E8FF;
+    uint32_t col_txt_main = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
+    uint32_t col_txt_sub  = is_dark ? 0xCBD5E1FF : 0x334155FF;
+    uint32_t col_txt_mute = is_dark ? 0x94A3B8FF : 0x64748BFF;
+    uint32_t col_border   = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
+    uint32_t col_card_bg  = is_dark ? 0x14151DFF : 0xFFFFFFFF;
+    uint32_t col_blue     = is_dark ? 0x6366F1FF : 0x4F46E5FF;
 
     ClockAnalytics an;
     clock_compute_analytics(state, &an);
@@ -429,37 +429,37 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     // ---------------------------------------------------------
     // 1. 顶栏 (Top Bar: 44px)
     // ---------------------------------------------------------
-    rife_draw_rect(core, client_x, client_y, client_w, 44.0f, is_dark ? 0x181A1FFF : 0xFFFFFFFF);
+    rife_draw_rect(core, client_x, client_y, client_w, 44.0f, is_dark ? 0x0E0F14FF : 0xFFFFFFFF);
     rife_draw_rect(core, client_x, client_y + 43.0f, client_w, 1.0f, col_border);
 
     // 应用标题与图标
     rife_draw_round_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, 6.0f, col_blue, 0);
-    rife_draw_text_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, "Rc", 0xFFFFFFFF, 3, 0);
-    rife_draw_text_font(core, client_x + 48.0f, client_y + 13.0f, "Rclock 时钟图", col_txt_main, 5);
+    rife_draw_text_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, "Rc", 0xFFFFFFFF, 5, 0);
+    rife_draw_text_font(core, client_x + 48.0f, client_y + 13.0f, "Antigravity 极简时钟", col_txt_main, 1);
 
     // 日期切换器 [<] [ 今天 ] [>]
-    rife_draw_round_rect(core, client_x + 160.0f, client_y + 8.0f, 26.0f, 26.0f, 13.0f, is_dark ? 0x202124FF : 0xF1F3F4FF, col_border);
-    rife_draw_text_rect(core, client_x + 160.0f, client_y + 8.0f, 26.0f, 26.0f, "<", col_txt_main, 3, 0);
+    rife_draw_round_rect(core, client_x + 190.0f, client_y + 9.0f, 26.0f, 26.0f, 5.0f, is_dark ? 0x161722FF : 0xF1F5F9FF, col_border);
+    rife_draw_text_rect(core, client_x + 190.0f, client_y + 9.0f, 26.0f, 26.0f, "<", col_txt_main, 3, 0);
 
     bool is_today = clock_is_today(state);
-    uint32_t today_btn_bg = is_today ? (is_dark ? 0x004A77FF : 0xE8F0FEFF) : (is_dark ? 0x202124FF : 0xF1F3F4FF);
+    uint32_t today_btn_bg = is_today ? (is_dark ? 0x1E202BFF : 0xEEF2FFFF) : (is_dark ? 0x161722FF : 0xF1F5F9FF);
     uint32_t today_btn_txt = is_today ? col_blue : col_txt_main;
-    rife_draw_round_rect(core, client_x + 192.0f, client_y + 8.0f, 62.0f, 26.0f, 13.0f, today_btn_bg, is_today ? 0 : col_border);
-    rife_draw_text_rect(core, client_x + 192.0f, client_y + 8.0f, 62.0f, 26.0f, "今天", today_btn_txt, 3, 0);
+    rife_draw_round_rect(core, client_x + 222.0f, client_y + 9.0f, 62.0f, 26.0f, 5.0f, today_btn_bg, is_today ? (is_dark ? 0x313448FF : 0xC7D2FEFF) : col_border);
+    rife_draw_text_rect(core, client_x + 222.0f, client_y + 9.0f, 62.0f, 26.0f, "今天", today_btn_txt, 3, 0);
 
-    rife_draw_round_rect(core, client_x + 260.0f, client_y + 8.0f, 26.0f, 26.0f, 13.0f, is_dark ? 0x202124FF : 0xF1F3F4FF, col_border);
-    rife_draw_text_rect(core, client_x + 260.0f, client_y + 8.0f, 26.0f, 26.0f, ">", col_txt_main, 3, 0);
+    rife_draw_round_rect(core, client_x + 290.0f, client_y + 9.0f, 26.0f, 26.0f, 5.0f, is_dark ? 0x161722FF : 0xF1F5F9FF, col_border);
+    rife_draw_text_rect(core, client_x + 290.0f, client_y + 9.0f, 26.0f, 26.0f, ">", col_txt_main, 3, 0);
 
     // 日期标题
     char date_buf[64];
     int dow = clock_get_day_of_week(state->view_year, state->view_month, state->view_day);
     snprintf(date_buf, sizeof(date_buf), "%d年%d月%d日 %s", state->view_year, state->view_month, state->view_day, clock_weekday_names[dow]);
-    rife_draw_text_font(core, client_x + 296.0f, client_y + 14.0f, date_buf, col_txt_sub, 3);
+    rife_draw_text_font(core, client_x + 326.0f, client_y + 14.0f, date_buf, col_txt_sub, 3);
 
     // 右侧制式切换胶囊 [ 24小时制 ]
     float mode_btn_x = client_x + client_w - 116.0f;
-    rife_draw_round_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, 13.0f, is_dark ? 0x004A77FF : 0xE8F0FEFF, 0);
-    rife_draw_text_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, (state->dial_mode == CLOCK_DIAL_24H) ? "24小时制" : "12小时制", col_blue, 3, 0);
+    rife_draw_round_rect(core, mode_btn_x, client_y + 9.0f, 100.0f, 26.0f, 5.0f, is_dark ? 0x1E202BFF : 0xEEF2FFFF, is_dark ? 0x313448FF : 0xC7D2FEFF);
+    rife_draw_text_rect(core, mode_btn_x, client_y + 9.0f, 100.0f, 26.0f, (state->dial_mode == CLOCK_DIAL_24H) ? "24小时制" : "12小时制", col_blue, 3, 0);
 
     // ---------------------------------------------------------
     // 2. 左侧圆形时钟图 (Radial Clock Dial)

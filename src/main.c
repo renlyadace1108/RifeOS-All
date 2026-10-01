@@ -114,31 +114,42 @@ static void update_system_fonts(AppContext* app, FontScaleType scale) {
     if (scale == FONT_SCALE_125) factor = 1.20f;
     else if (scale == FONT_SCALE_150) factor = 1.40f;
 
-    wchar_t font_face[LF_FACESIZE] = L"Microsoft YaHei UI";
-    NONCLIENTMETRICSW ncm;
-    memset(&ncm, 0, sizeof(NONCLIENTMETRICSW));
-    ncm.cbSize = sizeof(NONCLIENTMETRICSW);
-    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICSW), &ncm, 0)) {
-        if (ncm.lfMessageFont.lfFaceName[0] != L'\0') {
-            wcsncpy_s(font_face, LF_FACESIZE, ncm.lfMessageFont.lfFaceName, _TRUNCATE);
+    // Antigravity 极致字体渲染：优先 Segoe UI Variable Text (Windows 11)，回退 Segoe UI / Microsoft YaHei UI
+    // 使用 ANTIALIASED_QUALITY（纯灰度亚像素平滑，彻底消除 ClearType 杂色彩边与笔画模糊破损）
+    wchar_t font_face[LF_FACESIZE] = L"Segoe UI Variable Text";
+    HDC hdc_check = GetDC(NULL);
+    if (hdc_check) {
+        HFONT hf_chk = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+        if (hf_chk) {
+            SelectObject(hdc_check, hf_chk);
+            wchar_t actual_face[LF_FACESIZE] = { 0 };
+            GetTextFaceW(hdc_check, LF_FACESIZE, actual_face);
+            DeleteObject(hf_chk);
+            if (_wcsicmp(actual_face, L"Segoe UI Variable Text") != 0 && _wcsicmp(actual_face, L"Segoe UI") != 0) {
+                wcsncpy_s(font_face, LF_FACESIZE, L"Microsoft YaHei UI", _TRUNCATE);
+            }
         }
+        ReleaseDC(NULL, hdc_check);
     }
 
-    int s_display = -(int)(21 * factor + 0.5f);
-    int s_panel   = -(int)(17 * factor + 0.5f);
-    int s_title   = -(int)(15 * factor + 0.5f);
-    int s_body    = -(int)(13 * factor + 0.5f);
-    int s_bold    = -(int)(13 * factor + 0.5f);
-    int s_sm      = -(int)(12 * factor + 0.5f);
-    int s_cap     = -(int)(11 * factor + 0.5f);
+    // Antigravity 专业级字阶梯度（清晰易读，拒绝极小模糊字号）
+    int s_display = -(int)(24 * factor + 0.5f);
+    int s_panel   = -(int)(18 * factor + 0.5f);
+    int s_title   = -(int)(16 * factor + 0.5f);
+    int s_body    = -(int)(14 * factor + 0.5f);
+    int s_bold    = -(int)(14 * factor + 0.5f);
+    int s_sm      = -(int)(13 * factor + 0.5f);
+    int s_cap     = -(int)(12 * factor + 0.5f);
 
-    app->hfont_display     = CreateFontW(s_display, 0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    app->hfont_panel_title = CreateFontW(s_panel,   0, 0, 0, FW_NORMAL,   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    app->hfont_title       = CreateFontW(s_title,   0, 0, 0, FW_NORMAL,   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    app->hfont_body        = CreateFontW(s_body,    0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    app->hfont_bold        = CreateFontW(s_bold,    0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    app->hfont_sm          = CreateFontW(s_sm,      0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    app->hfont_caption     = CreateFontW(s_cap,     0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    DWORD quality = ANTIALIASED_QUALITY;
+
+    app->hfont_display     = CreateFontW(s_display, 0, 0, 0, FW_BOLD,     FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, quality, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_panel_title = CreateFontW(s_panel,   0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, quality, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_title       = CreateFontW(s_title,   0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, quality, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_body        = CreateFontW(s_body,    0, 0, 0, FW_NORMAL,   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, quality, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_bold        = CreateFontW(s_bold,    0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, quality, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_sm          = CreateFontW(s_sm,      0, 0, 0, FW_NORMAL,   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, quality, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_caption     = CreateFontW(s_cap,     0, 0, 0, FW_NORMAL,   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, quality, DEFAULT_PITCH | FF_DONTCARE, font_face);
 
     app->current_font_scale = scale;
 }
@@ -702,36 +713,45 @@ static void rife_draw_vector_icon_theme(RifeCore* core, float cx, float cy, bool
     }
 }
 
-// 谷歌经典四色加号矢量图标 (Google 4-Color Plus Procedural Icon)
-static void rife_draw_google_plus(RifeCore* core, float cx, float cy, float span, float thickness) {
-    float half = span * 0.5f;
-    float rad = thickness * 0.5f;
-    // 顶部垂直臂：Google 品牌蓝 #1A73E8
-    rife_draw_line(core, cx, cy, cx, cy - half, thickness, 0x1A73E8FF);
-    // 左侧水平臂：Google 珊瑚红 #EA4335
-    rife_draw_line(core, cx, cy, cx - half, cy, thickness, 0xEA4335FF);
-    // 右侧水平臂：Google 琥珀黄 #FBBC04
-    rife_draw_line(core, cx, cy, cx + half, cy, thickness, 0xFBBC04FF);
-    // 底部垂直臂：Google 翡翠绿 #34A853
-    rife_draw_line(core, cx, cy, cx, cy + half, thickness, 0x34A853FF);
-    // 中心平滑过渡圆点
-    rife_draw_circle(core, cx, cy, rad, 0x1A73E8FF, 0);
+// Antigravity 标志性量子星芒徽标 (Antigravity Procedural Neural Spark)
+static void rife_draw_antigravity_spark(RifeCore* core, float cx, float cy, float sz) {
+    float r = sz * 0.5f;
+    // 外层暗夜高亮圆环底衬
+    rife_draw_circle(core, cx, cy, r + 2.0f, 0x1E1B4B44, 0x6366F133);
+    // 旋转 45 度的超椭圆/菱形晶核
+    rife_draw_round_rect(core, cx - r * 0.65f, cy - r * 0.65f, r * 1.3f, r * 1.3f, r * 0.35f, 0x6366F1FF, 0x818CF8FF);
+    // 内嵌 DeepMind 紫晶微核
+    rife_draw_round_rect(core, cx - r * 0.35f, cy - r * 0.35f, r * 0.7f, r * 0.7f, r * 0.2f, 0x8B5CF6FF, 0xA78BFAFF);
+    // 中心高光聚能节点
+    rife_draw_circle(core, cx, cy, r * 0.18f, 0xFFFFFFFF, 0);
+    // 四向微发丝衍射光针
+    rife_draw_line(core, cx, cy - r * 0.95f, cx, cy - r * 0.45f, 1.2f, 0xC4B5FDFF);
+    rife_draw_line(core, cx, cy + r * 0.45f, cx, cy + r * 0.95f, 1.2f, 0xC4B5FDFF);
+    rife_draw_line(core, cx - r * 0.95f, cy, cx - r * 0.45f, cy, 1.2f, 0xC4B5FDFF);
+    rife_draw_line(core, cx + r * 0.45f, cy, cx + r * 0.95f, cy, 1.2f, 0xC4B5FDFF);
 }
 
-// 现代 Chrome / Material 3 风格窗口控制按钮
+// 纯 C 过程式亚像素加号图标
+static void rife_draw_plus_icon(RifeCore* core, float cx, float cy, float span, float thickness, uint32_t color) {
+    float half = span * 0.5f;
+    rife_draw_line(core, cx, cy - half, cx, cy + half, thickness, color);
+    rife_draw_line(core, cx - half, cy, cx + half, cy, thickness, color);
+}
+
+// 现代 Antigravity / Fluent 风格窗口控制按钮
 static void rife_draw_title_button(RifeCore* core, float bx, float by, float bw, float bh, int btn_type, int hover_state, bool is_max, bool is_dark) {
-    uint32_t col_txt = is_dark ? 0x9AA0A6FF : 0x5F6368FF;
+    uint32_t col_txt = is_dark ? 0x94A3B8FF : 0x64748BFF;
     float cx = bx + bw * 0.5f;
     float cy = by + bh * 0.5f;
 
     if (hover_state == 1) {
         if (btn_type == 2) {
-            rife_draw_round_rect(core, bx, by, bw, bh, 6.0f, 0xEA4335FF, 0x00000000);
+            rife_draw_round_rect(core, bx, by, bw, bh, 5.0f, 0xEF4444FF, 0x00000000);
             col_txt = 0xFFFFFFFF;
         } else {
             uint32_t hov_bg = is_dark ? 0xFFFFFF15 : 0x0000000D;
-            rife_draw_round_rect(core, bx, by, bw, bh, 6.0f, hov_bg, 0x00000000);
-            col_txt = is_dark ? 0xE8EAEDFF : 0x202124FF;
+            rife_draw_round_rect(core, bx, by, bw, bh, 5.0f, hov_bg, 0x00000000);
+            col_txt = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
         }
     }
 
@@ -768,62 +788,60 @@ static void app_render(AppContext* app, RifeCore* core) {
     core->render_tail = NULL;
     core->render_cmd_count = 0;
 
-    // 1. Google Material Design 3 调色板系统 (Material You / Google Workspace)
-    uint32_t bg_main       = is_dark ? 0x181A1FFF : 0xFFFFFFFF; // Google Dark Canvas / Clean Pure White
-    uint32_t bg_side       = is_dark ? 0x121316FF : 0xF8F9FAFF; // Google Dark Sidebar / Google Workspace Neutral Surface
-    uint32_t col_div       = is_dark ? 0x3C4043FF : 0xDADCE0FF; // Google Outline 1px Divider
-    uint32_t txt_title     = is_dark ? 0xE8EAEDFF : 0x202124FF; // Google Charcoal Primary Title
-    uint32_t txt_body      = is_dark ? 0xBDC1C6FF : 0x3C4043FF; // Google Body
-    uint32_t txt_muted     = is_dark ? 0x9AA0A6FF : 0x5F6368FF; // Google Neutral Secondary Gray
-    uint32_t accent_pri    = is_dark ? 0x8AB4F8FF : 0x1A73E8FF; // Google Signature Blue
-    uint32_t container_act = is_dark ? 0x004A77FF : 0xE8F0FEFF; // M3 Secondary Container (Active Navigation Pill)
-    uint32_t container_txt = is_dark ? 0xD3E3FDFF : 0x1A73E8FF; // Active Pill Text / Icon
+    // 1. Antigravity 极致暗黑深空与开发态调色板 (Deep Cosmic Obsidian & Slate)
+    uint32_t bg_main       = is_dark ? 0x0A0B0EFF : 0xFFFFFFFF; // Antigravity Dark Canvas / Clean Pure White
+    uint32_t bg_side       = is_dark ? 0x101116FF : 0xF8F9FAFF; // Antigravity Dark Sidebar / Light Surface
+    uint32_t col_div       = is_dark ? 0x1E202BFF : 0xE2E8F0FF; // 1px Subtle Slate Divider
+    uint32_t txt_title     = is_dark ? 0xF8FAFCFF : 0x0F172AFF; // Crisp Pure White / Deep Slate Title
+    uint32_t txt_body      = is_dark ? 0xCBD5E1FF : 0x334155FF; // Slate Body Text
+    uint32_t txt_muted     = is_dark ? 0x94A3B8FF : 0x64748BFF; // Slate Muted Secondary Gray
+    uint32_t accent_pri    = is_dark ? 0x6366F1FF : 0x4F46E5FF; // Antigravity Electric Indigo
 
     // 2. 基础底板与侧边栏结构
     rife_draw_rect(core, 0.0f, 0.0f, ww, wh, bg_main);
     rife_draw_rect(core, 0.0f, 0.0f, SIDEBAR_WIDTH, wh, bg_side);
     rife_draw_rect(core, SIDEBAR_WIDTH - 1.0f, 0.0f, 1.0f, wh, col_div);
 
-    // 3. 侧边栏品牌区域 (Google Workspace Identity)
+    // 3. 侧边栏品牌区域 (Antigravity Workspace Identity)
     float logo_x = 16.0f;
-    float logo_y = 12.0f;
-    float logo_sz = 28.0f;
-    rife_draw_round_rect(core, logo_x, logo_y, logo_sz, logo_sz, 7.0f, accent_pri, 0);
-    rife_draw_text_rect(core, logo_x, logo_y, logo_sz, logo_sz, "R", 0xFFFFFFFF, 5, 0);
+    float logo_y = 13.0f;
+    float logo_sz = 26.0f;
+    rife_draw_antigravity_spark(core, logo_x + logo_sz * 0.5f, logo_y + logo_sz * 0.5f, logo_sz);
 
     float brand_tx = logo_x + logo_sz + 10.0f;
-    rife_draw_text_font(core, brand_tx, logo_y + 1.0f, "Rife", txt_title, 5);
-    rife_draw_round_rect(core, brand_tx + 36.0f, logo_y + 2.0f, 44.0f, 16.0f, 8.0f, is_dark ? 0x8AB4F822 : 0xE8F0FEFF, is_dark ? 0x8AB4F844 : 0xD2E3FCFF);
-    rife_draw_text_rect(core, brand_tx + 36.0f, logo_y + 2.0f, 44.0f, 16.0f, "WORKSPACE", accent_pri, 4, 0);
-    rife_draw_text_font(core, brand_tx, logo_y + 16.0f, is_zh ? "一体化时间工作台" : "Time Workspace", txt_muted, 4);
+    rife_draw_text_font(core, brand_tx, logo_y - 2.0f, "Antigravity", txt_title, 1);
+    float pro_badge_w = 34.0f;
+    float pro_badge_x = SIDEBAR_WIDTH - 16.0f - pro_badge_w;
+    rife_draw_round_rect(core, pro_badge_x, logo_y - 1.0f, pro_badge_w, 16.0f, 4.0f, is_dark ? 0x1E202BFF : 0xEEF2FFFF, is_dark ? 0x2E3245FF : 0xC7D2FEFF);
+    rife_draw_text_rect(core, pro_badge_x, logo_y - 1.0f, pro_badge_w, 16.0f, "PRO", accent_pri, 4, 0);
+    rife_draw_text_font(core, brand_tx, logo_y + 17.0f, is_zh ? "智能工作台 · C11" : "Agentic OS · C11", txt_muted, 4);
 
     rife_draw_rect(core, 16.0f, 50.0f, SIDEBAR_WIDTH - 32.0f, 1.0f, col_div);
 
-    // 3.5 谷歌标志性 "+ 创建" 悬浮药丸胶囊 (Google "+ Create" Action Button)
-    float create_btn_x = 16.0f;
-    float create_btn_y = 60.0f;
-    float create_btn_w = 142.0f;
-    float create_btn_h = 42.0f;
-    float create_btn_r = 21.0f;
+    // 3.5 Antigravity 核心主操作按钮 (+ 新建待办 / + New Task)
+    float create_btn_x = 12.0f;
+    float create_btn_y = 58.0f;
+    float create_btn_w = SIDEBAR_WIDTH - 24.0f;
+    float create_btn_h = 36.0f;
+    float create_btn_r = 7.0f;
 
-    rife_draw_round_rect(core, create_btn_x, create_btn_y + 1.5f, create_btn_w, create_btn_h, create_btn_r, is_dark ? 0x00000033 : 0x00000010, 0);
-    uint32_t c_btn_bg = is_dark ? (app->hovered_create_btn ? 0x35383FFF : 0x282A30FF)
-                                : (app->hovered_create_btn ? 0xF1F3F4FF : 0xFFFFFFFF);
-    uint32_t c_btn_bd = is_dark ? 0x3C4043FF : 0xDADCE0FF;
+    uint32_t c_btn_bg = is_dark ? (app->hovered_create_btn ? 0x4F46E5FF : 0x6366F1FF)
+                                : (app->hovered_create_btn ? 0x4338CAFF : 0x4F46E5FF);
+    uint32_t c_btn_bd = is_dark ? 0x818CF888 : 0x6366F1AA;
     rife_draw_round_rect(core, create_btn_x, create_btn_y, create_btn_w, create_btn_h, create_btn_r, c_btn_bg, c_btn_bd);
 
-    // 绘制谷歌四色加号矢量图标
-    rife_draw_google_plus(core, create_btn_x + 24.0f, create_btn_y + create_btn_h * 0.5f, 14.0f, 3.0f);
-    // 文本 "创建" / "Create"
-    rife_draw_text_font(core, create_btn_x + 46.0f, create_btn_y + 12.0f, is_zh ? "创建" : "Create", is_dark ? 0xE8EAEDFF : 0x3C4043FF, 5);
+    // 绘制白色亚像素加号图标
+    rife_draw_plus_icon(core, create_btn_x + 22.0f, create_btn_y + create_btn_h * 0.5f, 11.0f, 1.8f, 0xFFFFFFFF);
+    // 文本 "+ 新建待办" / "+ New Task"
+    rife_draw_text_font(core, create_btn_x + 36.0f, create_btn_y + 9.0f, is_zh ? "新建待办事项" : "New Task", 0xFFFFFFFF, 5);
 
-    // 4. 侧边栏导航分组 (Material 3 Navigation Drawer Stadium Capsules)
+    // 4. 侧边栏导航分组 (Modern IDE Activity Bar Items)
     const char* nav_labels_zh[3] = { "多维日程", "极简时钟", "偏好设置" };
     const char* nav_labels_en[3] = { "Schedule", "Clock", "Settings" };
     const char* nav_shortcuts[3] = { "Alt+1", "Alt+2", "Alt+3" };
 
-    float nav_y0 = 114.0f;
-    float nav_item_h = 40.0f;
+    float nav_y0 = 106.0f;
+    float nav_item_h = 36.0f;
     float nav_item_w = SIDEBAR_WIDTH - 24.0f;
     float nav_item_x = 12.0f;
     float nav_gap = 4.0f;
@@ -837,86 +855,84 @@ static void app_render(AppContext* app, RifeCore* core) {
         uint32_t item_text_col;
 
         if (is_active) {
-            // Material 3 椭圆胶囊高亮
-            rife_draw_round_rect(core, nav_item_x, ny, nav_item_w, nav_item_h, 20.0f, container_act, 0);
-            item_icon_col = container_txt;
-            item_text_col = container_txt;
+            // Antigravity 激活项：深石板底色 + 细微内描边 + 左侧 3px 电光紫指示色条
+            uint32_t act_bg = is_dark ? 0x1A1C27FF : 0xEEF2FFFF;
+            uint32_t act_bd = is_dark ? 0x2A2E42FF : 0xC7D2FEFF;
+            rife_draw_round_rect(core, nav_item_x, ny, nav_item_w, nav_item_h, 7.0f, act_bg, act_bd);
+            // 左侧指示条
+            rife_draw_round_rect(core, nav_item_x + 1.5f, ny + 7.0f, 3.0f, nav_item_h - 14.0f, 1.5f, accent_pri, 0);
+
+            item_icon_col = is_dark ? 0x818CF8FF : 0x4F46E5FF;
+            item_text_col = txt_title;
         } else if (is_hover) {
-            rife_draw_round_rect(core, nav_item_x, ny, nav_item_w, nav_item_h, 20.0f, is_dark ? 0xE8EAED0F : 0x2021240A, 0);
-            item_icon_col = txt_title;
+            rife_draw_round_rect(core, nav_item_x, ny, nav_item_w, nav_item_h, 7.0f, is_dark ? 0x161722FF : 0xF1F5F9FF, 0);
+            item_icon_col = is_dark ? 0xC7D2FEFF : 0x475569FF;
             item_text_col = txt_title;
         } else {
             item_icon_col = txt_muted;
             item_text_col = txt_body;
         }
 
-        float icon_cx = nav_item_x + 22.0f;
+        float icon_cx = nav_item_x + 20.0f;
         float icon_cy = ny + nav_item_h * 0.5f;
         if (i == 0)      rife_draw_vector_icon_calendar(core, icon_cx, icon_cy, item_icon_col);
         else if (i == 1) rife_draw_vector_icon_clock(core, icon_cx, icon_cy, item_icon_col);
         else if (i == 2) rife_draw_vector_icon_settings(core, icon_cx, icon_cy, item_icon_col);
 
-        rife_draw_text_font(core, nav_item_x + 38.0f, ny + 12.0f, is_zh ? nav_labels_zh[i] : nav_labels_en[i], item_text_col, is_active ? 5 : 3);
-        rife_draw_text_rect(core, nav_item_x + nav_item_w - 42.0f, ny, 36.0f, nav_item_h, nav_shortcuts[i], is_active ? container_txt : txt_muted, 4, 0);
+        rife_draw_text_font(core, nav_item_x + 36.0f, ny + 9.0f, is_zh ? nav_labels_zh[i] : nav_labels_en[i], item_text_col, is_active ? 5 : 0);
+        // 右侧快捷键 Badge 胶囊
+        rife_draw_round_rect(core, nav_item_x + nav_item_w - 42.0f, ny + 8.0f, 36.0f, 20.0f, 4.0f, is_dark ? 0x12131AFF : 0xE2E8F0FF, is_dark ? 0x222432FF : 0xCBD5E1FF);
+        rife_draw_text_rect(core, nav_item_x + nav_item_w - 42.0f, ny + 8.0f, 36.0f, 20.0f, nav_shortcuts[i], is_active ? accent_pri : txt_muted, 4, 0);
     }
 
-    // 5. 侧边栏底部面板 (Material You Theme Switch & Privacy Signature)
-    float theme_btn_y = wh - 84.0f;
+    // 5. 侧边栏底部面板 (Theme Switch & Privacy Signature)
+    float theme_btn_y = wh - 80.0f;
     float theme_btn_w = nav_item_w;
     float theme_btn_x = nav_item_x;
-    float theme_btn_h = 34.0f;
+    float theme_btn_h = 32.0f;
 
-    rife_draw_round_rect(core, theme_btn_x, theme_btn_y, theme_btn_w, theme_btn_h, 17.0f, is_dark ? 0x202124FF : 0xF1F3F4FF, col_div);
-    rife_draw_vector_icon_theme(core, theme_btn_x + 18.0f, theme_btn_y + theme_btn_h * 0.5f, is_dark, is_dark ? 0xFDD663FF : 0x1A73E8FF);
-    rife_draw_text_font(core, theme_btn_x + 34.0f, theme_btn_y + 10.0f, is_dark ? "深色主题" : "浅色主题", txt_body, 3);
+    rife_draw_round_rect(core, theme_btn_x, theme_btn_y, theme_btn_w, theme_btn_h, 6.0f, is_dark ? 0x151620FF : 0xF1F5F9FF, col_div);
+    rife_draw_vector_icon_theme(core, theme_btn_x + 16.0f, theme_btn_y + theme_btn_h * 0.5f, is_dark, is_dark ? 0xFCD34DFF : 0x4F46E5FF);
+    rife_draw_text_font(core, theme_btn_x + 32.0f, theme_btn_y + 8.0f, is_dark ? "暗黑星空" : "明朗晨曦", txt_body, 3);
 
-    float sw_w = 32.0f, sw_h = 18.0f;
+    float sw_w = 32.0f, sw_h = 16.0f;
     float sw_x = theme_btn_x + theme_btn_w - sw_w - 8.0f;
     float sw_y = theme_btn_y + (theme_btn_h - sw_h) * 0.5f;
-    rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 9.0f, is_dark ? 0x8AB4F8FF : 0xDADCE0FF, 0);
-    float knob_x = is_dark ? (sw_x + sw_w - 15.0f) : (sw_x + 2.0f);
-    rife_draw_circle(core, knob_x + 6.5f, sw_y + 9.0f, 6.5f, is_dark ? 0x00325BFF : 0xFFFFFFFF, 0);
+    rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 8.0f, is_dark ? 0x6366F1FF : 0xCBD5E1FF, 0);
+    float knob_x = is_dark ? (sw_x + sw_w - 14.0f) : (sw_x + 2.0f);
+    rife_draw_circle(core, knob_x + 6.0f, sw_y + 8.0f, 6.0f, 0xFFFFFFFF, 0);
 
-    float stat_y = wh - 44.0f;
-    rife_draw_circle(core, 22.0f, stat_y + 4.0f, 3.0f, 0x34A853FF, 0);
-    rife_draw_text_font(core, 30.0f, stat_y, is_zh ? "Google Material 3 · 纯 C11 微内核" : "Material 3 · Pure C11", txt_muted, 4);
+    float stat_y = wh - 40.0f;
+    rife_draw_circle(core, 20.0f, stat_y + 5.0f, 3.0f, 0x10B981FF, 0);
+    rife_draw_text_font(core, 28.0f, stat_y, is_zh ? "Antigravity · 纯 C11 微内核" : "Antigravity · Pure C11", txt_muted, 4);
 
-    rife_draw_text_rect(core, nav_item_x, wh - 24.0f, nav_item_w, 16.0f, "Rife v1.0 · Renly", txt_muted, 4, 0);
+    rife_draw_text_rect(core, nav_item_x, wh - 22.0f, nav_item_w, 16.0f, "Renly · Zero Allocation", is_dark ? 0x475569FF : 0x94A3B8FF, 4, 0);
 
     // 6. 顶部现代一体化标题栏 (Titlebar: 44px)
     rife_draw_rect(core, SIDEBAR_WIDTH, TITLEBAR_HEIGHT - 1.0f, ww - SIDEBAR_WIDTH, 1.0f, col_div);
 
     // A. 页面面包屑与当前模块定位 (左侧)
-    float bread_x = SIDEBAR_WIDTH + 20.0f;
+    float bread_x = SIDEBAR_WIDTH + 18.0f;
     float bread_y = 12.0f;
     if (app->active_page == PAGE_SCHEDULE) {
-        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "多维日程" : "Schedule", txt_title, 5);
-        rife_draw_text_font(core, bread_x + (is_zh ? 72.0f : 80.0f), bread_y + 1.0f, is_zh ? "· 时间矩阵与待办管理" : "· Matrix & Tasks", txt_muted, 4);
+        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "日程安排" : "Schedule", txt_title, 1);
+        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 84.0f), bread_y + 2.0f, is_zh ? "// 多维矩阵与待办工作流" : "// Matrix & Task Engine", txt_muted, 4);
     } else if (app->active_page == PAGE_CLOCK) {
-        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "极简时钟" : "Clock", txt_title, 5);
-        rife_draw_text_font(core, bread_x + (is_zh ? 72.0f : 60.0f), bread_y + 1.0f, is_zh ? "· 24H 环形流与全天负荷" : "· Radial Flow & Load", txt_muted, 4);
+        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "极简时钟" : "Clock", txt_title, 1);
+        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 64.0f), bread_y + 2.0f, is_zh ? "// 24H 环形流与专注遥测" : "// Radial Chronometer HUD", txt_muted, 4);
     } else if (app->active_page == PAGE_SETTINGS) {
-        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "偏好设置" : "Settings", txt_title, 5);
-        rife_draw_text_font(core, bread_x + (is_zh ? 72.0f : 72.0f), bread_y + 1.0f, is_zh ? "· 视觉风格与系统配置" : "· Aesthetics & Kernel", txt_muted, 4);
+        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "系统偏好" : "Settings", txt_title, 1);
+        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 76.0f), bread_y + 2.0f, is_zh ? "// 调色板与微内核配置" : "// Visuals & Microkernel", txt_muted, 4);
     }
 
-    // B. 中央动态日期标尺 (精致药丸胶囊)
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    const char* wdays_zh[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
-    const char* wdays_en[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-    char date_str[64];
-    if (is_zh) {
-        snprintf(date_str, sizeof(date_str), "%d年%d月%d日 · %s", st.wYear, st.wMonth, st.wDay, wdays_zh[st.wDayOfWeek]);
-    } else {
-        snprintf(date_str, sizeof(date_str), "%s, %d-%02d-%02d", wdays_en[st.wDayOfWeek], st.wYear, st.wMonth, st.wDay);
-    }
-    float date_pill_w = 190.0f;
-    float date_pill_h = 28.0f;
-    float date_pill_x = (SIDEBAR_WIDTH + ww - 130.0f - date_pill_w) * 0.5f;
-    float date_pill_y = (TITLEBAR_HEIGHT - date_pill_h) * 0.5f;
-    rife_draw_round_rect(core, date_pill_x, date_pill_y, date_pill_w, date_pill_h, 14.0f, is_dark ? 0x202124FF : 0xF1F3F4FF, 0);
-    rife_draw_text_rect(core, date_pill_x, date_pill_y, date_pill_w, date_pill_h, date_str, txt_muted, 4, 0);
+    // B. 中央系统遥测胶囊 (Antigravity HUD Telemetry)
+    float badge_w = 210.0f;
+    float badge_h = 26.0f;
+    float badge_x = (SIDEBAR_WIDTH + ww - 130.0f - badge_w) * 0.5f;
+    float badge_y = (TITLEBAR_HEIGHT - badge_h) * 0.5f;
+    rife_draw_round_rect(core, badge_x, badge_y, badge_w, badge_h, 6.0f, is_dark ? 0x14151EFF : 0xF1F5F9FF, is_dark ? 0x222432FF : 0xE2E8F0FF);
+    rife_draw_circle(core, badge_x + 12.0f, badge_y + 13.0f, 3.0f, 0x10B981FF, 0);
+    rife_draw_text_rect(core, badge_x + 22.0f, badge_y, badge_w - 28.0f, badge_h, "RAM <5MB · 0 Heap Churn", is_dark ? 0x94A3B8FF : 0x475569FF, 4, 1);
 
     // C. 右侧原生三态窗口控制按钮 (Min / Max / Close)
     float btn_w = 36.0f;
@@ -1082,9 +1098,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             app->hovered_title_btn = -1;
         }
 
-        // "+ 创建" 悬停检测
+        // "+ 新建待办" 悬停检测
         bool prev_create = app->hovered_create_btn;
-        if (mx >= 16.0f && mx <= 16.0f + 142.0f && my >= 60.0f && my <= 60.0f + 42.0f) {
+        float create_btn_w = SIDEBAR_WIDTH - 24.0f;
+        if (mx >= 12.0f && mx <= 12.0f + create_btn_w && my >= 56.0f && my <= 56.0f + 36.0f) {
             app->hovered_create_btn = true;
         } else {
             app->hovered_create_btn = false;
@@ -1094,8 +1111,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         int prev_nav = app->hovered_nav_idx;
         float nav_item_w = SIDEBAR_WIDTH - 24.0f;
         if (mx >= 12.0f && mx <= 12.0f + nav_item_w) {
-            float nav_y0 = 114.0f;
-            float nav_h = 40.0f;
+            float nav_y0 = 104.0f;
+            float nav_h = 36.0f;
             float nav_gap = 4.0f;
             app->hovered_nav_idx = -1;
             for (int i = 0; i < 3; i++) {
@@ -1178,8 +1195,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
         }
 
-        // 2. 谷歌 "+ 创建" 按钮点击响应
-        if (mx >= 16.0f && mx <= 16.0f + 142.0f && my >= 60.0f && my <= 60.0f + 42.0f) {
+        // 2. Antigravity "+ 新建待办" 按钮点击响应
+        float create_btn_w = SIDEBAR_WIDTH - 24.0f;
+        if (mx >= 12.0f && mx <= 12.0f + create_btn_w && my >= 56.0f && my <= 56.0f + 36.0f) {
             app->active_page = PAGE_SCHEDULE;
             rtodo_open_create_modal(app->calendar_inst);
             rife_reclaim_physical_memory();
@@ -1190,8 +1208,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // 3. 侧边栏导航点击响应
         float nav_item_w = SIDEBAR_WIDTH - 24.0f;
         if (mx >= 12.0f && mx <= 12.0f + nav_item_w) {
-            float nav_y0 = 114.0f;
-            float nav_h = 40.0f;
+            float nav_y0 = 104.0f;
+            float nav_h = 36.0f;
             float nav_gap = 4.0f;
             for (int i = 0; i < 3; i++) {
                 float ny = nav_y0 + (float)i * (nav_h + nav_gap);
@@ -1206,8 +1224,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
 
             // 主题极简切换
-            float theme_btn_y = wh - 84.0f;
-            if (my >= theme_btn_y && my <= theme_btn_y + 34.0f) {
+            float theme_btn_y = wh - 80.0f;
+            if (my >= theme_btn_y && my <= theme_btn_y + 32.0f) {
                 RifeSystemConfig* cfg = rife_get_system_config();
                 cfg->palette = (cfg->palette == PALETTE_OBSIDIAN) ? PALETTE_GEMINI : PALETTE_OBSIDIAN;
                 rife_save_system_config();
@@ -1402,6 +1420,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         EndPaint(hwnd, &ps);
         return 0;
+    }
+
+    case WM_PRINTCLIENT: {
+        HDC hdc = (HDC)wParam;
+        if (app && app->hdc_mem && hdc) {
+            BitBlt(hdc, 0, 0, app->win_width, app->win_height, app->hdc_mem, 0, 0, SRCCOPY);
+            return 0;
+        }
+        break;
     }
 
     case WM_DESTROY: {

@@ -169,12 +169,12 @@ static void sync_system_clock(CalendarState* state) {
 
 
 static const uint32_t s_tag_palette[6] = {
-    0x1A73E8FF, // Google 品牌蓝 (Blue)
-    0x34A853FF, // Google 翡翠绿 (Green)
-    0xEA4335FF, // Google 珊瑚红 (Red)
-    0xFBBC04FF, // Google 琥珀黄 (Yellow)
-    0x9334E6FF, // Google 薰衣紫 (Purple)
-    0x12B5CBFF  // Google 青碧色 (Teal)
+    0x6366F1FF, // Antigravity 电光青紫 (Electric Indigo)
+    0x8B5CF6FF, // DeepMind 深度紫晶 (Violet)
+    0x06B6D4FF, // Cyber 赛博青 (Cyan)
+    0x10B981FF, // Terminal 终端绿 (Emerald)
+    0xF59E0BFF, // Telemetry 琥珀金 (Amber)
+    0xF43F5EFF  // Alert 预警绯红 (Rose)
 };
 
 typedef struct {
@@ -191,14 +191,14 @@ static TagColorStyle get_tag_style(uint32_t bar_color, bool is_dark) {
     uint8_t g = (uint8_t)((bar_color >> 16) & 0xFF);
     uint8_t b = (uint8_t)((bar_color >> 8) & 0xFF);
     if (is_dark) {
-        // Google Dark Mode Event Cards
-        s.bg = ((uint32_t)(r * 0.20f + 16.0f) << 24) | ((uint32_t)(g * 0.20f + 16.0f) << 16) | ((uint32_t)(b * 0.20f + 16.0f) << 8) | 0xFF;
-        s.border = ((uint32_t)(r * 0.35f + 24.0f) << 24) | ((uint32_t)(g * 0.35f + 24.0f) << 16) | ((uint32_t)(b * 0.35f + 24.0f) << 8) | 0xFF;
-        s.text = ((uint32_t)(r * 0.40f + 150.0f) << 24) | ((uint32_t)(g * 0.40f + 150.0f) << 16) | ((uint32_t)(b * 0.40f + 150.0f) << 8) | 0xFF;
+        // Antigravity Dark Mode Event Cards (Deep slate with subtle tint, 1px crisp border)
+        s.bg = ((uint32_t)(r * 0.12f + 16.0f) << 24) | ((uint32_t)(g * 0.12f + 18.0f) << 16) | ((uint32_t)(b * 0.12f + 24.0f) << 8) | 0xFF;
+        s.border = ((uint32_t)(r * 0.25f + 26.0f) << 24) | ((uint32_t)(g * 0.25f + 28.0f) << 16) | ((uint32_t)(b * 0.25f + 38.0f) << 8) | 0xFF;
+        s.text = ((uint32_t)(r * 0.25f + 190.0f) << 24) | ((uint32_t)(g * 0.25f + 195.0f) << 16) | ((uint32_t)(b * 0.25f + 205.0f) << 8) | 0xFF;
     } else {
-        // Google Calendar Light Mode Pastel Cards
-        s.bg = ((uint32_t)(r * 0.12f + 224.0f) << 24) | ((uint32_t)(g * 0.12f + 224.0f) << 16) | ((uint32_t)(b * 0.12f + 224.0f) << 8) | 0xFF;
-        s.border = ((uint32_t)(r * 0.25f + 191.0f) << 24) | ((uint32_t)(g * 0.25f + 191.0f) << 16) | ((uint32_t)(b * 0.25f + 191.0f) << 8) | 0xFF;
+        // Antigravity Light Mode Crisp Cards
+        s.bg = ((uint32_t)(r * 0.10f + 228.0f) << 24) | ((uint32_t)(g * 0.10f + 228.0f) << 16) | ((uint32_t)(b * 0.10f + 228.0f) << 8) | 0xFF;
+        s.border = ((uint32_t)(r * 0.25f + 195.0f) << 24) | ((uint32_t)(g * 0.25f + 195.0f) << 16) | ((uint32_t)(b * 0.25f + 195.0f) << 8) | 0xFF;
         s.text = ((uint32_t)(r * 0.65f) << 24) | ((uint32_t)(g * 0.65f) << 16) | ((uint32_t)(b * 0.65f) << 8) | 0xFF;
     }
     return s;
@@ -545,7 +545,7 @@ static float cal_measure_text_width(const char* text, uint8_t font_id) {
 }
 
 // -------------------------------------------------------------
-// Google Material 3 风格原生按钮组件 (Filled, Tonal, Outlined)
+// Antigravity 现代开发者风格原生按钮组件 (Primary Indigo & Outlined Slate)
 // -------------------------------------------------------------
 static void rife_draw_liquid_glass_button(RifeCore* core, float bx, float by, float bw, float bh, float radius,
                                           const char* text, uint8_t font_id, uint32_t text_color,
@@ -559,31 +559,32 @@ static void rife_draw_liquid_glass_button(RifeCore* core, float bx, float by, fl
     uint32_t txt_col = text_color;
 
     if (is_primary) {
-        // Material 3 Filled Button (Google Blue #1A73E8 / #8AB4F8)
-        uint32_t pri_base = (primary_color != 0) ? primary_color : (is_dark ? 0x8AB4F8FF : 0x1A73E8FF);
+        // Antigravity Primary Button (Electric Indigo #6366F1, subtle glowing border #818CF8)
+        uint32_t pri_base = (primary_color != 0) ? primary_color : (is_dark ? 0x6366F1FF : 0x4F46E5FF);
         if (is_hover) {
-            bg_col = is_dark ? 0xA8C7FAFF : 0x1557B0FF;
+            bg_col = is_dark ? 0x4F46E5FF : 0x4338CAFF;
+            brd_col = is_dark ? 0xA5B4FCFF : 0x6366F1FF;
         } else {
             bg_col = pri_base;
+            brd_col = is_dark ? 0x818CF888 : 0x4F46E588;
         }
-        txt_col = is_dark ? 0x00325BFF : 0xFFFFFFFF;
-        brd_col = 0;
+        txt_col = 0xFFFFFFFF;
     } else {
-        // Material 3 Outlined / Tonal Button (Flat surface, 1px outline)
+        // Antigravity Outlined / Secondary Dev Button (Dark slate, crisp 1px border)
         if (is_dark) {
-            bg_col = is_hover ? 0x2D3035FF : 0x202124FF;
-            brd_col = is_hover ? 0x5E6266FF : 0x3C4043FF;
-            if (txt_col == 0) txt_col = 0xE8EAEDFF;
+            bg_col = is_hover ? 0x1E202BFF : 0x14151DFF;
+            brd_col = is_hover ? 0x3D4155FF : 0x242634FF;
+            if (txt_col == 0) txt_col = 0xF8FAFCFF;
         } else {
-            bg_col = is_hover ? 0xF1F3F4FF : 0xFFFFFFFF;
-            brd_col = is_hover ? 0xBDC1C6FF : 0xDADCE0FF;
-            if (txt_col == 0) txt_col = 0x3C4043FF;
+            bg_col = is_hover ? 0xF1F5F9FF : 0xFFFFFFFF;
+            brd_col = is_hover ? 0xCBD5E1FF : 0xE2E8F0FF;
+            if (txt_col == 0) txt_col = 0x0F172AFF;
         }
     }
 
     rife_draw_round_rect(core, bx, by, bw, bh, radius, bg_col, brd_col);
 
-    // 严格居中排版文字/图标
+    // 居中排版文字/图标
     if (text && text[0] != '\0') {
         rife_draw_text_rect(core, bx, by, bw, bh, text, txt_col, font_id, 0);
     }
@@ -1805,16 +1806,16 @@ static void draw_input_box(RifeCore* core, float x, float y, float w, float h,
                            bool is_dark, uint32_t accent_color, uint32_t border_col,
                            uint32_t text_title, uint32_t text_muted)
 {
-    // Google Material 3 纯净平整输入框
+    // Antigravity 极致深石板输入框 (1px 微边框 + 电光紫聚焦环)
     (void)border_col;
-    uint32_t bg_col = is_dark ? (is_focused ? 0x282A30FF : 0x202124FF) : (is_focused ? 0xFFFFFFFF : 0xF8F9FAFF);
-    uint32_t brd_col = is_focused ? (accent_color != 0 ? accent_color : (is_dark ? 0x8AB4F8FF : 0x1A73E8FF)) : (is_dark ? 0x3C4043FF : 0xDADCE0FF);
+    uint32_t bg_col = is_dark ? (is_focused ? 0x161722FF : 0x0F1016FF) : (is_focused ? 0xFFFFFFFF : 0xF8F9FAFF);
+    uint32_t brd_col = is_focused ? (accent_color != 0 ? accent_color : (is_dark ? 0x6366F1FF : 0x4F46E5FF)) : (is_dark ? 0x242634FF : 0xE2E8F0FF);
     rife_draw_round_rect(core, x, y, w, h, 6.0f, bg_col, brd_col);
 
     float text_y = y + (h - 13.0f) * 0.5f;
     float ph_y = y + (h - 12.0f) * 0.5f;
     float caret_y = y + (h - 14.0f) * 0.5f;
-    uint32_t caret_col = is_dark ? 0x8AB4F8FF : 0x1A73E8FF;
+    uint32_t caret_col = is_dark ? 0x818CF8FF : 0x4F46E5FF;
 
     if (text && text[0] != '\0') {
         rife_draw_text_font(core, x + 10.0f, text_y, text, text_title, 0);
@@ -1831,7 +1832,7 @@ static void draw_input_box(RifeCore* core, float x, float y, float w, float h,
                 rife_draw_rect(core, x + 10.0f, caret_y, 1.5f, 14.0f, caret_col);
             }
             if (placeholder) {
-                rife_draw_text_font(core, x + 14.0f, ph_y, placeholder, is_dark ? 0x9AA0A6FF : 0x80868BFF, 3);
+                rife_draw_text_font(core, x + 14.0f, ph_y, placeholder, is_dark ? 0x94A3B8FF : 0x64748BFF, 3);
             }
         } else {
             if (placeholder) {
@@ -1853,13 +1854,13 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     bool is_zh = (cfg->language == LANG_ZH_CN);
     bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
 
-    // Google Material 3 基础色彩令牌
-    uint32_t bg_main    = is_dark ? 0x181A1FFF : 0xFFFFFFFF;
-    uint32_t bg_sidebar = is_dark ? 0x121316FF : 0xF8F9FAFF;
-    uint32_t border_col = is_dark ? 0x3C4043FF : 0xDADCE0FF;
-    uint32_t text_title = is_dark ? 0xE8EAEDFF : 0x202124FF;
-    uint32_t text_muted = is_dark ? 0x9AA0A6FF : 0x5F6368FF;
-    uint32_t rtodo_blue = is_dark ? 0x8AB4F8FF : 0x1A73E8FF;
+    // Antigravity 极致暗黑深空与开发态调色板
+    uint32_t bg_main    = is_dark ? 0x0A0B0EFF : 0xFFFFFFFF;
+    uint32_t bg_sidebar = is_dark ? 0x101116FF : 0xF8F9FAFF;
+    uint32_t border_col = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
+    uint32_t text_title = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
+    uint32_t text_muted = is_dark ? 0x94A3B8FF : 0x64748BFF;
+    uint32_t rtodo_blue = is_dark ? 0x6366F1FF : 0x4F46E5FF;
 
     if (state->active_field > 0) {
         state->cursor_blink_t += 0.035f;
@@ -1871,7 +1872,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float header_h = 48.0f;
     float sidebar_w = 185.0f;
 
-    // A. 基础容器底色 (Google Workspace 平整双栏)
+    // A. 基础容器底色 (Antigravity 干净双栏)
     rife_draw_rect(core, client_x, client_y, sidebar_w, client_h, bg_sidebar);
     rife_draw_rect(core, client_x + sidebar_w, client_y, client_w - sidebar_w, client_h, bg_main);
     rife_draw_rect(core, client_x + sidebar_w, client_y, 1.0f, client_h, border_col);
@@ -1883,25 +1884,25 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float main_y = client_y + header_h;
     float main_h = client_h - header_h;
 
-    // 1. "今天" 按钮 (58x28, 优雅晶莹微倒角液态玻璃，非今天时高亮提示)
+    // 1. "今天" 按钮 (58x28, 开发者质感按钮，非今天时高亮提示)
     bool is_current_today = (state->view_year == state->cur_year && state->view_month == state->cur_month && state->view_day == state->cur_day);
     float today_btn_x = main_x + 16.0f;
     float today_btn_y = client_y + 10.0f;
     if (!is_current_today) {
-        // 非今天状态：高亮液态水晶蓝微透胶囊，带快捷键提示 (T)
+        // 非今天状态：高亮电光紫胶囊，带快捷键提示 (T)
         rife_draw_liquid_glass_button(core, today_btn_x, today_btn_y, 58.0f, 28.0f, 6.0f, is_zh ? "今天 T" : "Today T", 5, 0xFFFFFFFF, true, rtodo_blue, false, is_dark);
     } else {
         rife_draw_liquid_glass_button(core, today_btn_x, today_btn_y, 54.0f, 28.0f, 6.0f, is_zh ? "今天" : "Today", 0, text_title, false, 0, false, is_dark);
     }
 
-    // 2. 前翻 / 后翻箭头按钮 (液态玻璃)
+    // 2. 前翻 / 后翻箭头按钮
     float nav_x = today_btn_x + 64.0f;
     rife_draw_liquid_glass_button(core, nav_x, today_btn_y, 26.0f, 28.0f, 6.0f, "<", 0, text_title, false, 0, false, is_dark);
 
     float nav_r_x = nav_x + 30.0f;
     rife_draw_liquid_glass_button(core, nav_r_x, today_btn_y, 26.0f, 28.0f, 6.0f, ">", 0, text_title, false, 0, false, is_dark);
 
-    // 3. 当前年月大标题 (18px Normal)
+    // 3. 当前年月大标题 (18px Semibold)
     char title_buf[64];
     static const char* mon_names[13] = { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
     if (is_zh) {
@@ -1911,7 +1912,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     }
     rife_draw_text_rect(core, nav_r_x + 32.0f, today_btn_y, 180.0f, 28.0f, title_buf, text_title, 2, 1);
 
-    // 4. 右侧视图切换三段胶囊 [日] [周] [月] (Google Material 3 Segmented Pills)
+    // 4. 右侧视图切换三段胶囊 [日] [周] [月] (Antigravity Segmented Controls)
     static const CalendarViewMode s_tab_modes[3] = { CAL_VIEW_DAY, CAL_VIEW_WEEK, CAL_VIEW_MONTH };
     const char* view_labels_zh[3] = { "日", "周", "月" };
     const char* view_labels_en[3] = { "Day", "Week", "Month" };
@@ -1920,16 +1921,17 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     float seg_w = 3.0f * seg_item_w + 4.0f;
     float seg_x = client_x + client_w - seg_w - 20.0f;
     float seg_y = today_btn_y;
-    rife_draw_round_rect(core, seg_x, seg_y, seg_w, 28.0f, 14.0f, is_dark ? 0x202124FF : 0xF1F3F4FF, border_col);
+    rife_draw_round_rect(core, seg_x, seg_y, seg_w, 28.0f, 6.0f, is_dark ? 0x12131AFF : 0xF1F5F9FF, border_col);
 
     for (int v = 0; v < 3; v++) {
         float vx = seg_x + 2.0f + (float)v * seg_item_w;
         bool is_act = (state->view_mode == s_tab_modes[v]);
         const char* label = is_zh ? view_labels_zh[v] : view_labels_en[v];
         if (is_act) {
-            uint32_t act_bg = is_dark ? 0x004A77FF : 0xE8F0FEFF;
-            uint32_t act_txt = is_dark ? 0xD3E3FDFF : 0x1A73E8FF;
-            rife_draw_round_rect(core, vx, seg_y + 2.0f, seg_item_w, 24.0f, 12.0f, act_bg, 0);
+            uint32_t act_bg = is_dark ? 0x1E202BFF : 0xEEF2FFFF;
+            uint32_t act_bd = is_dark ? 0x313448FF : 0xC7D2FEFF;
+            uint32_t act_txt = is_dark ? 0xF8FAFCFF : 0x4F46E5FF;
+            rife_draw_round_rect(core, vx, seg_y + 2.0f, seg_item_w, 24.0f, 4.0f, act_bg, act_bd);
             rife_draw_text_rect(core, vx, seg_y, seg_item_w, 28.0f, label, act_txt, 5, 0);
         } else {
             rife_draw_text_rect(core, vx, seg_y, seg_item_w, 28.0f, label, text_muted, 0, 0);
@@ -2079,7 +2081,7 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     }
 
     // D. 右侧主工作区 (周视图 / 日视图 / 月视图)
-    uint32_t grid_line_col = is_dark ? 0x242830FF : 0xEDF2F7FF; // 纯净浅色分割线
+    uint32_t grid_line_col = is_dark ? 0x1A1C27FF : 0xF1F5F9FF; // Antigravity 极致细腻分割线
 
     // ==========================================
     // 视图 1：周视图 (Week View - 纵向滚动舒展大表格)
@@ -2101,8 +2103,8 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
         int sun_y, sun_m, sun_d;
         get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
 
-        // 1. 周列头固定顶栏 (周日首位，Google Calendar 经典表头)
-        rife_draw_rect(core, main_x, main_y, main_w, header_bar_h, is_dark ? 0x181A1FFF : 0xFFFFFFFF);
+        // 1. 周列头固定顶栏 (Antigravity 开发者表头)
+        rife_draw_rect(core, main_x, main_y, main_w, header_bar_h, is_dark ? 0x0E0F14FF : 0xFFFFFFFF);
         rife_draw_text_font(core, main_x + 6.0f, main_y + 12.0f, "GMT+8", text_muted, 4);
 
         const char* wk_names[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
@@ -2117,20 +2119,20 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
             // 列分割细线 (表头)
             rife_draw_rect(core, cx, main_y, 1.0f, header_bar_h, grid_line_col);
 
-            // 上层：星期文字居中 (11px)
+            // 上层：星期文字居中 (12px)
             rife_draw_text_rect(core, cx, main_y + 4.0f, col_w, 16.0f, is_zh ? wk_names[c] : wk_names_en[c], is_col_today ? rtodo_blue : text_muted, 4, 0);
 
-            // 下层：日期大数字居中 (Google Calendar 经典蓝圈高亮)
+            // 下层：日期数字居中 (Antigravity 电光紫矩形微徽标)
             char d_buf[8];
             snprintf(d_buf, sizeof(d_buf), "%d", cy_d);
             if (is_col_today) {
                 float badge_sz = 26.0f;
                 float badge_x = cx + (col_w - badge_sz) * 0.5f;
                 float badge_y = main_y + 21.0f;
-                rife_draw_circle(core, badge_x + badge_sz * 0.5f, badge_y + badge_sz * 0.5f, badge_sz * 0.5f, rtodo_blue, 0);
+                rife_draw_round_rect(core, badge_x, badge_y, badge_sz, badge_sz, 6.0f, rtodo_blue, 0x818CF888);
                 rife_draw_text_rect(core, badge_x, badge_y, badge_sz, badge_sz, d_buf, 0xFFFFFFFF, 5, 0);
             } else {
-                rife_draw_text_rect(core, cx, main_y + 20.0f, col_w, 28.0f, d_buf, text_title, 6, 0);
+                rife_draw_text_rect(core, cx, main_y + 20.0f, col_w, 28.0f, d_buf, text_title, 1, 0);
             }
         }
         // 表头下边缘底线

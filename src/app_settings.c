@@ -23,44 +23,44 @@ static void settings_destroy(void* inst) {
     if (inst) free(inst);
 }
 
-// 绘制 Material 3 卡片容器 (平整纯净，无伪高光)
+// 绘制 Antigravity 现代卡片容器 (深石板纯平，1px 几何细框)
 static inline void draw_settings_card(RifeCore* core, float x, float y, float w, float h, bool is_dark) {
-    uint32_t bg = is_dark ? 0x1E1F22FF : 0xFFFFFFFF;
-    uint32_t brd = is_dark ? 0x3C4043FF : 0xDADCE0FF;
-    rife_draw_round_rect(core, x, y, w, h, 12.0f, bg, brd);
+    uint32_t bg = is_dark ? 0x14151DFF : 0xFFFFFFFF;
+    uint32_t brd = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
+    rife_draw_round_rect(core, x, y, w, h, 8.0f, bg, brd);
 }
 
-// 绘制 Google Material You 风格滑动开关
+// 绘制 Antigravity 风格滑动开关 (电光紫高亮 / 细框熄灭)
 static inline void draw_toggle_switch(RifeCore* core, float rx, float row_y, float row_h, bool on, bool is_dark) {
-    float sw_w = 48.0f;
-    float sw_h = 26.0f;
+    float sw_w = 44.0f;
+    float sw_h = 24.0f;
     float sw_x = rx - sw_w;
     float sw_y = row_y + (row_h - sw_h) * 0.5f;
     if (on) {
-        uint32_t track_col = is_dark ? 0x8AB4F8FF : 0x1A73E8FF; // Google Blue
-        uint32_t knob_col = is_dark ? 0x00325BFF : 0xFFFFFFFF;
-        rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 13.0f, track_col, 0);
-        rife_draw_circle(core, sw_x + sw_w - 13.0f, sw_y + 13.0f, 9.0f, knob_col, 0);
+        uint32_t track_col = is_dark ? 0x6366F1FF : 0x4F46E5FF; // Antigravity Electric Indigo
+        uint32_t knob_col = 0xFFFFFFFF;
+        rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 12.0f, track_col, 0);
+        rife_draw_circle(core, sw_x + sw_w - 12.0f, sw_y + 12.0f, 8.0f, knob_col, 0);
     }
     else {
-        uint32_t track_col = is_dark ? 0x202124FF : 0xF1F3F4FF;
-        uint32_t track_border = is_dark ? 0x3C4043FF : 0xDADCE0FF;
-        uint32_t knob_col = is_dark ? 0x9AA0A6FF : 0x5F6368FF;
-        rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 13.0f, track_col, track_border);
-        rife_draw_circle(core, sw_x + 13.0f, sw_y + 13.0f, 7.0f, knob_col, 0);
+        uint32_t track_col = is_dark ? 0x181922FF : 0xF1F5F9FF;
+        uint32_t track_border = is_dark ? 0x262938FF : 0xCBD5E1FF;
+        uint32_t knob_col = is_dark ? 0x94A3B8FF : 0x64748BFF;
+        rife_draw_round_rect(core, sw_x, sw_y, sw_w, sw_h, 12.0f, track_col, track_border);
+        rife_draw_circle(core, sw_x + 12.0f, sw_y + 12.0f, 6.0f, knob_col, 0);
     }
 }
 
-// 绘制 Google Material 3 分段胶囊选择器
+// 绘制 Antigravity 现代分段选择器
 static inline void draw_segmented_pills(RifeCore* core, float rx, float row_y, float row_h, float it_w, const char* items[], int count, int cur_idx, bool is_dark) {
-    float seg_h = 30.0f;
+    float seg_h = 28.0f;
     float seg_w = (float)count * it_w + 4.0f;
     float seg_x = rx - seg_w;
     float seg_y = row_y + (row_h - seg_h) * 0.5f;
 
-    uint32_t track_col = is_dark ? 0x181A1FFF : 0xF1F3F4FF;
-    uint32_t track_border = is_dark ? 0x3C4043FF : 0xDADCE0FF;
-    rife_draw_round_rect(core, seg_x, seg_y, seg_w, seg_h, 15.0f, track_col, track_border);
+    uint32_t track_col = is_dark ? 0x101117FF : 0xF1F5F9FF;
+    uint32_t track_border = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
+    rife_draw_round_rect(core, seg_x, seg_y, seg_w, seg_h, 6.0f, track_col, track_border);
 
     for (int k = 0; k < count; k++) {
         float ix = seg_x + 2.0f + (float)k * it_w;
@@ -69,13 +69,14 @@ static inline void draw_segmented_pills(RifeCore* core, float rx, float row_y, f
         float ih = seg_h - 4.0f;
         bool active = (k == cur_idx);
         if (active) {
-            uint32_t act_col = is_dark ? 0x004A77FF : 0xE8F0FEFF;
-            uint32_t text_col = is_dark ? 0xD3E3FDFF : 0x1A73E8FF;
-            rife_draw_round_rect(core, ix, iy, iw, ih, 13.0f, act_col, 0);
+            uint32_t act_col = is_dark ? 0x1E202BFF : 0xEEF2FFFF;
+            uint32_t act_bd  = is_dark ? 0x313448FF : 0xC7D2FEFF;
+            uint32_t text_col = is_dark ? 0xF8FAFCFF : 0x4F46E5FF;
+            rife_draw_round_rect(core, ix, iy, iw, ih, 4.0f, act_col, act_bd);
             rife_draw_text_rect(core, ix, iy, iw, ih, items[k], text_col, 5, 0);
         }
         else {
-            uint32_t text_col = is_dark ? 0x9AA0A6FF : 0x5F6368FF;
+            uint32_t text_col = is_dark ? 0x94A3B8FF : 0x64748BFF;
             rife_draw_text_rect(core, ix, iy, iw, ih, items[k], text_col, 0, 0);
         }
     }
@@ -103,9 +104,9 @@ static void settings_update_internal(void* inst, RifeCore* core, const RifeInput
     // 侧边栏 Tab 点击测试 (5项)
     for (int i = 0; i < 5; i++) {
         float tab_x = 10.0f;
-        float tab_y = 54.0f + (float)i * 42.0f;
+        float tab_y = 54.0f + (float)i * 40.0f;
         float tab_w = side_w - 20.0f;
-        float tab_h = 36.0f;
+        float tab_h = 34.0f;
         if (mx >= tab_x && mx <= tab_x + tab_w && my >= tab_y && my <= tab_y + tab_h) {
             state->current_tab = i;
             rife_request_redraw(core);
@@ -357,45 +358,48 @@ static void settings_render(void* inst, RifeCore* core, float client_x, float cl
     RifeSystemConfig* cfg = rife_get_system_config();
     bool is_zh = (cfg->language == LANG_ZH_CN);
     bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
-    uint32_t div_col = is_dark ? 0x3C4043FF : 0xDADCE0FF;
+    uint32_t div_col = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
 
     float side_w = 175.0f;
 
-    // 0. 底板背景与侧边栏底色 (Google Material 3 平整双栏)
-    rife_draw_rect(core, client_x, client_y, client_w, client_h, is_dark ? 0x181A1FFF : 0xFFFFFFFF);
-    rife_draw_rect(core, client_x, client_y, side_w, client_h, is_dark ? 0x121316FF : 0xF8F9FAFF);
+    // 0. 底板背景与侧边栏底色 (Antigravity 干净双栏)
+    rife_draw_rect(core, client_x, client_y, client_w, client_h, is_dark ? 0x0A0B0EFF : 0xFFFFFFFF);
+    rife_draw_rect(core, client_x, client_y, side_w, client_h, is_dark ? 0x101116FF : 0xF8F9FAFF);
 
     // 1. 侧边栏垂直细分割线
     rife_draw_rect(core, client_x + side_w, client_y, 1.0f, client_h, div_col);
 
     // 2. 侧边栏顶部品牌与偏好标题
-    rife_draw_round_rect(core, client_x + 14.0f, client_y + 14.0f, 26.0f, 26.0f, 8.0f, is_dark ? 0x8AB4F822 : 0xE8F0FEFF, is_dark ? 0x8AB4F855 : 0xD2E3FCFF);
-    rife_draw_text_font(core, client_x + 22.0f, client_y + 17.0f, "*", is_dark ? 0x8AB4F8FF : 0x1A73E8FF, 1);
-    rife_draw_text_font(core, client_x + 48.0f, client_y + 14.0f, is_zh ? "系统偏好设置" : "System Settings", is_dark ? 0xE8EAEDFF : 0x202124FF, 1);
-    rife_draw_text_font(core, client_x + 48.0f, client_y + 29.0f, "Material 3 Preferences", is_dark ? 0x9AA0A6FF : 0x5F6368FF, 4);
+    rife_draw_round_rect(core, client_x + 14.0f, client_y + 14.0f, 26.0f, 26.0f, 6.0f, is_dark ? 0x1E202BFF : 0xEEF2FFFF, is_dark ? 0x313448FF : 0xC7D2FEFF);
+    rife_draw_text_font(core, client_x + 22.0f, client_y + 17.0f, "*", is_dark ? 0x818CF8FF : 0x4F46E5FF, 1);
+    rife_draw_text_font(core, client_x + 48.0f, client_y + 14.0f, is_zh ? "系统偏好设置" : "System Settings", is_dark ? 0xF8FAFCFF : 0x0F172AFF, 1);
+    rife_draw_text_font(core, client_x + 48.0f, client_y + 29.0f, "Antigravity Preferences", is_dark ? 0x94A3B8FF : 0x64748BFF, 4);
 
-    // 3. 侧边栏导航 Tab 列表 (Material 3 Stadium Capsules)
+    // 3. 侧边栏导航 Tab 列表 (Antigravity Modern IDE Tabs)
     const char* tabs_zh[5] = { "通用与语言", "视觉与配色", "磁贴与渲染", "内核与性能", "关于本系统" };
     const char* tabs_en[5] = { "General & Lang", "Visuals & Palette", "Tiles & Render", "Kernel & Perf", "About System" };
     const char* tabs_icon[5] = { ">", "*", "#", "~", "i" };
 
     for (int i = 0; i < 5; i++) {
         float tab_x = client_x + 10.0f;
-        float tab_y = client_y + 54.0f + (float)i * 42.0f;
+        float tab_y = client_y + 54.0f + (float)i * 40.0f;
         float tab_w = side_w - 20.0f;
-        float tab_h = 36.0f;
+        float tab_h = 34.0f;
         bool is_active = (state->current_tab == i);
 
         if (is_active) {
-            uint32_t bg = is_dark ? 0x004A77FF : 0xE8F0FEFF;
-            uint32_t txt = is_dark ? 0xD3E3FDFF : 0x1A73E8FF;
-            rife_draw_round_rect(core, tab_x, tab_y, tab_w, tab_h, 18.0f, bg, 0);
-            rife_draw_text_font(core, tab_x + 14.0f, tab_y + 9.0f, tabs_icon[i], txt, 1);
-            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 9.0f, is_zh ? tabs_zh[i] : tabs_en[i], txt, 5);
+            uint32_t bg = is_dark ? 0x1A1C27FF : 0xEEF2FFFF;
+            uint32_t bd = is_dark ? 0x2A2E42FF : 0xC7D2FEFF;
+            uint32_t txt = is_dark ? 0xF8FAFCFF : 0x4F46E5FF;
+            rife_draw_round_rect(core, tab_x, tab_y, tab_w, tab_h, 6.0f, bg, bd);
+            // 左侧指示条
+            rife_draw_round_rect(core, tab_x + 1.5f, tab_y + 6.0f, 3.0f, tab_h - 12.0f, 1.5f, is_dark ? 0x6366F1FF : 0x4F46E5FF, 0);
+            rife_draw_text_font(core, tab_x + 14.0f, tab_y + 8.0f, tabs_icon[i], txt, 1);
+            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 8.0f, is_zh ? tabs_zh[i] : tabs_en[i], txt, 5);
         }
         else {
-            rife_draw_text_font(core, tab_x + 14.0f, tab_y + 9.0f, tabs_icon[i], is_dark ? 0x9AA0A6FF : 0x5F6368FF, 0);
-            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 9.0f, is_zh ? tabs_zh[i] : tabs_en[i], is_dark ? 0x9AA0A6FF : 0x5F6368FF, 0);
+            rife_draw_text_font(core, tab_x + 14.0f, tab_y + 8.0f, tabs_icon[i], is_dark ? 0x94A3B8FF : 0x64748BFF, 0);
+            rife_draw_text_font(core, tab_x + 30.0f, tab_y + 8.0f, is_zh ? tabs_zh[i] : tabs_en[i], is_dark ? 0x94A3B8FF : 0x64748BFF, 0);
         }
     }
 

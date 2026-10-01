@@ -14,8 +14,8 @@ const size_t g_installed_app_count = sizeof(g_installed_apps) / sizeof(g_install
 
 static RifeSystemConfig g_system_config = {
     .language = LANG_ZH_CN,
-    .font_scale = FONT_SCALE_125,
-    .palette = PALETTE_GEMINI,
+    .font_scale = FONT_SCALE_100,
+    .palette = PALETTE_OBSIDIAN,
     .cloud_color = CLOUD_COLOR_TRANSLUCENT,
     .breath_speed = BREATH_SPEED_VERY_SLOW,
     .breath_color = BREATH_COLOR_EMERALD,
