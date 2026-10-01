@@ -12,69 +12,101 @@
 #include <math.h>
 
 // -------------------------------------------------------------
-// Rtodo 状态机定义 (Zero Heap Churn: 单次创建，帧循环零分配)
+// 滴答清单 (TickTick) 状态机定义 (Zero Heap Churn: 纯 C11 微内核)
 // -------------------------------------------------------------
 
 typedef struct {
-    CalendarViewMode view_mode; // 周视图 / 日视图 / 月视图 / 日程列表
+    CalendarViewMode view_mode; // 0: 待办三栏流, 1: 四象限, 2: 周视图, 3: 日视图, 4: 月视图, 5: 清单
     int cur_year;
     int cur_month;   // 1 - 12
     int cur_day;     // 1 - 31
     int cur_hour;    // 0 - 23
     int cur_min;     // 0 - 59
-    int cur_wday;    // 0=Mon .. 6=Sun
+    int cur_wday;    // 0=Sun .. 6=Sat
 
     int view_year;
     int view_month;
     int view_day;
 
-    // 自定义标签系统 (用户自由定义，完全自定义)
+    // 自定义标签系统
     CustomTag tags[CAL_MAX_CUSTOM_TAGS];
     int tag_count;
 
-    // 日程列表 (本地持久化)
+    // 自定义清单系统 (Lists)
+    TickList lists[TICK_MAX_LISTS];
+    int list_count;
+
+    // 待办任务列表 (本地持久化)
     CalendarEvent events[CAL_MAX_EVENTS];
     int event_count;
 
-    int selected_event_id;
+    // 当前选中的待办事项（用于在右侧 Inspector 呈现详情）
+    uint32_t selected_event_id;
 
-    // 新建日程模态弹窗 (100% 用户自定义起止时间)
-    bool show_new_modal;
-    int modal_tag_idx;
-    int new_hour;
-    int new_min;          // 0-59 分钟 (1分钟原子级精度)
-    int new_end_hour;     // 0-23
-    int new_end_min;      // 0-59
-    int new_duration_idx; // 快捷时长标记 (0: 1m, 1: 15m, 2: 30m, 3: 1h, 4: 2h, -1: custom)
+    // 智能清单选中项:
+    // 0: 收集箱, 1: 今天, 2: 明天, 3: 最近7天, 4: 全部待办, 5: 已完成, 6+: 自定义清单 (list_idx = idx - 6)
+    int active_list_idx;
 
-    // 交互式文本输入与焦点状态机
-    // active_field: 0=none, 1=title, 2=location, 3=desc, 4=new_tag_name, 5=search_query
+    // 任务状态过滤: 0: 全部, 1: 未完成 (默认), 2: 已完成
+    int task_filter;
+
+    // 中栏极速添加框
+    char quick_add_title[64];
+    int quick_add_priority; // 0: none, 1: low, 2: med, 3: high
+
+    // 右栏 Inspector 输入字段
+    char inspector_title[64];
+    char inspector_desc[128];
+    char inspector_subtask[48];
+
+    // 四象限添加输入
+    int matrix_active_quad; // 0: none, 1..4
+    char matrix_add_title[64];
+
+    // 全局输入焦点:
+    // 0: none, 1: quick_add_title, 2: inspector_title, 3: inspector_desc, 4: inspector_subtask, 5: search_query, 6: matrix_add_title, 7: modal_title, 8: modal_desc
     int active_field;
-    char input_title[48];
-    char input_location[32];
-    char input_desc[64];
     float cursor_blink_t;
 
-    // 侧边栏实时搜索
+    // 侧边栏搜索
     char search_query[48];
 
-    // 新建自定义标签子弹窗
-    bool show_new_tag_modal;
-    char new_tag_name[24];
-    int new_tag_color_idx; // 0..5
+    // 滚动条偏移
+    float scroll_tasks;
+    float scroll_inspector;
+    float scroll_matrix[4];
+    float scroll_y; // 日历视图滚动
+    float time_scale;
 
-    float scroll_y;
-    float time_scale; // 每小时像素高度 (默认 96.0f，15分钟单位即 24.0f)
+    // 番茄专注全局统计
+    int total_pomodoros;
+    int total_focus_mins;
+    uint32_t active_focus_task_id;
+    char active_focus_title[64];
 
-    // 时间网格拖拽选区状态 (Drag-to-Select)
+    // 新建日程模态弹窗 (用于日历或全屏快速创建)
+    bool show_new_modal;
+    int modal_tag_idx;
+    int modal_list_idx;
+    int modal_priority;
+    int new_hour;
+    int new_min;
+    int new_end_hour;
+    int new_end_min;
+    int new_duration_idx;
+    char input_title[64];
+    char input_location[32];
+    char input_desc[128];
+
+    // 时间网格拖拽选区 (日历模式)
     bool is_dragging_time;
-    int drag_col;             // 周视图被拖拽的列 (0..6)
+    int drag_col;
     int drag_target_year;
     int drag_target_month;
     int drag_target_day;
-    int drag_start_mins;      // 0..1439
-    int drag_cur_mins;        // 0..1439
-    float drag_start_y;       // 初始点击物理 Y 坐标
+    int drag_start_mins;
+    int drag_cur_mins;
+    float drag_start_y;
 } CalendarState;
 
 // -------------------------------------------------------------
@@ -100,7 +132,6 @@ static inline int get_day_of_week_sun(int y, int m, int d) {
     return (yr + yr / 4 - yr / 100 + yr / 400 + t[m - 1] + d) % 7;
 }
 
-// 获取某日所在周的周日对应日期 (Sunday Start)
 static void get_week_sunday(int y, int m, int d, int* out_y, int* out_m, int* out_d) {
     int w = get_day_of_week_sun(y, m, d);
     int target_d = d - w;
@@ -120,7 +151,6 @@ static void get_week_sunday(int y, int m, int d, int* out_y, int* out_m, int* ou
     *out_d = target_d;
 }
 
-// 某日期加上 offset 天
 static void add_days(int y, int m, int d, int offset, int* out_y, int* out_m, int* out_d) {
     int cur_y = y;
     int cur_m = m;
@@ -149,7 +179,6 @@ static void add_days(int y, int m, int d, int offset, int* out_y, int* out_m, in
     *out_d = cur_d;
 }
 
-// 更新当前系统真实时钟
 static void sync_system_clock(CalendarState* state) {
     time_t raw = time(NULL);
     struct tm* t = localtime(&raw);
@@ -159,168 +188,22 @@ static void sync_system_clock(CalendarState* state) {
         state->cur_day = t->tm_mday;
         state->cur_hour = t->tm_hour;
         state->cur_min = t->tm_min;
-        state->cur_wday = (t->tm_wday + 6) % 7;
+        state->cur_wday = t->tm_wday; // 0=Sunday
     }
 }
 
 // -------------------------------------------------------------
-// Rtodo 自定义标签色彩体系与本地持久化 (Zero Heap Churn)
+// 色彩体系与持久化路径 (Persistence & Styles)
 // -------------------------------------------------------------
 
-
-static const uint32_t s_tag_palette[6] = {
-    0x6366F1FF, // Antigravity 电光青紫 (Electric Indigo)
-    0x8B5CF6FF, // DeepMind 深度紫晶 (Violet)
-    0x06B6D4FF, // Cyber 赛博青 (Cyan)
-    0x10B981FF, // Terminal 终端绿 (Emerald)
-    0xF59E0BFF, // Telemetry 琥珀金 (Amber)
-    0xF43F5EFF  // Alert 预警绯红 (Rose)
+static const uint32_t s_priority_colors[4] = {
+    0x64748BFF, // None: Slate Muted Gray
+    0x3B82F6FF, // Low: Blue
+    0xF59E0BFF, // Medium: Amber
+    0xEF4444FF  // High: Red
 };
 
-typedef struct {
-    uint32_t bg;
-    uint32_t border;
-    uint32_t bar;
-    uint32_t text;
-} TagColorStyle;
-
-static TagColorStyle get_tag_style(uint32_t bar_color, bool is_dark) {
-    TagColorStyle s;
-    s.bar = bar_color;
-    uint8_t r = (uint8_t)((bar_color >> 24) & 0xFF);
-    uint8_t g = (uint8_t)((bar_color >> 16) & 0xFF);
-    uint8_t b = (uint8_t)((bar_color >> 8) & 0xFF);
-    if (is_dark) {
-        // Antigravity Dark Mode Event Cards (Deep slate with subtle tint, 1px crisp border)
-        s.bg = ((uint32_t)(r * 0.12f + 16.0f) << 24) | ((uint32_t)(g * 0.12f + 18.0f) << 16) | ((uint32_t)(b * 0.12f + 24.0f) << 8) | 0xFF;
-        s.border = ((uint32_t)(r * 0.25f + 26.0f) << 24) | ((uint32_t)(g * 0.25f + 28.0f) << 16) | ((uint32_t)(b * 0.25f + 38.0f) << 8) | 0xFF;
-        s.text = ((uint32_t)(r * 0.25f + 190.0f) << 24) | ((uint32_t)(g * 0.25f + 195.0f) << 16) | ((uint32_t)(b * 0.25f + 205.0f) << 8) | 0xFF;
-    } else {
-        // Antigravity Light Mode Crisp Cards
-        s.bg = ((uint32_t)(r * 0.10f + 228.0f) << 24) | ((uint32_t)(g * 0.10f + 228.0f) << 16) | ((uint32_t)(b * 0.10f + 228.0f) << 8) | 0xFF;
-        s.border = ((uint32_t)(r * 0.25f + 195.0f) << 24) | ((uint32_t)(g * 0.25f + 195.0f) << 16) | ((uint32_t)(b * 0.25f + 195.0f) << 8) | 0xFF;
-        s.text = ((uint32_t)(r * 0.65f) << 24) | ((uint32_t)(g * 0.65f) << 16) | ((uint32_t)(b * 0.65f) << 8) | 0xFF;
-    }
-    return s;
-}
-
-static TagColorStyle get_event_style(const CalendarState* state, int tag_idx, bool is_dark) {
-    if (tag_idx >= 0 && tag_idx < state->tag_count) {
-        return get_tag_style(state->tags[tag_idx].color_bar, is_dark);
-    }
-    return get_tag_style(0x1A73E8FF, is_dark);
-}
-
-static const char* get_event_tag_name(const CalendarState* state, int tag_idx) {
-    if (tag_idx >= 0 && tag_idx < state->tag_count) {
-        return state->tags[tag_idx].name;
-    }
-    return "日程";
-}
-
-static inline char ascii_to_lower(char c) {
-    if (c >= 'A' && c <= 'Z') return (char)(c + ('a' - 'A'));
-    return c;
-}
-
-static bool utf8_contains_ignore_case(const char* haystack, const char* needle) {
-    if (!needle || needle[0] == '\0') return true;
-    if (!haystack || haystack[0] == '\0') return false;
-
-    size_t nlen = strlen(needle);
-    size_t hlen = strlen(haystack);
-    if (nlen > hlen) return false;
-
-    for (size_t i = 0; i <= hlen - nlen; i++) {
-        bool match = true;
-        for (size_t j = 0; j < nlen; j++) {
-            char h = ascii_to_lower(haystack[i + j]);
-            char n = ascii_to_lower(needle[j]);
-            if (h != n) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return true;
-    }
-    return false;
-}
-
-static bool event_matches_search(const CalendarState* state, const CalendarEvent* e) {
-    if (!state || state->search_query[0] == '\0') return true;
-    if (utf8_contains_ignore_case(e->title, state->search_query)) return true;
-    if (utf8_contains_ignore_case(e->location, state->search_query)) return true;
-    if (utf8_contains_ignore_case(e->desc, state->search_query)) return true;
-    const char* tag_name = get_event_tag_name(state, e->tag_idx);
-    if (utf8_contains_ignore_case(tag_name, state->search_query)) return true;
-    return false;
-}
-
-static bool is_event_visible(const CalendarState* state, const CalendarEvent* e) {
-    if (e->tag_idx >= 0 && e->tag_idx < state->tag_count) {
-        if (!state->tags[e->tag_idx].is_enabled) return false;
-    }
-    if (state->search_query[0] != '\0') {
-        if (!event_matches_search(state, e)) return false;
-    }
-    return true;
-}
-
-static void utf8_pop_back(char* str) {
-    if (!str || str[0] == '\0') return;
-    size_t len = strlen(str);
-    if (len == 0) return;
-    size_t i = len - 1;
-    while (i > 0 && ((unsigned char)str[i] & 0xC0) == 0x80) {
-        i--;
-    }
-    str[i] = '\0';
-}
-
-static void calc_event_end_time(int start_h, int start_m, int duration_idx, int* end_h, int* end_m) {
-    int duration_mins = 1;
-    switch (duration_idx) {
-        case 0: duration_mins = 1; break;   // 1 分钟 (系统最小时间单位)
-        case 1: duration_mins = 15; break;  // 15 分钟
-        case 2: duration_mins = 30; break;  // 30 分钟
-        case 3: duration_mins = 60; break;  // 1 小时
-        default: duration_mins = 1; break;
-    }
-    int total_mins = start_h * 60 + start_m + duration_mins;
-    *end_h = total_mins / 60;
-    *end_m = total_mins % 60;
-    if (*end_h > 23) {
-        *end_h = 23;
-        *end_m = 59;
-    }
-}
-
 void rtodo_get_storage_path(char* out_path, size_t max_len) {
-    // 1. 优先检查当前运行目录是否存在现有的 rtodo_data.bin (便携模式)
-    FILE* test_fp = fopen("rtodo_data.bin", "rb");
-    if (test_fp) {
-        fclose(test_fp);
-        snprintf(out_path, max_len, "rtodo_data.bin");
-        return;
-    }
-
-    char exe_path[MAX_PATH] = { 0 };
-    if (GetModuleFileNameA(NULL, exe_path, MAX_PATH) > 0) {
-        char* last_slash = strrchr(exe_path, '\\');
-        if (last_slash) {
-            *last_slash = '\0';
-            char exe_bin[MAX_PATH];
-            snprintf(exe_bin, sizeof(exe_bin), "%s\\rtodo_data.bin", exe_path);
-            FILE* exe_fp = fopen(exe_bin, "rb");
-            if (exe_fp) {
-                fclose(exe_fp);
-                snprintf(out_path, max_len, "%s", exe_bin);
-                return;
-            }
-        }
-    }
-
-    // 2. 采用标准的 Windows %APPDATA%\RifeOS 目录 (永久稳定持久化，权限安全，更新不丢失)
     char appdata[MAX_PATH] = { 0 };
     DWORD len = GetEnvironmentVariableA("APPDATA", appdata, MAX_PATH);
     if (len > 0 && len < MAX_PATH) {
@@ -330,8 +213,6 @@ void rtodo_get_storage_path(char* out_path, size_t max_len) {
         snprintf(out_path, max_len, "%s\\rtodo_data.bin", rife_dir);
         return;
     }
-
-    // 3. 兜底当前相对目录
     snprintf(out_path, max_len, "rtodo_data.bin");
 }
 
@@ -361,2706 +242,1363 @@ bool rtodo_load_storage(RtodoStorage* out_storage) {
     return ok;
 }
 
-static void init_default_tags(CalendarState* state) {
+static void init_default_data(CalendarState* state) {
     state->tag_count = 3;
-    snprintf(state->tags[0].name, sizeof(state->tags[0].name), "工作");
-    state->tags[0].color_bar = 0x1A73E8FF; // Google Blue
+    snprintf(state->tags[0].name, sizeof(state->tags[0].name), "重要");
+    state->tags[0].color_bar = 0xEF4444FF;
     state->tags[0].is_enabled = true;
-
-    snprintf(state->tags[1].name, sizeof(state->tags[1].name), "生活");
-    state->tags[1].color_bar = 0x34A853FF; // Google Green
+    snprintf(state->tags[1].name, sizeof(state->tags[1].name), "工作");
+    state->tags[1].color_bar = 0x6366F1FF;
     state->tags[1].is_enabled = true;
-
-    snprintf(state->tags[2].name, sizeof(state->tags[2].name), "重要");
-    state->tags[2].color_bar = 0xEA4335FF; // Google Red
+    snprintf(state->tags[2].name, sizeof(state->tags[2].name), "生活");
+    state->tags[2].color_bar = 0x10B981FF;
     state->tags[2].is_enabled = true;
 
-    state->event_count = 0; // 干净初始状态：绝不注入假测试数据
+    state->list_count = 4;
+    snprintf(state->lists[0].name, sizeof(state->lists[0].name), "收集箱");
+    state->lists[0].color = 0x818CF8FF;
+    snprintf(state->lists[1].name, sizeof(state->lists[1].name), "工作");
+    state->lists[1].color = 0x6366F1FF;
+    snprintf(state->lists[2].name, sizeof(state->lists[2].name), "生活");
+    state->lists[2].color = 0x10B981FF;
+    snprintf(state->lists[3].name, sizeof(state->lists[3].name), "学习");
+    state->lists[3].color = 0x06B6D4FF;
+
+    // 默认注入 4 条经典高拟真滴答清单体验任务，展示完整的子任务、优先级、象限与专注联动
+    state->event_count = 4;
+
+    // 任务 1: 体验滴答清单三栏式工作流 (高优先级, 象限1, 带3个子任务)
+    CalendarEvent* e1 = &state->events[0];
+    e1->id = 1001;
+    snprintf(e1->title, sizeof(e1->title), "体验滴答清单三栏式工作流");
+    snprintf(e1->desc, sizeof(e1->desc), "支持子任务打勾、优先级旗帜、四象限分拣与 25 分钟番茄专注");
+    e1->list_idx = 1; // 工作
+    e1->tag_idx = 0;  // 重要
+    e1->priority = TICK_PRIORITY_HIGH;
+    e1->quadrant = 1; // 重要且紧急
+    e1->has_date = true;
+    e1->year = state->cur_year; e1->month = state->cur_month; e1->day = state->cur_day;
+    e1->has_time = true;
+    e1->start_hour = 14; e1->start_min = 0; e1->end_hour = 15; e1->end_min = 0;
+    e1->is_completed = false;
+    e1->subtask_count = 3;
+    snprintf(e1->subtasks[0].title, sizeof(e1->subtasks[0].title), "探索智能清单（收集箱、今天、明天）");
+    e1->subtasks[0].is_done = true;
+    snprintf(e1->subtasks[1].title, sizeof(e1->subtasks[1].title), "进入四象限看板 (Alt+2) 查看任务矩阵");
+    e1->subtasks[1].is_done = false;
+    snprintf(e1->subtasks[2].title, sizeof(e1->subtasks[2].title), "点击右侧「开始番茄专注」沉浸攻坚");
+    e1->subtasks[2].is_done = false;
+
+    // 任务 2: 制定本周核心研发规划 (中优先级, 象限2)
+    CalendarEvent* e2 = &state->events[1];
+    e2->id = 1002;
+    snprintf(e2->title, sizeof(e2->title), "在四象限看板中分拣本周重要事项");
+    snprintf(e2->desc, sizeof(e2->desc), "象限II：重要不紧急，自我提升与长期价值投资的核心");
+    e2->list_idx = 1; // 工作
+    e2->tag_idx = 1;  // 工作
+    e2->priority = TICK_PRIORITY_MEDIUM;
+    e2->quadrant = 2; // 重要不紧急
+    e2->has_date = true;
+    e2->year = state->cur_year; e2->month = state->cur_month; e2->day = state->cur_day;
+    e2->has_time = true;
+    e2->start_hour = 16; e2->start_min = 30; e2->end_hour = 17; e2->end_min = 30;
+    e2->is_completed = false;
+
+    // 任务 3: 阅读开源微内核架构源码 (低优先级, 象限3)
+    CalendarEvent* e3 = &state->events[2];
+    e3->id = 1003;
+    snprintf(e3->title, sizeof(e3->title), "开启一次 25 分钟番茄专注攻坚");
+    snprintf(e3->desc, sizeof(e3->desc), "25分钟高能专注，零打扰，完成后自动记录番茄成果");
+    e3->list_idx = 3; // 学习
+    e3->tag_idx = -1;
+    e3->priority = TICK_PRIORITY_LOW;
+    e3->quadrant = 3; // 紧急不重要
+    e3->has_date = true;
+    e3->year = state->cur_year; e3->month = state->cur_month; e3->day = state->cur_day;
+    e3->has_time = false;
+    e3->is_completed = false;
+
+    // 任务 4: 运动健身 45 分钟 (无优先级, 象限4)
+    CalendarEvent* e4 = &state->events[3];
+    e4->id = 1004;
+    snprintf(e4->title, sizeof(e4->title), "有氧慢跑与核心力量训练 45 分钟");
+    snprintf(e4->desc, sizeof(e4->desc), "健康生活，保持旺盛精力");
+    e4->list_idx = 2; // 生活
+    e4->tag_idx = 2;  // 生活
+    e4->priority = TICK_PRIORITY_NONE;
+    e4->quadrant = 4; // 不重要不紧急
+    e4->has_date = false;
+    e4->is_completed = false;
+
+    state->selected_event_id = 1001; // 默认选中首个任务以便展示右侧详情
+    snprintf(state->inspector_title, sizeof(state->inspector_title), "%s", e1->title);
+    snprintf(state->inspector_desc, sizeof(state->inspector_desc), "%s", e1->desc);
 }
 
-static void save_calendar_data(const CalendarState* state) {
+static void save_state_to_storage(const CalendarState* state) {
     RtodoStorage store;
     memset(&store, 0, sizeof(RtodoStorage));
     store.magic = RTODO_MAGIC;
     store.version = RTODO_VERSION;
     store.tag_count = state->tag_count;
     if (store.tag_count > CAL_MAX_CUSTOM_TAGS) store.tag_count = CAL_MAX_CUSTOM_TAGS;
-    if (store.tag_count > 0) {
-        memcpy(store.tags, state->tags, sizeof(CustomTag) * store.tag_count);
-    }
+    if (store.tag_count > 0) memcpy(store.tags, state->tags, sizeof(CustomTag) * store.tag_count);
+
+    store.list_count = state->list_count;
+    if (store.list_count > TICK_MAX_LISTS) store.list_count = TICK_MAX_LISTS;
+    if (store.list_count > 0) memcpy(store.lists, state->lists, sizeof(TickList) * store.list_count);
+
     store.event_count = state->event_count;
     if (store.event_count > CAL_MAX_EVENTS) store.event_count = CAL_MAX_EVENTS;
-    if (store.event_count > 0) {
-        memcpy(store.events, state->events, sizeof(CalendarEvent) * store.event_count);
-    }
+    if (store.event_count > 0) memcpy(store.events, state->events, sizeof(CalendarEvent) * store.event_count);
+
+    store.total_pomodoros = state->total_pomodoros;
+    store.total_focus_mins = state->total_focus_mins;
+    store.active_focus_task_id = state->active_focus_task_id;
+    snprintf(store.active_focus_title, sizeof(store.active_focus_title), "%s", state->active_focus_title);
+
     rtodo_save_storage(&store);
 }
 
-static void load_calendar_data(CalendarState* state) {
+static void load_storage_to_state(CalendarState* state) {
     RtodoStorage store;
     if (rtodo_load_storage(&store)) {
         state->tag_count = store.tag_count;
         if (state->tag_count > CAL_MAX_CUSTOM_TAGS) state->tag_count = CAL_MAX_CUSTOM_TAGS;
-        if (state->tag_count > 0) {
-            memcpy(state->tags, store.tags, sizeof(CustomTag) * state->tag_count);
-        }
+        if (state->tag_count > 0) memcpy(state->tags, store.tags, sizeof(CustomTag) * state->tag_count);
+
+        state->list_count = store.list_count;
+        if (state->list_count > TICK_MAX_LISTS) state->list_count = TICK_MAX_LISTS;
+        if (state->list_count > 0) memcpy(state->lists, store.lists, sizeof(TickList) * state->list_count);
+
         state->event_count = store.event_count;
         if (state->event_count > CAL_MAX_EVENTS) state->event_count = CAL_MAX_EVENTS;
-        if (state->event_count > 0) {
-            memcpy(state->events, store.events, sizeof(CalendarEvent) * state->event_count);
-        }
+        if (state->event_count > 0) memcpy(state->events, store.events, sizeof(CalendarEvent) * state->event_count);
+
+        state->total_pomodoros = store.total_pomodoros;
+        state->total_focus_mins = store.total_focus_mins;
+        state->active_focus_task_id = store.active_focus_task_id;
+        snprintf(state->active_focus_title, sizeof(state->active_focus_title), "%s", store.active_focus_title);
     } else {
-        init_default_tags(state);
+        init_default_data(state);
+        save_state_to_storage(state);
+    }
+}
+
+void rtodo_set_active_view(void* inst, int view_idx) {
+    CalendarState* state = (CalendarState*)inst;
+    if (!state) return;
+    if (view_idx >= 0 && view_idx <= 5) {
+        state->view_mode = (CalendarViewMode)view_idx;
+    }
+}
+
+uint32_t rtodo_get_active_focus_task(void* inst, char* out_title, size_t max_title) {
+    CalendarState* state = (CalendarState*)inst;
+    if (!state) return 0;
+    if (out_title && max_title > 0) {
+        snprintf(out_title, max_title, "%s", state->active_focus_title);
+    }
+    return state->active_focus_task_id;
+}
+
+void rtodo_add_pomodoro_to_active_task(void* inst) {
+    CalendarState* state = (CalendarState*)inst;
+    if (!state) return;
+    state->total_pomodoros++;
+    state->total_focus_mins += 25;
+    if (state->active_focus_task_id > 0) {
+        for (int i = 0; i < state->event_count; i++) {
+            if (state->events[i].id == state->active_focus_task_id) {
+                state->events[i].pomodoro_count++;
+                break;
+            }
+        }
+    }
+    save_state_to_storage(state);
+}
+
+void rtodo_open_create_modal(void* inst) {
+    CalendarState* state = (CalendarState*)inst;
+    if (!state) return;
+    state->view_mode = CAL_VIEW_TASKS;
+    state->active_field = 1; // 聚焦中栏极速添加框
+}
+
+// -------------------------------------------------------------
+// 文本输入退格辅助 (UTF-8 Boundary Safe Pop-back)
+// -------------------------------------------------------------
+static void utf8_pop_back(char* s) {
+    if (!s || s[0] == '\0') return;
+    size_t len = strlen(s);
+    if (len == 0) return;
+    size_t i = len - 1;
+    while (i > 0 && (s[i] & 0xC0) == 0x80) {
+        i--;
+    }
+    s[i] = '\0';
+}
+
+// -------------------------------------------------------------
+// 任务匹配与统计过滤器 (Task Matching & Counts)
+// -------------------------------------------------------------
+
+static bool is_task_in_list(const CalendarState* state, const CalendarEvent* e, int list_idx) {
+    if (!state || !e) return false;
+    if (list_idx == 0) { // 收集箱 (Inbox)
+        return (e->list_idx == 0);
+    } else if (list_idx == 1) { // 今天 (Today)
+        return (e->has_date && e->year == state->cur_year && e->month == state->cur_month && e->day == state->cur_day);
+    } else if (list_idx == 2) { // 明天 (Tomorrow)
+        int ty, tm, td;
+        add_days(state->cur_year, state->cur_month, state->cur_day, 1, &ty, &tm, &td);
+        return (e->has_date && e->year == ty && e->month == tm && e->day == td);
+    } else if (list_idx == 3) { // 最近7天 (Next 7 Days)
+        if (!e->has_date) return false;
+        for (int d = 0; d < 7; d++) {
+            int ty, tm, td;
+            add_days(state->cur_year, state->cur_month, state->cur_day, d, &ty, &tm, &td);
+            if (e->year == ty && e->month == tm && e->day == td) return true;
+        }
+        return false;
+    } else if (list_idx == 4) { // 全部待办
+        return true;
+    } else if (list_idx == 5) { // 已完成
+        return e->is_completed;
+    } else if (list_idx >= 6) { // 自定义清单
+        int c_idx = list_idx - 5;
+        return (e->list_idx == c_idx);
+    }
+    return false;
+}
+
+static int get_list_uncompleted_count(const CalendarState* state, int list_idx) {
+    if (!state) return 0;
+    int count = 0;
+    for (int i = 0; i < state->event_count; i++) {
+        const CalendarEvent* e = &state->events[i];
+        if (!e->is_completed && is_task_in_list(state, e, list_idx)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static CalendarEvent* get_selected_event(CalendarState* state) {
+    if (!state || state->selected_event_id == 0) return NULL;
+    for (int i = 0; i < state->event_count; i++) {
+        if (state->events[i].id == state->selected_event_id) {
+            return &state->events[i];
+        }
+    }
+    return NULL;
+}
+
+// 纯 C 过程式加号图标
+static void cal_draw_plus_icon(RifeCore* core, float cx, float cy, float span, float thickness, uint32_t color) {
+    float half = span * 0.5f;
+    rife_draw_line(core, cx, cy - half, cx, cy + half, thickness, color);
+    rife_draw_line(core, cx - half, cy, cx + half, cy, thickness, color);
+}
+
+// 纯 C 绘制复选框圆圈 (Checkbox Circle with Priority Border)
+static void draw_task_checkbox(RifeCore* core, float cx, float cy, float r, int priority, bool is_completed, bool is_hover) {
+    uint32_t border_col = s_priority_colors[priority & 3];
+    if (is_completed) {
+        // 完成状态：实心翠绿或电光蓝圆盘，内嵌白色纯正对勾
+        rife_draw_circle(core, cx, cy, r, 0x10B981FF, 0x10B981FF);
+        rife_draw_line(core, cx - r * 0.45f, cy, cx - r * 0.1f, cy + r * 0.35f, 1.8f, 0xFFFFFFFF);
+        rife_draw_line(core, cx - r * 0.1f, cy + r * 0.35f, cx + r * 0.5f, cy - r * 0.35f, 1.8f, 0xFFFFFFFF);
+    } else {
+        // 未完成状态：空心圆，边框颜色反映优先级
+        uint32_t fill_col = is_hover ? (border_col & 0xFFFFFF33) : 0x00000000;
+        rife_draw_circle(core, cx, cy, r, fill_col, border_col);
     }
 }
 
 // -------------------------------------------------------------
-// 插件生命周期 (Plugin Lifecycle)
+// 模块 1：待办清单三栏式工作台渲染 (Tasks 3-Column Flow)
+// -------------------------------------------------------------
+
+static void render_tasks_three_column(CalendarState* state, RifeCore* core, float cx, float cy, float cw, float ch) {
+    bool is_dark = (rife_get_system_config()->palette == PALETTE_OBSIDIAN);
+    bool is_zh   = (rife_get_system_config()->language == LANG_ZH_CN);
+
+    uint32_t col_card_bg  = is_dark ? 0x14151DFF : 0xFFFFFFFF;
+    uint32_t col_card_bd  = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
+    uint32_t col_div      = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
+    uint32_t txt_title    = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
+    uint32_t txt_body     = is_dark ? 0xCBD5E1FF : 0x334155FF;
+    uint32_t txt_muted    = is_dark ? 0x94A3B8FF : 0x64748BFF;
+    uint32_t accent_pri   = is_dark ? 0x6366F1FF : 0x4F46E5FF; // Electric Indigo
+
+    float col1_w = 180.0f;
+    float col3_w = (state->selected_event_id > 0) ? 340.0f : 0.0f;
+    float col2_w = cw - col1_w - col3_w;
+
+    // =========================================================
+    // 栏 1：清单与智能分类侧边栏 (Lists Sidebar)
+    // =========================================================
+    rife_draw_rect(core, cx, cy, col1_w, ch, is_dark ? 0x101116FF : 0xF8FAFCFF);
+    rife_draw_rect(core, cx + col1_w - 1.0f, cy, 1.0f, ch, col_div);
+
+    float list_y = cy + 14.0f;
+    rife_draw_text_font(core, cx + 16.0f, list_y, is_zh ? "智能清单" : "Smart Lists", txt_muted, 4);
+    list_y += 24.0f;
+
+    const char* smart_names_zh[6] = { "收集箱", "今天", "明天", "最近7天", "全部任务", "已完成" };
+    const char* smart_names_en[6] = { "Inbox", "Today", "Tomorrow", "Next 7 Days", "All Tasks", "Completed" };
+    const char* smart_icons[6]    = { "📥", "☀️", "📅", "🗓️", "📋", "✅" };
+
+    for (int i = 0; i < 6; i++) {
+        bool is_act = (state->active_list_idx == i);
+        float item_y = list_y;
+        float item_h = 32.0f;
+        float item_w = col1_w - 20.0f;
+        float item_x = cx + 10.0f;
+
+        if (is_act) {
+            rife_draw_round_rect(core, item_x, item_y, item_w, item_h, 6.0f, is_dark ? 0x1A1C28FF : 0xEEF2FFFF, is_dark ? 0x2A2E42FF : 0xC7D2FEFF);
+            rife_draw_round_rect(core, item_x + 1.5f, item_y + 6.0f, 3.0f, item_h - 12.0f, 1.5f, accent_pri, 0);
+        }
+
+        rife_draw_text_font(core, item_x + 10.0f, item_y + 6.0f, smart_icons[i], is_act ? accent_pri : txt_body, 3);
+        rife_draw_text_font(core, item_x + 32.0f, item_y + 7.0f, is_zh ? smart_names_zh[i] : smart_names_en[i], is_act ? txt_title : txt_body, is_act ? 5 : 0);
+
+        // 任务计数 Badge
+        int uncompleted_cnt = get_list_uncompleted_count(state, i);
+        if (uncompleted_cnt > 0) {
+            char cnt_str[16];
+            snprintf(cnt_str, sizeof(cnt_str), "%d", uncompleted_cnt);
+            float badge_w = 22.0f;
+            float badge_x = item_x + item_w - badge_w - 6.0f;
+            uint32_t b_col = (i == 1) ? 0xEF4444FF : (is_dark ? 0x222432FF : 0xE2E8F0FF);
+            rife_draw_round_rect(core, badge_x, item_y + 7.0f, badge_w, 18.0f, 4.0f, b_col, 0);
+            rife_draw_text_rect(core, badge_x, item_y + 7.0f, badge_w, 18.0f, cnt_str, (i == 1) ? 0xFFFFFFFF : txt_muted, 4, 0);
+        }
+
+        list_y += 34.0f;
+    }
+
+    // 分割线
+    list_y += 8.0f;
+    rife_draw_rect(core, cx + 16.0f, list_y, col1_w - 32.0f, 1.0f, col_div);
+    list_y += 12.0f;
+
+    rife_draw_text_font(core, cx + 16.0f, list_y, is_zh ? "我的清单" : "My Lists", txt_muted, 4);
+    list_y += 24.0f;
+
+    const char* custom_list_icons[4] = { "📥", "💼", "🏠", "📚" };
+    for (int c = 1; c < state->list_count && c < 4; c++) {
+        int list_global_idx = 5 + c;
+        bool is_act = (state->active_list_idx == list_global_idx);
+        float item_y = list_y;
+        float item_h = 32.0f;
+        float item_w = col1_w - 20.0f;
+        float item_x = cx + 10.0f;
+
+        if (is_act) {
+            rife_draw_round_rect(core, item_x, item_y, item_w, item_h, 6.0f, is_dark ? 0x1A1C28FF : 0xEEF2FFFF, is_dark ? 0x2A2E42FF : 0xC7D2FEFF);
+            rife_draw_round_rect(core, item_x + 1.5f, item_y + 6.0f, 3.0f, item_h - 12.0f, 1.5f, state->lists[c].color, 0);
+        }
+
+        rife_draw_text_font(core, item_x + 10.0f, item_y + 6.0f, custom_list_icons[c], state->lists[c].color, 3);
+        rife_draw_text_font(core, item_x + 32.0f, item_y + 7.0f, state->lists[c].name, is_act ? txt_title : txt_body, is_act ? 5 : 0);
+
+        int cnt = get_list_uncompleted_count(state, list_global_idx);
+        if (cnt > 0) {
+            char cnt_str[16];
+            snprintf(cnt_str, sizeof(cnt_str), "%d", cnt);
+            float badge_w = 22.0f;
+            float badge_x = item_x + item_w - badge_w - 6.0f;
+            rife_draw_round_rect(core, badge_x, item_y + 7.0f, badge_w, 18.0f, 4.0f, is_dark ? 0x222432FF : 0xE2E8F0FF, 0);
+            rife_draw_text_rect(core, badge_x, item_y + 7.0f, badge_w, 18.0f, cnt_str, txt_muted, 4, 0);
+        }
+
+        list_y += 34.0f;
+    }
+
+    // =========================================================
+    // 栏 2：中栏任务流与极速添加 (Task Stream)
+    // =========================================================
+    float col2_x = cx + col1_w;
+    rife_draw_rect(core, col2_x, cy, col2_w, ch, is_dark ? 0x0A0B0EFF : 0xFFFFFFFF);
+    if (col3_w > 0.0f) {
+        rife_draw_rect(core, col2_x + col2_w - 1.0f, cy, 1.0f, ch, col_div);
+    }
+
+    // A. 顶部列表标头 (Header)
+    float h_y = cy + 14.0f;
+    const char* cur_list_title = (state->active_list_idx < 6) ?
+        (is_zh ? smart_names_zh[state->active_list_idx] : smart_names_en[state->active_list_idx]) :
+        state->lists[state->active_list_idx - 5].name;
+
+    rife_draw_text_font(core, col2_x + 20.0f, h_y, cur_list_title, txt_title, 2);
+
+    // 过滤选择器: [未完成] [全部] [已完成]
+    float f_w = 54.0f, f_h = 24.0f;
+    float f_x0 = col2_x + col2_w - (f_w * 3.0f + 24.0f);
+    const char* f_labels[3] = { "未完成", "全部", "已完成" };
+    for (int f = 0; f < 3; f++) {
+        float fx = f_x0 + (float)f * f_w;
+        bool is_cur_f = (state->task_filter == (f == 0 ? 1 : (f == 1 ? 0 : 2)));
+        if (is_cur_f) {
+            rife_draw_round_rect(core, fx, h_y + 2.0f, f_w - 4.0f, f_h, 5.0f, is_dark ? 0x1E202BFF : 0xE2E8F0FF, accent_pri);
+            rife_draw_text_rect(core, fx, h_y + 2.0f, f_w - 4.0f, f_h, f_labels[f], accent_pri, 4, 0);
+        } else {
+            rife_draw_text_rect(core, fx, h_y + 2.0f, f_w - 4.0f, f_h, f_labels[f], txt_muted, 4, 0);
+        }
+    }
+
+    // B. 极速添加输入框 (Quick Add Input Box)
+    float q_y = cy + 50.0f;
+    float q_w = col2_w - 40.0f;
+    float q_x = col2_x + 20.0f;
+    float q_h = 40.0f;
+
+    bool q_focused = (state->active_field == 1);
+    uint32_t q_bd = q_focused ? accent_pri : col_card_bd;
+    rife_draw_round_rect(core, q_x, q_y, q_w, q_h, 7.0f, is_dark ? 0x14151DFF : 0xF8FAFCFF, q_bd);
+
+    // 左侧加号图标
+    cal_draw_plus_icon(core, q_x + 20.0f, q_y + q_h * 0.5f, 11.0f, 1.8f, accent_pri);
+
+    // 输入文本或占位符
+    if (state->quick_add_title[0] != '\0') {
+        rife_draw_text_font(core, q_x + 36.0f, q_y + 11.0f, state->quick_add_title, txt_title, 0);
+        if (q_focused && ((int)(state->cursor_blink_t * 2.0f) % 2 == 0)) {
+            // 绘制闪烁光标
+            float text_w = (float)strlen(state->quick_add_title) * 8.0f; // 估算宽度
+            rife_draw_rect(core, q_x + 36.0f + text_w, q_y + 11.0f, 1.8f, 18.0f, accent_pri);
+        }
+    } else {
+        const char* hint = is_zh ? "+ 添加待办事项，回车快速保存..." : "+ Add a task, press Enter to save...";
+        rife_draw_text_font(core, q_x + 36.0f, q_y + 11.0f, hint, txt_muted, 0);
+        if (q_focused && ((int)(state->cursor_blink_t * 2.0f) % 2 == 0)) {
+            rife_draw_rect(core, q_x + 36.0f, q_y + 11.0f, 1.8f, 18.0f, accent_pri);
+        }
+    }
+
+    // 右侧优先级切换旗帜按钮
+    float p_flag_x = q_x + q_w - 32.0f;
+    float p_flag_y = q_y + 10.0f;
+    uint32_t p_col = s_priority_colors[state->quick_add_priority & 3];
+    rife_draw_text_rect(core, p_flag_x, p_flag_y, 22.0f, 20.0f, "🚩", p_col, 4, 0);
+
+    // C. 任务卡片流 (Task Card Stream)
+    float card_stream_y = q_y + q_h + 12.0f;
+    float card_h = 52.0f;
+    float card_gap = 6.0f;
+    float curr_y = card_stream_y + state->scroll_tasks;
+
+    int rendered_tasks = 0;
+    for (int i = 0; i < state->event_count; i++) {
+        CalendarEvent* e = &state->events[i];
+        if (!is_task_in_list(state, e, state->active_list_idx)) continue;
+        if (state->task_filter == 1 && e->is_completed) continue; // 仅未完成
+        if (state->task_filter == 2 && !e->is_completed) continue; // 仅已完成
+
+        float card_x = q_x;
+        float card_w = q_w;
+        float card_y = curr_y;
+
+        if (card_y + card_h >= card_stream_y && card_y <= cy + ch) {
+            bool is_sel = (state->selected_event_id == e->id);
+            uint32_t c_bg = is_sel ? (is_dark ? 0x1A1C28FF : 0xEEF2FFFF) : col_card_bg;
+            uint32_t c_bd = is_sel ? accent_pri : col_card_bd;
+
+            rife_draw_round_rect(core, card_x, card_y, card_w, card_h, 8.0f, c_bg, c_bd);
+
+            // 1. 复选框圆圈 (Checkbox Circle)
+            float chk_cx = card_x + 22.0f;
+            float chk_cy = card_y + card_h * 0.5f;
+            draw_task_checkbox(core, chk_cx, chk_cy, 8.5f, e->priority, e->is_completed, false);
+
+            // 2. 任务标题
+            float title_x = card_x + 42.0f;
+            float title_y = card_y + 8.0f;
+            uint32_t t_col = e->is_completed ? txt_muted : txt_title;
+            rife_draw_text_font(core, title_x, title_y, e->title, t_col, 0);
+
+            // 若已完成，绘制贯穿删除线 (Strikethrough)
+            if (e->is_completed) {
+                float tw = (float)strlen(e->title) * 7.5f;
+                rife_draw_line(core, title_x, title_y + 9.0f, title_x + tw, title_y + 9.0f, 1.2f, txt_muted);
+            }
+
+            // 3. 次级徽标行 (日期、标签、子任务进度)
+            float badge_y = card_y + 28.0f;
+            float badge_x = title_x;
+
+            // 到期日徽标
+            if (e->has_date) {
+                char date_buf[32];
+                if (e->year == state->cur_year && e->month == state->cur_month && e->day == state->cur_day) {
+                    snprintf(date_buf, sizeof(date_buf), e->has_time ? "今天 %02d:%02d" : "今天", e->start_hour, e->start_min);
+                } else {
+                    snprintf(date_buf, sizeof(date_buf), "%d月%d日", e->month, e->day);
+                }
+                rife_draw_round_rect(core, badge_x, badge_y, 64.0f, 16.0f, 3.0f, is_dark ? 0x222432FF : 0xF1F5F9FF, 0);
+                rife_draw_text_rect(core, badge_x, badge_y, 64.0f, 16.0f, date_buf, accent_pri, 4, 0);
+                badge_x += 70.0f;
+            }
+
+            // 标签徽标
+            if (e->tag_idx >= 0 && e->tag_idx < state->tag_count) {
+                char tag_buf[32];
+                snprintf(tag_buf, sizeof(tag_buf), "#%s", state->tags[e->tag_idx].name);
+                rife_draw_round_rect(core, badge_x, badge_y, 50.0f, 16.0f, 3.0f, is_dark ? 0x1E202BFF : 0xEEF2FFFF, 0);
+                rife_draw_text_rect(core, badge_x, badge_y, 50.0f, 16.0f, tag_buf, state->tags[e->tag_idx].color_bar, 4, 0);
+                badge_x += 56.0f;
+            }
+
+            // 子任务进度 (例如 ☑ 1/3)
+            if (e->subtask_count > 0) {
+                int done_cnt = 0;
+                for (int s = 0; s < e->subtask_count; s++) {
+                    if (e->subtasks[s].is_done) done_cnt++;
+                }
+                char sub_buf[24];
+                snprintf(sub_buf, sizeof(sub_buf), "☑ %d/%d", done_cnt, e->subtask_count);
+                rife_draw_round_rect(core, badge_x, badge_y, 46.0f, 16.0f, 3.0f, is_dark ? 0x1E202BFF : 0xF1F5F9FF, 0);
+                rife_draw_text_rect(core, badge_x, badge_y, 46.0f, 16.0f, sub_buf, (done_cnt == e->subtask_count) ? 0x10B981FF : txt_muted, 4, 0);
+            }
+
+            // 右侧优先级旗帜
+            if (e->priority > 0) {
+                rife_draw_text_rect(core, card_x + card_w - 30.0f, card_y + 16.0f, 20.0f, 20.0f, "🚩", s_priority_colors[e->priority & 3], 4, 0);
+            }
+        }
+
+        curr_y += (card_h + card_gap);
+        rendered_tasks++;
+    }
+
+    if (rendered_tasks == 0) {
+        // 空状态 (Empty State)
+        float empty_y = cy + ch * 0.4f;
+        rife_draw_text_font(core, col2_x + col2_w * 0.5f - 80.0f, empty_y, is_zh ? "✨ 暂无待办事项" : "✨ No tasks here", txt_title, 1);
+        rife_draw_text_font(core, col2_x + col2_w * 0.5f - 90.0f, empty_y + 24.0f, is_zh ? "点击上方输入框极速添加" : "Add one using the input above", txt_muted, 0);
+    }
+
+    // =========================================================
+    // 栏 3：右栏任务深度详情面板 (Task Inspector)
+    // =========================================================
+    if (col3_w > 0.0f) {
+        float col3_x = cx + cw - col3_w;
+        rife_draw_rect(core, col3_x, cy, col3_w, ch, is_dark ? 0x101118FF : 0xF8FAFCFF);
+
+        CalendarEvent* cur_e = get_selected_event(state);
+        if (cur_e) {
+            float ins_y = cy + 16.0f;
+            float ins_x = col3_x + 18.0f;
+            float ins_w = col3_w - 36.0f;
+
+            // 1. 顶栏：大复选圆圈 + 标题编辑框 + 关闭按钮 [×]
+            draw_task_checkbox(core, ins_x + 10.0f, ins_y + 14.0f, 10.0f, cur_e->priority, cur_e->is_completed, false);
+            rife_draw_round_rect(core, ins_x + 30.0f, ins_y, ins_w - 60.0f, 32.0f, 6.0f, is_dark ? 0x181A24FF : 0xFFFFFFFF, (state->active_field == 2) ? accent_pri : col_card_bd);
+            rife_draw_text_font(core, ins_x + 38.0f, ins_y + 6.0f, state->inspector_title[0] ? state->inspector_title : cur_e->title, txt_title, 1);
+
+            // 右上角关闭抽屉 [×]
+            float close_x = col3_x + col3_w - 34.0f;
+            rife_draw_text_rect(core, close_x, ins_y + 6.0f, 20.0f, 20.0f, "×", txt_muted, 1, 0);
+            ins_y += 44.0f;
+
+            // 2. 截止日期与时间设置
+            rife_draw_text_font(core, ins_x, ins_y, is_zh ? "截止日期" : "Due Date", txt_muted, 4);
+            ins_y += 20.0f;
+
+            float pill_w = 66.0f;
+            float pill_h = 26.0f;
+            const char* d_pills[4] = { "今天", "明天", "下周", "清除" };
+            for (int p = 0; p < 4; p++) {
+                float px = ins_x + (float)p * (pill_w + 6.0f);
+                rife_draw_round_rect(core, px, ins_y, pill_w, pill_h, 5.0f, is_dark ? 0x181A24FF : 0xFFFFFFFF, col_card_bd);
+                rife_draw_text_rect(core, px, ins_y, pill_w, pill_h, d_pills[p], (p == 3) ? 0xEF4444FF : txt_body, 4, 0);
+            }
+            ins_y += 36.0f;
+
+            // 3. 优先级旗帜选择器
+            rife_draw_text_font(core, ins_x, ins_y, is_zh ? "优先级" : "Priority", txt_muted, 4);
+            ins_y += 20.0f;
+
+            const char* pri_labels[4] = { "🏳️ 无", "🚩 低", "🚩 中", "🚩 高" };
+            for (int p = 0; p < 4; p++) {
+                float px = ins_x + (float)p * (pill_w + 6.0f);
+                bool is_cur_p = (cur_e->priority == p);
+                uint32_t bd_c = is_cur_p ? s_priority_colors[p] : col_card_bd;
+                rife_draw_round_rect(core, px, ins_y, pill_w, pill_h, 5.0f, is_dark ? 0x181A24FF : 0xFFFFFFFF, bd_c);
+                rife_draw_text_rect(core, px, ins_y, pill_w, pill_h, pri_labels[p], s_priority_colors[p], 4, 0);
+            }
+            ins_y += 36.0f;
+
+            // 4. 所属清单选择
+            rife_draw_text_font(core, ins_x, ins_y, is_zh ? "所属清单" : "List", txt_muted, 4);
+            ins_y += 20.0f;
+            for (int l = 0; l < state->list_count && l < 4; l++) {
+                float lx = ins_x + (float)l * (pill_w + 6.0f);
+                bool is_cur_l = (cur_e->list_idx == l);
+                uint32_t bd_c = is_cur_l ? accent_pri : col_card_bd;
+                rife_draw_round_rect(core, lx, ins_y, pill_w, pill_h, 5.0f, is_dark ? 0x181A24FF : 0xFFFFFFFF, bd_c);
+                rife_draw_text_rect(core, lx, ins_y, pill_w, pill_h, state->lists[l].name, is_cur_l ? accent_pri : txt_body, 4, 0);
+            }
+            ins_y += 40.0f;
+
+            // 5. Checklist 子任务清单
+            char sub_head[64];
+            snprintf(sub_head, sizeof(sub_head), is_zh ? "子任务清单 (%d 项)" : "Subtasks (%d)", cur_e->subtask_count);
+            rife_draw_text_font(core, ins_x, ins_y, sub_head, txt_muted, 4);
+            ins_y += 22.0f;
+
+            for (int s = 0; s < cur_e->subtask_count && s < TICK_MAX_SUBTASKS; s++) {
+                TickSubtask* sub = &cur_e->subtasks[s];
+                float sub_item_y = ins_y;
+                rife_draw_round_rect(core, ins_x, sub_item_y, ins_w, 28.0f, 5.0f, is_dark ? 0x14151DFF : 0xFFFFFFFF, col_card_bd);
+
+                // 子任务复选圆圈
+                draw_task_checkbox(core, ins_x + 14.0f, sub_item_y + 14.0f, 6.5f, 0, sub->is_done, false);
+
+                // 子任务文字
+                rife_draw_text_font(core, ins_x + 30.0f, sub_item_y + 5.0f, sub->title, sub->is_done ? txt_muted : txt_body, 4);
+                if (sub->is_done) {
+                    float tw = (float)strlen(sub->title) * 6.5f;
+                    rife_draw_line(core, ins_x + 30.0f, sub_item_y + 14.0f, ins_x + 30.0f + tw, sub_item_y + 14.0f, 1.0f, txt_muted);
+                }
+
+                // 右侧删除子任务按钮 [×]
+                rife_draw_text_rect(core, ins_x + ins_w - 24.0f, sub_item_y + 4.0f, 18.0f, 20.0f, "×", txt_muted, 4, 0);
+                ins_y += 32.0f;
+            }
+
+            // 添加子任务输入框
+            if (cur_e->subtask_count < TICK_MAX_SUBTASKS) {
+                bool sub_focused = (state->active_field == 4);
+                rife_draw_round_rect(core, ins_x, ins_y, ins_w, 28.0f, 5.0f, is_dark ? 0x14151DFF : 0xFFFFFFFF, sub_focused ? accent_pri : col_card_bd);
+                if (state->inspector_subtask[0] != '\0') {
+                    rife_draw_text_font(core, ins_x + 10.0f, ins_y + 5.0f, state->inspector_subtask, txt_title, 4);
+                } else {
+                    rife_draw_text_font(core, ins_x + 10.0f, ins_y + 5.0f, is_zh ? "+ 添加子任务，回车确认" : "+ Add subtask, press Enter", txt_muted, 4);
+                }
+                ins_y += 36.0f;
+            }
+
+            // 6. 详细备注 (Notes)
+            ins_y += 6.0f;
+            rife_draw_text_font(core, ins_x, ins_y, is_zh ? "详细备注" : "Notes", txt_muted, 4);
+            ins_y += 20.0f;
+            float note_h = 70.0f;
+            bool desc_focused = (state->active_field == 3);
+            rife_draw_round_rect(core, ins_x, ins_y, ins_w, note_h, 6.0f, is_dark ? 0x14151DFF : 0xFFFFFFFF, desc_focused ? accent_pri : col_card_bd);
+            const char* desc_show = state->inspector_desc[0] ? state->inspector_desc : (cur_e->desc[0] ? cur_e->desc : "输入任务详细备注...");
+            rife_draw_text_font(core, ins_x + 10.0f, ins_y + 8.0f, desc_show, cur_e->desc[0] ? txt_body : txt_muted, 0);
+
+            // 7. 底部操作栏：开始番茄专注 与 删除
+            float act_y = cy + ch - 54.0f;
+            float pomo_w = ins_w - 90.0f;
+            rife_draw_round_rect(core, ins_x, act_y, pomo_w, 36.0f, 6.0f, accent_pri, 0);
+            rife_draw_text_rect(core, ins_x, act_y, pomo_w, 36.0f, is_zh ? "🍅 开始番茄专注 25:00" : "🍅 Start Pomodoro", 0xFFFFFFFF, 5, 0);
+
+            float del_x = ins_x + pomo_w + 10.0f;
+            float del_w = 80.0f;
+            rife_draw_round_rect(core, del_x, act_y, del_w, 36.0f, 6.0f, is_dark ? 0x221518FF : 0xFEF2F2FF, 0xEF444488);
+            rife_draw_text_rect(core, del_x, act_y, del_w, 36.0f, is_zh ? "删除" : "Delete", 0xEF4444FF, 5, 0);
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// 模块 2：艾森豪威尔四象限看板渲染 (Eisenhower Matrix View)
+// -------------------------------------------------------------
+
+static void render_matrix_quadrants(CalendarState* state, RifeCore* core, float cx, float cy, float cw, float ch) {
+    bool is_dark = (rife_get_system_config()->palette == PALETTE_OBSIDIAN);
+    bool is_zh   = (rife_get_system_config()->language == LANG_ZH_CN);
+
+    uint32_t col_card_bg  = is_dark ? 0x14151DFF : 0xFFFFFFFF;
+    uint32_t txt_title    = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
+    uint32_t txt_body     = is_dark ? 0xCBD5E1FF : 0x334155FF;
+    uint32_t txt_muted    = is_dark ? 0x94A3B8FF : 0x64748BFF;
+    (void)txt_body;
+
+    float pad = 16.0f;
+    float gap = 12.0f;
+    float qw = (cw - pad * 2.0f - gap) * 0.5f;
+    float qh = (ch - pad * 2.0f - gap) * 0.5f;
+
+    const char* q_titles_zh[4] = { "🔴 象限 I · 重要且紧急", "🟡 象限 II · 重要不紧急", "🔵 象限 III · 紧急不重要", "⚪ 象限 IV · 不重要不紧急" };
+    const char* q_sub_zh[4]    = { "立即执行 · 核心攻坚", "制定计划 · 价值投资", "快速授权 · 琐事批处理", "尽量减少 · 休闲娱乐" };
+    uint32_t q_accents[4]      = { 0xEF4444FF, 0xF59E0BFF, 0x06B6D4FF, 0x64748BFF };
+
+    for (int q = 0; q < 4; q++) {
+        float qx = cx + pad + (float)(q % 2) * (qw + gap);
+        float qy = cy + pad + (float)(q / 2) * (qh + gap);
+
+        // 象限底板
+        rife_draw_round_rect(core, qx, qy, qw, qh, 8.0f, col_card_bg, q_accents[q] & 0xFFFFFF66);
+        // 顶部高光指示条
+        rife_draw_round_rect(core, qx + 12.0f, qy + 1.5f, qw - 24.0f, 2.0f, 1.0f, q_accents[q], 0);
+
+        // 标题与理念
+        rife_draw_text_font(core, qx + 16.0f, qy + 12.0f, is_zh ? q_titles_zh[q] : "Quadrant", q_accents[q], 5);
+        rife_draw_text_font(core, qx + 16.0f, qy + 32.0f, is_zh ? q_sub_zh[q] : "Action Plan", txt_muted, 4);
+
+        // 右上角 [+] 快速添加
+        float add_btn_x = qx + qw - 36.0f;
+        float add_btn_y = qy + 12.0f;
+        rife_draw_round_rect(core, add_btn_x, add_btn_y, 22.0f, 22.0f, 4.0f, is_dark ? 0x1E202BFF : 0xF1F5F9FF, q_accents[q]);
+        cal_draw_plus_icon(core, add_btn_x + 11.0f, add_btn_y + 11.0f, 9.0f, 1.5f, q_accents[q]);
+
+        // 任务列表
+        float task_y = qy + 54.0f;
+        int q_target = q + 1; // 1, 2, 3, 4
+        int count_in_q = 0;
+
+        for (int i = 0; i < state->event_count; i++) {
+            CalendarEvent* e = &state->events[i];
+            if (e->quadrant != q_target && !(e->quadrant == 0 && (3 - e->priority + 1) == q_target)) continue;
+
+            float t_h = 36.0f;
+            if (task_y + t_h <= qy + qh - 10.0f) {
+                // 单任务小卡片
+                rife_draw_round_rect(core, qx + 12.0f, task_y, qw - 24.0f, t_h, 6.0f, is_dark ? 0x101118FF : 0xF8FAFCFF, is_dark ? 0x1E202BFF : 0xE2E8F0FF);
+
+                // 复选框
+                draw_task_checkbox(core, qx + 24.0f, task_y + t_h * 0.5f, 7.5f, e->priority, e->is_completed, false);
+
+                // 文字
+                rife_draw_text_font(core, qx + 38.0f, task_y + 9.0f, e->title, e->is_completed ? txt_muted : txt_title, 4);
+                if (e->is_completed) {
+                    float tw = (float)strlen(e->title) * 6.5f;
+                    rife_draw_line(core, qx + 38.0f, task_y + 17.0f, qx + 38.0f + tw, task_y + 17.0f, 1.0f, txt_muted);
+                }
+
+                task_y += (t_h + 6.0f);
+                count_in_q++;
+            }
+        }
+
+        if (count_in_q == 0) {
+            rife_draw_text_font(core, qx + 20.0f, qy + qh * 0.5f - 8.0f, is_zh ? "点击右上角 [+] 添加事项" : "Click [+] to add", txt_muted, 4);
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// 模块 3：日历多维时间轴网格渲染 (Calendar Timeline Grid)
+// -------------------------------------------------------------
+
+static void render_calendar_timeline(CalendarState* state, RifeCore* core, float cx, float cy, float cw, float ch) {
+    bool is_dark = (rife_get_system_config()->palette == PALETTE_OBSIDIAN);
+    bool is_zh   = (rife_get_system_config()->language == LANG_ZH_CN);
+
+    uint32_t col_line   = is_dark ? 0x1A1C28FF : 0xF1F5F9FF;
+    uint32_t txt_title  = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
+    uint32_t txt_muted  = is_dark ? 0x94A3B8FF : 0x64748BFF;
+    uint32_t accent_pri = is_dark ? 0x6366F1FF : 0x4F46E5FF;
+
+    // A. 顶部周表头
+    float head_h = 56.0f;
+    rife_draw_rect(core, cx, cy, cw, head_h, is_dark ? 0x101118FF : 0xF8FAFCFF);
+    rife_draw_rect(core, cx, cy + head_h - 1.0f, cw, 1.0f, is_dark ? 0x1E202BFF : 0xE2E8F0FF);
+
+    float scale_w = 54.0f;
+    float col_w = (cw - scale_w) / 7.0f;
+
+    int sun_y, sun_m, sun_d;
+    get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
+
+    const char* week_names[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
+    for (int col = 0; col < 7; col++) {
+        float col_x = cx + scale_w + (float)col * col_w;
+        int dy, dm, dd;
+        add_days(sun_y, sun_m, sun_d, col, &dy, &dm, &dd);
+        bool is_today = (dy == state->cur_year && dm == state->cur_month && dd == state->cur_day);
+
+        rife_draw_text_rect(core, col_x, cy + 8.0f, col_w, 16.0f, is_zh ? week_names[col] : "Day", is_today ? accent_pri : txt_muted, 4, 0);
+
+        char d_str[16];
+        snprintf(d_str, sizeof(d_str), "%d", dd);
+        if (is_today) {
+            float badge_w = 26.0f;
+            rife_draw_round_rect(core, col_x + (col_w - badge_w) * 0.5f, cy + 26.0f, badge_w, 22.0f, 6.0f, accent_pri, 0);
+            rife_draw_text_rect(core, col_x, cy + 26.0f, col_w, 22.0f, d_str, 0xFFFFFFFF, 5, 0);
+        } else {
+            rife_draw_text_rect(core, col_x, cy + 26.0f, col_w, 22.0f, d_str, txt_title, 5, 0);
+        }
+
+        rife_draw_rect(core, col_x, cy, 1.0f, head_h, is_dark ? 0x1E202BFF : 0xE2E8F0FF);
+    }
+
+    // B. 时间网格与事项卡片 (24小时)
+    float grid_y0 = cy + head_h;
+    float grid_h = ch - head_h;
+    float hour_h = 60.0f; // 1小时 = 60px
+
+    rife_push_scissor_round(core, cx, grid_y0, cw, grid_h, 0.0f);
+
+    float scroll_y = state->scroll_y;
+    for (int h = 0; h < 24; h++) {
+        float line_y = grid_y0 + (float)h * hour_h + scroll_y;
+        if (line_y >= grid_y0 - hour_h && line_y <= cy + ch) {
+            // 时间标尺文本
+            char scale_str[16];
+            snprintf(scale_str, sizeof(scale_str), "%02d:00", h);
+            rife_draw_text_font(core, cx + 8.0f, line_y - 8.0f, scale_str, txt_muted, 4);
+            // 水平网格线
+            rife_draw_rect(core, cx + scale_w, line_y, cw - scale_w, 1.0f, col_line);
+        }
+    }
+
+    // 垂直列网格线
+    for (int col = 0; col < 7; col++) {
+        float col_x = cx + scale_w + (float)col * col_w;
+        rife_draw_rect(core, col_x, grid_y0, 1.0f, grid_h, col_line);
+    }
+
+    // 绘制该周日程事项
+    for (int i = 0; i < state->event_count; i++) {
+        CalendarEvent* e = &state->events[i];
+        if (!e->has_date || !e->has_time) continue;
+
+        // 匹配属于哪一天
+        for (int col = 0; col < 7; col++) {
+            int dy, dm, dd;
+            add_days(sun_y, sun_m, sun_d, col, &dy, &dm, &dd);
+            if (e->year == dy && e->month == dm && e->day == dd) {
+                float col_x = cx + scale_w + (float)col * col_w;
+                float start_m = (float)(e->start_hour * 60 + e->start_min);
+                float end_m   = (float)(e->end_hour * 60 + e->end_min);
+                if (end_m <= start_m) end_m = start_m + 30.0f;
+
+                float ey = grid_y0 + (start_m / 60.0f) * hour_h + scroll_y;
+                float eh = ((end_m - start_m) / 60.0f) * hour_h;
+                if (eh < 22.0f) eh = 22.0f;
+
+                uint32_t p_col = s_priority_colors[e->priority & 3];
+                rife_draw_round_rect(core, col_x + 3.0f, ey, col_w - 6.0f, eh, 4.0f, is_dark ? 0x1A1C28EE : 0xEEF2FFEE, p_col);
+                rife_draw_rect(core, col_x + 3.0f, ey, 3.0f, eh, p_col);
+
+                rife_draw_text_font(core, col_x + 9.0f, ey + 4.0f, e->title, is_dark ? 0xF8FAFCFF : 0x0F172AFF, 4);
+                break;
+            }
+        }
+    }
+
+    // 当前时间激光指示红线
+    float cur_total_m = (float)(state->cur_hour * 60 + state->cur_min);
+    float now_y = grid_y0 + (cur_total_m / 60.0f) * hour_h + scroll_y;
+    if (now_y >= grid_y0 && now_y <= cy + ch) {
+        rife_draw_rect(core, cx + scale_w, now_y, cw - scale_w, 1.5f, 0xEF4444FF);
+        rife_draw_circle(core, cx + scale_w, now_y + 0.75f, 3.5f, 0xEF4444FF, 0xEF4444FF);
+    }
+
+    rife_pop_scissor(core);
+}
+
+// -------------------------------------------------------------
+// 插件生命周期：创建、更新、销毁与渲染 (Plugin Lifecycle)
 // -------------------------------------------------------------
 
 static void* calendar_create(RifeCore* core) {
     (void)core;
     CalendarState* state = (CalendarState*)malloc(sizeof(CalendarState));
     if (!state) return NULL;
-
     memset(state, 0, sizeof(CalendarState));
-    state->view_mode = CAL_VIEW_WEEK; // 默认经典周视图
-    sync_system_clock(state);
 
+    sync_system_clock(state);
     state->view_year = state->cur_year;
     state->view_month = state->cur_month;
     state->view_day = state->cur_day;
 
-    load_calendar_data(state);
+    state->view_mode = CAL_VIEW_TASKS; // 默认展开滴答三栏流
+    state->active_list_idx = 1;        // 默认进入 "今天"
+    state->task_filter = 1;            // 默认展示 "未完成"
+    state->time_scale = 60.0f;
+    state->scroll_y = -((float)state->cur_hour * 60.0f - 120.0f);
+    if (state->scroll_y > 0.0f) state->scroll_y = 0.0f;
 
-    state->selected_event_id = -1;
-    state->show_new_modal = false;
-    state->modal_tag_idx = 0;
-    state->new_hour = 10;
-    state->new_min = 0;
-    state->new_end_hour = 10;
-    state->new_end_min = 30;
-    state->new_duration_idx = 2; // 默认 30 分钟快捷胶囊
-    state->active_field = 0;
-    state->search_query[0] = '\0';
-    state->cursor_blink_t = 0.0f;
-    state->show_new_tag_modal = false;
-    state->new_tag_color_idx = 0;
-
-    state->time_scale = 120.0f; // 舒适大格子，每小时 120px (1分钟 = 2.0px，15分钟 = 30px)
-    state->scroll_y = 8.0f * state->time_scale; // 默认平滑定位于早 08:00 工作时段
+    load_storage_to_state(state);
     return state;
 }
 
 static void calendar_destroy(void* inst) {
-    if (inst) free(inst);
-}
-
-// -------------------------------------------------------------
-// 快捷回到今天 (Return to Today)
-// -------------------------------------------------------------
-static void return_to_today(CalendarState* state, RifeCore* core) {
-    if (!state) return;
-    sync_system_clock(state);
-    state->view_year = state->cur_year;
-    state->view_month = state->cur_month;
-    state->view_day = state->cur_day;
-    float hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
-    int target_h = (state->cur_hour >= 2) ? (state->cur_hour - 2) : 0;
-    if (target_h > 16) target_h = 16;
-    state->scroll_y = (float)target_h * hour_h;
-    rife_request_redraw(core);
-}
-
-// -------------------------------------------------------------
-// 外部调用：打开新建日程模态对话框 (Google "+ 创建" 联动)
-// -------------------------------------------------------------
-void rtodo_open_create_modal(void* inst) {
     CalendarState* state = (CalendarState*)inst;
-    if (!state) return;
-    sync_system_clock(state);
-    state->view_year = state->cur_year;
-    state->view_month = state->cur_month;
-    state->view_day = state->cur_day;
-    state->new_hour = state->cur_hour;
-    state->new_min = (state->cur_min / 15) * 15;
-    calc_event_end_time(state->new_hour, state->new_min, 2, &state->new_end_hour, &state->new_end_min);
-    state->new_duration_idx = 2; // 默认 30 分钟
-    state->show_new_modal = true;
-    state->active_field = 1;
-    state->input_title[0] = '\0';
-    state->input_location[0] = '\0';
-    state->input_desc[0] = '\0';
-    state->show_new_tag_modal = false;
-}
-
-// -------------------------------------------------------------
-// 文本几何排版测量器 (CJK & ASCII 亚像素宽度测算)
-// -------------------------------------------------------------
-static float cal_measure_text_width(const char* text, uint8_t font_id) {
-    if (!text || !text[0]) return 0.0f;
-    float ascii_w = 7.0f;
-    float cjk_w = 13.0f;
-    if (font_id == 1) { ascii_w = 8.0f; cjk_w = 15.0f; }
-    else if (font_id == 2) { ascii_w = 9.5f; cjk_w = 18.0f; }
-    else if (font_id == 3) { ascii_w = 6.5f; cjk_w = 12.0f; }
-    else if (font_id == 4) { ascii_w = 6.0f; cjk_w = 11.0f; }
-    else if (font_id == 5) { ascii_w = 7.2f; cjk_w = 13.5f; }
-    else if (font_id == 6) { ascii_w = 11.0f; cjk_w = 21.0f; }
-
-    float w = 0.0f;
-    const unsigned char* p = (const unsigned char*)text;
-    while (*p) {
-        if (*p < 0x80) {
-            unsigned char ch = *p;
-            if (ch == 'i' || ch == 'l' || ch == '|' || ch == ':' || ch == ';' || ch == '!' || ch == '\'') {
-                w += ascii_w * 0.45f;
-            } else if (ch == ' ' || ch == '.' || ch == ',' || ch == '[' || ch == ']' || ch == '(' || ch == ')') {
-                w += ascii_w * 0.55f;
-            } else if (ch == 'f' || ch == 't' || ch == 'j' || ch == 'r' || ch == '<' || ch == '>') {
-                w += ascii_w * 0.70f;
-            } else if (ch >= 'A' && ch <= 'Z') {
-                w += ascii_w * 1.15f;
-            } else if (ch == 'm' || ch == 'w' || ch == 'M' || ch == 'W' || ch == '@') {
-                w += ascii_w * 1.35f;
-            } else {
-                w += ascii_w;
-            }
-            p++;
-        }
-        else if ((*p & 0xE0) == 0xC0) {
-            w += ascii_w * 1.2f;
-            p += 2;
-        }
-        else if ((*p & 0xF0) == 0xE0) {
-            w += cjk_w;
-            p += 3;
-        }
-        else {
-            w += cjk_w * 1.1f;
-            p += 4;
-        }
-    }
-    return w;
-}
-
-// -------------------------------------------------------------
-// Antigravity 现代开发者风格原生按钮组件 (Primary Indigo & Outlined Slate)
-// -------------------------------------------------------------
-static void rife_draw_liquid_glass_button(RifeCore* core, float bx, float by, float bw, float bh, float radius,
-                                          const char* text, uint8_t font_id, uint32_t text_color,
-                                          bool is_primary, uint32_t primary_color,
-                                          bool is_hover, bool is_dark)
-{
-    if (!core || bw <= 0.0f || bh <= 0.0f) return;
-
-    uint32_t bg_col;
-    uint32_t brd_col = 0;
-    uint32_t txt_col = text_color;
-
-    if (is_primary) {
-        // Antigravity Primary Button (Electric Indigo #6366F1, subtle glowing border #818CF8)
-        uint32_t pri_base = (primary_color != 0) ? primary_color : (is_dark ? 0x6366F1FF : 0x4F46E5FF);
-        if (is_hover) {
-            bg_col = is_dark ? 0x4F46E5FF : 0x4338CAFF;
-            brd_col = is_dark ? 0xA5B4FCFF : 0x6366F1FF;
-        } else {
-            bg_col = pri_base;
-            brd_col = is_dark ? 0x818CF888 : 0x4F46E588;
-        }
-        txt_col = 0xFFFFFFFF;
-    } else {
-        // Antigravity Outlined / Secondary Dev Button (Dark slate, crisp 1px border)
-        if (is_dark) {
-            bg_col = is_hover ? 0x1E202BFF : 0x14151DFF;
-            brd_col = is_hover ? 0x3D4155FF : 0x242634FF;
-            if (txt_col == 0) txt_col = 0xF8FAFCFF;
-        } else {
-            bg_col = is_hover ? 0xF1F5F9FF : 0xFFFFFFFF;
-            brd_col = is_hover ? 0xCBD5E1FF : 0xE2E8F0FF;
-            if (txt_col == 0) txt_col = 0x0F172AFF;
-        }
-    }
-
-    rife_draw_round_rect(core, bx, by, bw, bh, radius, bg_col, brd_col);
-
-    // 居中排版文字/图标
-    if (text && text[0] != '\0') {
-        rife_draw_text_rect(core, bx, by, bw, bh, text, txt_col, font_id, 0);
+    if (state) {
+        save_state_to_storage(state);
+        free(state);
     }
 }
-
-// -------------------------------------------------------------
-// 交互更新 (Update)
-// -------------------------------------------------------------
 
 static void calendar_update(void* inst, RifeCore* core, const RifeInput* input, float client_w, float client_h) {
     CalendarState* state = (CalendarState*)inst;
-    if (!state) return;
+    if (!state || !input) return;
+    (void)core;
 
     sync_system_clock(state);
-
-    // 光标闪烁时钟推进
-    state->cursor_blink_t += 0.04f;
-    if (state->cursor_blink_t > 1.0f) state->cursor_blink_t -= 1.0f;
-
-    // ESC 键取消当前拖拽框选
-    if (state->is_dragging_time && input->key_pressed[VK_ESCAPE]) {
-        state->is_dragging_time = false;
-        rife_request_redraw(core);
-        return;
-    }
-
-    // 键盘按键与字符文本输入处理
-    if (state->active_field > 0) {
-        // A. ESC 关闭或失焦
-        if (input->key_pressed[VK_ESCAPE]) {
-            if (state->show_new_tag_modal) {
-                state->show_new_tag_modal = false;
-                state->active_field = 1;
-            } else if (state->show_new_modal) {
-                state->show_new_modal = false;
-                state->active_field = 0;
-            } else if (state->active_field == 5) {
-                state->search_query[0] = '\0';
-                state->active_field = 0;
-            }
-            rife_request_redraw(core);
-            return;
-        }
-
-        // B. Tab 循环切换输入框焦点
-        if (input->key_pressed[VK_TAB]) {
-            if (state->show_new_modal && !state->show_new_tag_modal) {
-                state->active_field = (state->active_field % 3) + 1; // 1 -> 2 -> 3 -> 1
-                rife_request_redraw(core);
-                return;
-            }
-        }
-
-        // C. Backspace 退格删除 (UTF-8 安全多字节边界)
-        if (input->key_pressed[VK_BACK]) {
-            if (state->active_field == 1) {
-                utf8_pop_back(state->input_title);
-            } else if (state->active_field == 2) {
-                utf8_pop_back(state->input_location);
-            } else if (state->active_field == 3) {
-                utf8_pop_back(state->input_desc);
-            } else if (state->active_field == 4) {
-                utf8_pop_back(state->new_tag_name);
-            } else if (state->active_field == 5) {
-                utf8_pop_back(state->search_query);
-            }
-            rife_request_redraw(core);
-        }
-
-        // D. 字符文本输入与 Ctrl+V 剪贴板文本写入
-        if (input->text_input[0] != '\0') {
-            const char* p = input->text_input;
-            while (*p) {
-                if (*p == '\r' || *p == '\n') {
-                    if (state->active_field == 4) {
-                        // 确认新建标签
-                        if (state->new_tag_name[0] != '\0' && state->tag_count < CAL_MAX_CUSTOM_TAGS) {
-                            int idx = state->tag_count++;
-                            snprintf(state->tags[idx].name, sizeof(state->tags[idx].name), "%s", state->new_tag_name);
-                            state->tags[idx].color_bar = s_tag_palette[state->new_tag_color_idx];
-                            state->tags[idx].is_enabled = true;
-                            state->modal_tag_idx = idx;
-                            save_calendar_data(state);
-                        }
-                        state->show_new_tag_modal = false;
-                        state->active_field = 1;
-                    } else if (state->active_field == 1) {
-                        state->active_field = 2; // 回车切换至地点
-                    } else if (state->active_field == 2) {
-                        state->active_field = 3; // 回车切换至备注
-                    } else if (state->active_field == 5) {
-                        // 搜索框回车：若有匹配结果，快速跳转并定位至首个匹配日程
-                        for (int i = 0; i < state->event_count; i++) {
-                            CalendarEvent* e = &state->events[i];
-                            if (event_matches_search(state, e)) {
-                                state->view_year = e->year;
-                                state->view_month = e->month;
-                                state->view_day = e->day;
-                                float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
-                                state->scroll_y = start_f * state->time_scale - 80.0f;
-                                if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
-                                state->selected_event_id = (int)e->id;
-                                state->active_field = 0;
-                                break;
-                            }
-                        }
-                    }
-                    p++;
-                    continue;
-                }
-                if (*p == '\b') {
-                    p++;
-                    continue;
-                }
-
-                if (state->active_field == 1) {
-                    size_t len = strlen(state->input_title);
-                    if (len < sizeof(state->input_title) - 4) {
-                        state->input_title[len] = *p;
-                        state->input_title[len + 1] = '\0';
-                    }
-                } else if (state->active_field == 2) {
-                    size_t len = strlen(state->input_location);
-                    if (len < sizeof(state->input_location) - 4) {
-                        state->input_location[len] = *p;
-                        state->input_location[len + 1] = '\0';
-                    }
-                } else if (state->active_field == 3) {
-                    size_t len = strlen(state->input_desc);
-                    if (len < sizeof(state->input_desc) - 4) {
-                        state->input_desc[len] = *p;
-                        state->input_desc[len + 1] = '\0';
-                    }
-                } else if (state->active_field == 4) {
-                    size_t len = strlen(state->new_tag_name);
-                    if (len < sizeof(state->new_tag_name) - 4) {
-                        state->new_tag_name[len] = *p;
-                        state->new_tag_name[len + 1] = '\0';
-                    }
-                } else if (state->active_field == 5) {
-                    size_t len = strlen(state->search_query);
-                    if (len < sizeof(state->search_query) - 4) {
-                        state->search_query[len] = *p;
-                        state->search_query[len + 1] = '\0';
-                    }
-                }
-                p++;
-            }
-            rife_request_redraw(core);
-        }
-    }
-
-    // 鼠标滚轮微调弹窗时间（以 1 分钟为单位）或缩放/滚动大时间轴
-    if (state->show_new_modal && input->scroll_delta != 0.0f) {
-        float mw = 420.0f;
-        float mh = 340.0f;
-        float mx0 = (client_w - mw) * 0.5f;
-        float my0 = (client_h - mh) * 0.5f;
-        float time_y = my0 + 108.0f;
-        float mx = input->mouse_x;
-        float my = input->mouse_y;
-
-        if (my >= time_y - 4.0f && my <= time_y + 28.0f) {
-            int delta = (input->scroll_delta > 0.0f) ? 1 : -1;
-            int cur_dur = (state->new_end_hour * 60 + state->new_end_min) - (state->new_hour * 60 + state->new_min);
-            if (cur_dur < 1) cur_dur = 30;
-
-            // 1. 悬停开始时间-小时区域
-            if (mx >= mx0 + 44.0f && mx <= mx0 + 106.0f) {
-                state->new_hour = (state->new_hour + delta + 24) % 24;
-                int new_end = state->new_hour * 60 + state->new_min + cur_dur;
-                if (new_end > 1439) new_end = 1439;
-                state->new_end_hour = new_end / 60;
-                state->new_end_min = new_end % 60;
-                rife_request_redraw(core);
-                return;
-            }
-            // 2. 悬停开始时间-分钟区域 (以 1 分钟为单位)
-            if (mx >= mx0 + 112.0f && mx <= mx0 + 174.0f) {
-                int new_start = state->new_hour * 60 + state->new_min + delta;
-                if (new_start < 0) new_start = 0;
-                if (new_start > 1438) new_start = 1438;
-                state->new_hour = new_start / 60;
-                state->new_min = new_start % 60;
-                int new_end = new_start + cur_dur;
-                if (new_end > 1439) new_end = 1439;
-                state->new_end_hour = new_end / 60;
-                state->new_end_min = new_end % 60;
-                rife_request_redraw(core);
-                return;
-            }
-            // 3. 悬停结束时间-小时区域
-            if (mx >= mx0 + 224.0f && mx <= mx0 + 288.0f) {
-                int new_end = state->new_end_hour * 60 + state->new_end_min + delta * 60;
-                int cur_start = state->new_hour * 60 + state->new_min;
-                if (new_end <= cur_start) new_end = cur_start + 1;
-                if (new_end > 1439) new_end = 1439;
-                state->new_end_hour = new_end / 60;
-                state->new_end_min = new_end % 60;
-                state->new_duration_idx = -1; // 自定义时长
-                rife_request_redraw(core);
-                return;
-            }
-            // 4. 悬停结束时间-分钟区域 (以 1 分钟为单位)
-            if (mx >= mx0 + 292.0f && mx <= mx0 + 354.0f) {
-                int new_end = state->new_end_hour * 60 + state->new_end_min + delta;
-                int cur_start = state->new_hour * 60 + state->new_min;
-                if (new_end <= cur_start) new_end = cur_start + 1;
-                if (new_end > 1439) new_end = 1439;
-                state->new_end_hour = new_end / 60;
-                state->new_end_min = new_end % 60;
-                state->new_duration_idx = -1; // 自定义时长
-                rife_request_redraw(core);
-                return;
-            }
-        }
-    }
-
-    // 鼠标滚轮纵向平滑滚动或 Ctrl+滚轮缩放时间轴 (周视图与日视图大表格)
-    if (!state->show_new_modal && !state->show_new_tag_modal && input->scroll_delta != 0.0f) {
-        if (state->view_mode == CAL_VIEW_WEEK || state->view_mode == CAL_VIEW_DAY) {
-            float cur_hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 120.0f;
-            float header_bar_h = (state->view_mode == CAL_VIEW_WEEK) ? 52.0f : 36.0f;
-            float avail_h = (client_h - 44.0f) - header_bar_h - 4.0f;
-
-            bool is_ctrl = (input->key_down[VK_CONTROL] != 0) || ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
-            if (is_ctrl) {
-                // Ctrl + 滚轮：动态平滑缩放时间轴刻度 (支持缩放到 1 分钟大格 720px/小时)
-                float old_h = cur_hour_h;
-                float zoom_step = input->scroll_delta * (old_h >= 240.0f ? 28.0f : 18.0f);
-                float new_h = old_h + zoom_step;
-                if (new_h < 44.0f) new_h = 44.0f;
-                if (new_h > 720.0f) new_h = 720.0f;
-
-                if (new_h != old_h) {
-                    float grid_y_offset = 44.0f + header_bar_h;
-                    float mouse_rel_y = input->mouse_y - grid_y_offset;
-                    if (mouse_rel_y < 0.0f) mouse_rel_y = 0.0f;
-                    if (mouse_rel_y > avail_h) mouse_rel_y = avail_h;
-
-                    float focus_time_h = (mouse_rel_y + state->scroll_y) / old_h;
-
-                    state->time_scale = new_h;
-                    float new_total_h = 24.0f * new_h;
-                    float max_scroll = new_total_h - avail_h;
-                    if (max_scroll < 0.0f) max_scroll = 0.0f;
-
-                    state->scroll_y = focus_time_h * new_h - mouse_rel_y;
-                    if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
-                    if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
-
-                    rife_request_redraw(core);
-                    return;
-                }
-            } else {
-                // 普通滚轮：纵向滚动大表格
-                float total_h = 24.0f * cur_hour_h;
-                float max_scroll = total_h - avail_h;
-                if (max_scroll < 0.0f) max_scroll = 0.0f;
-
-                state->scroll_y -= input->scroll_delta * 48.0f;
-                if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
-                if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
-                rife_request_redraw(core);
-                return;
-            }
-        }
-    }
-
-    // 快捷回到今天快捷键 (Key 'T' / 't' / Home 0x24)
-    if (state->active_field == 0 && !state->show_new_modal && !state->show_new_tag_modal) {
-        if (input->key_pressed['T'] || input->key_pressed['t'] || input->key_pressed[0x24]) {
-            return_to_today(state, core);
-            return;
-        }
-    }
-
-    // 处理时间网格框选拖拽中与释放创建 (Drag-to-select in Week/Day Grid)
-    if (state->is_dragging_time) {
-        float cur_my = input->mouse_y;
-        float h_bar = (state->view_mode == CAL_VIEW_WEEK) ? 52.0f : 36.0f;
-        float g_top = 48.0f + h_bar;
-        float cur_hh = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
-
-        // 计算当前鼠标位置对应的一天分钟数 (0~1439)
-        float cur_exact_h = (cur_my - g_top + state->scroll_y) / cur_hh;
-        int cur_m = (int)floorf(cur_exact_h * 60.0f);
-        if (cur_m < 0) cur_m = 0;
-        if (cur_m > 1439) cur_m = 1439;
-
-        // 1. 拖动中：鼠标按住移动更新结束时间
-        if (input->mouse_down[0] && !input->mouse_released[0]) {
-            if (cur_m != state->drag_cur_mins) {
-                state->drag_cur_mins = cur_m;
-                rife_request_redraw(core);
-            }
-            return;
-        }
-
-        // 2. 释放鼠标：完成拖拽或单击，唤起新建日程弹窗
-        if (input->mouse_released[0] || !input->mouse_down[0]) {
-            int start_m = (state->drag_start_mins < state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
-            int end_m = (state->drag_start_mins > state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
-
-            // 如果拖动位移极小（即普通单击），赋予合理的默认时长 (15 或 30 分钟)
-            if (end_m == start_m || (fabsf(cur_my - state->drag_start_y) < 4.0f && end_m <= start_m + 1)) {
-                int dur_mins = (cur_hh >= 400.0f) ? 15 : 30;
-                end_m = start_m + dur_mins;
-                if (end_m > 1439) end_m = 1439;
-            }
-
-            state->view_year = state->drag_target_year;
-            state->view_month = state->drag_target_month;
-            state->view_day = state->drag_target_day;
-            state->new_hour = start_m / 60;
-            state->new_min = start_m % 60;
-            state->new_end_hour = end_m / 60;
-            state->new_end_min = end_m % 60;
-
-            int total_dur = end_m - start_m;
-            if (total_dur == 1) state->new_duration_idx = 0;
-            else if (total_dur == 15) state->new_duration_idx = 1;
-            else if (total_dur == 30) state->new_duration_idx = 2;
-            else if (total_dur == 60) state->new_duration_idx = 3;
-            else if (total_dur == 120) state->new_duration_idx = 4;
-            else state->new_duration_idx = -1;
-
-            state->show_new_modal = true;
-            state->active_field = 1;
-            state->input_title[0] = '\0';
-            state->input_location[0] = '\0';
-            state->input_desc[0] = '\0';
-            state->is_dragging_time = false;
-            rife_request_redraw(core);
-            return;
-        }
-    }
-
-    if (!input->mouse_pressed[0]) return;
+    state->cursor_blink_t += 0.05f;
 
     float mx = input->mouse_x;
     float my = input->mouse_y;
 
-    float header_h = 48.0f;
-    float sidebar_w = 185.0f;
+    // 1. 鼠标滚轮滚动
+    if (fabsf(input->scroll_delta) > 0.01f) {
+        if (state->view_mode == CAL_VIEW_TASKS) {
+            state->scroll_tasks += input->scroll_delta * 30.0f;
+            if (state->scroll_tasks > 0.0f) state->scroll_tasks = 0.0f;
+        } else if (state->view_mode >= CAL_VIEW_WEEK) {
+            state->scroll_y += input->scroll_delta * 40.0f;
+            if (state->scroll_y > 0.0f) state->scroll_y = 0.0f;
+        }
+        rife_request_redraw(core);
+    }
 
-    // 0. 子弹窗：新建自定义标签模态框
-    if (state->show_new_tag_modal) {
-        float tw = 300.0f;
-        float th = 170.0f;
-        float tx0 = (client_w - tw) * 0.5f;
-        float ty0 = (client_h - th) * 0.5f;
-
-        if (mx >= tx0 && mx <= tx0 + tw && my >= ty0 && my <= ty0 + th) {
-            // A. 点击标签名称输入框
-            if (mx >= tx0 + 16.0f && mx <= tx0 + tw - 16.0f && my >= ty0 + 40.0f && my <= ty0 + 72.0f) {
-                state->active_field = 4;
+    // 2. 键盘字符键入处理 (Text Input Handling)
+    if (input->text_input[0] != '\0' && state->active_field > 0) {
+        if (state->active_field == 1) { // 中栏极速添加框
+            size_t cl = strlen(state->quick_add_title);
+            size_t al = strlen(input->text_input);
+            if (cl + al < sizeof(state->quick_add_title) - 1) {
+                strcat(state->quick_add_title, input->text_input);
                 rife_request_redraw(core);
-                return;
             }
-            // B. 点击 6 种色彩圆点
-            float dot_y = ty0 + 82.0f;
-            for (int i = 0; i < 6; i++) {
-                float dot_x = tx0 + 20.0f + (float)i * 32.0f;
-                if (mx >= dot_x && mx <= dot_x + 22.0f && my >= dot_y && my <= dot_y + 22.0f) {
-                    state->new_tag_color_idx = i;
-                    rife_request_redraw(core);
-                    return;
-                }
-            }
-            // C. 底部操作按钮
-            float act_y = ty0 + th - 40.0f;
-            // 取消
-            if (mx >= tx0 + tw - 150.0f && mx <= tx0 + tw - 86.0f && my >= act_y && my <= act_y + 28.0f) {
-                state->show_new_tag_modal = false;
-                state->active_field = 1;
+        } else if (state->active_field == 2) { // Inspector 标题编辑
+            size_t cl = strlen(state->inspector_title);
+            size_t al = strlen(input->text_input);
+            if (cl + al < sizeof(state->inspector_title) - 1) {
+                strcat(state->inspector_title, input->text_input);
+                CalendarEvent* cur_e = get_selected_event(state);
+                if (cur_e) snprintf(cur_e->title, sizeof(cur_e->title), "%s", state->inspector_title);
                 rife_request_redraw(core);
-                return;
             }
-            // 确定创建
-            if (mx >= tx0 + tw - 80.0f && mx <= tx0 + tw - 16.0f && my >= act_y && my <= act_y + 28.0f) {
-                if (state->new_tag_name[0] != '\0' && state->tag_count < CAL_MAX_CUSTOM_TAGS) {
-                    int idx = state->tag_count++;
-                    snprintf(state->tags[idx].name, sizeof(state->tags[idx].name), "%s", state->new_tag_name);
-                    state->tags[idx].color_bar = s_tag_palette[state->new_tag_color_idx];
-                    state->tags[idx].is_enabled = true;
-                    state->modal_tag_idx = idx;
-                    save_calendar_data(state);
-                }
-                state->show_new_tag_modal = false;
-                state->active_field = 1;
+        } else if (state->active_field == 3) { // Inspector 备注编辑
+            size_t cl = strlen(state->inspector_desc);
+            size_t al = strlen(input->text_input);
+            if (cl + al < sizeof(state->inspector_desc) - 1) {
+                strcat(state->inspector_desc, input->text_input);
+                CalendarEvent* cur_e = get_selected_event(state);
+                if (cur_e) snprintf(cur_e->desc, sizeof(cur_e->desc), "%s", state->inspector_desc);
                 rife_request_redraw(core);
-                return;
             }
-            return;
-        } else {
-            state->show_new_tag_modal = false;
-            state->active_field = 1;
-            rife_request_redraw(core);
-            return;
+        } else if (state->active_field == 4) { // 子任务输入
+            size_t cl = strlen(state->inspector_subtask);
+            size_t al = strlen(input->text_input);
+            if (cl + al < sizeof(state->inspector_subtask) - 1) {
+                strcat(state->inspector_subtask, input->text_input);
+                rife_request_redraw(core);
+            }
         }
     }
 
-    // 1. 浮动弹窗：新建日程模态框 (支持 100% 用户自定义起止时间)
-    if (state->show_new_modal) {
-        float mw = 420.0f;
-        float mh = 340.0f;
-        float mx0 = (client_w - mw) * 0.5f;
-        float my0 = (client_h - mh) * 0.5f;
-        float box_w = mw - 32.0f;
+    // 3. 键盘按键逻辑 (Backspace / Enter / Esc)
+    if (input->key_pressed[VK_BACK] && state->active_field > 0) {
+        if (state->active_field == 1) utf8_pop_back(state->quick_add_title);
+        else if (state->active_field == 2) {
+            utf8_pop_back(state->inspector_title);
+            CalendarEvent* cur_e = get_selected_event(state);
+            if (cur_e) snprintf(cur_e->title, sizeof(cur_e->title), "%s", state->inspector_title);
+        }
+        else if (state->active_field == 3) {
+            utf8_pop_back(state->inspector_desc);
+            CalendarEvent* cur_e = get_selected_event(state);
+            if (cur_e) snprintf(cur_e->desc, sizeof(cur_e->desc), "%s", state->inspector_desc);
+        }
+        else if (state->active_field == 4) utf8_pop_back(state->inspector_subtask);
+        rife_request_redraw(core);
+    }
 
-        if (mx >= mx0 && mx <= mx0 + mw && my >= my0 && my <= my0 + mh) {
-            // A. 点击标题输入框
-            float title_y = my0 + 40.0f;
-            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= title_y && my <= title_y + 30.0f) {
-                state->active_field = 1;
+    if (input->key_pressed[VK_RETURN]) {
+        if (state->active_field == 1 && state->quick_add_title[0] != '\0') {
+            // 回车提交极速添加
+            if (state->event_count < CAL_MAX_EVENTS) {
+                CalendarEvent* e = &state->events[state->event_count++];
+                memset(e, 0, sizeof(CalendarEvent));
+                e->id = 2000 + (uint32_t)state->event_count;
+                snprintf(e->title, sizeof(e->title), "%s", state->quick_add_title);
+                e->priority = state->quick_add_priority;
+                e->tag_idx = -1;
+
+                if (state->active_list_idx == 0) {
+                    e->list_idx = 0; // 收集箱
+                } else if (state->active_list_idx == 1) { // 今天
+                    e->list_idx = 1;
+                    e->has_date = true;
+                    e->year = state->cur_year; e->month = state->cur_month; e->day = state->cur_day;
+                } else if (state->active_list_idx == 2) { // 明天
+                    e->list_idx = 1;
+                    e->has_date = true;
+                    add_days(state->cur_year, state->cur_month, state->cur_day, 1, &e->year, &e->month, &e->day);
+                } else if (state->active_list_idx >= 6) {
+                    e->list_idx = state->active_list_idx - 5;
+                }
+
+                // 默认四象限归属
+                if (e->priority == TICK_PRIORITY_HIGH) e->quadrant = 1;
+                else if (e->priority == TICK_PRIORITY_MEDIUM) e->quadrant = 2;
+                else if (e->priority == TICK_PRIORITY_LOW) e->quadrant = 3;
+                else e->quadrant = 4;
+
+                state->selected_event_id = e->id;
+                snprintf(state->inspector_title, sizeof(state->inspector_title), "%s", e->title);
+                state->inspector_desc[0] = '\0';
+                save_state_to_storage(state);
+            }
+            state->quick_add_title[0] = '\0';
+            rife_request_redraw(core);
+        } else if (state->active_field == 4 && state->inspector_subtask[0] != '\0') {
+            // 回车添加子任务
+            CalendarEvent* cur_e = get_selected_event(state);
+            if (cur_e && cur_e->subtask_count < TICK_MAX_SUBTASKS) {
+                TickSubtask* s = &cur_e->subtasks[cur_e->subtask_count++];
+                snprintf(s->title, sizeof(s->title), "%s", state->inspector_subtask);
+                s->is_done = false;
+                state->inspector_subtask[0] = '\0';
+                save_state_to_storage(state);
                 rife_request_redraw(core);
-                return;
             }
-
-            // B. 自定义标签胶囊行与 [+ 标签]
-            float tag_y = my0 + 76.0f;
-            if (my >= tag_y && my <= tag_y + 24.0f) {
-                float px = mx0 + 16.0f;
-                for (int c = 0; c < state->tag_count; c++) {
-                    float pw = 60.0f;
-                    if (mx >= px && mx <= px + pw) {
-                        state->modal_tag_idx = c;
-                        rife_request_redraw(core);
-                        return;
-                    }
-                    px += pw + 8.0f;
-                }
-                // 点击 [+ 标签] 按钮
-                float add_w = 64.0f;
-                if (mx >= px && mx <= px + add_w) {
-                    state->show_new_tag_modal = true;
-                    state->new_tag_name[0] = '\0';
-                    state->new_tag_color_idx = 0;
-                    state->active_field = 4;
-                    rife_request_redraw(core);
-                    return;
-                }
-            }
-
-            // C. 自定义起止时间选择行 (开始时间与结束时间全自由设定)
-            float time_y = my0 + 108.0f;
-            if (my >= time_y && my <= time_y + 24.0f) {
-                int cur_dur = (state->new_end_hour * 60 + state->new_end_min) - (state->new_hour * 60 + state->new_min);
-                if (cur_dur < 1) cur_dur = 30;
-
-                // 1. 开始时间 - 减小时 [-]
-                if (mx >= mx0 + 46.0f && mx <= mx0 + 62.0f) {
-                    state->new_hour = (state->new_hour + 23) % 24;
-                    int new_end = state->new_hour * 60 + state->new_min + cur_dur;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 点击开始小时框步进
-                if (mx >= mx0 + 64.0f && mx <= mx0 + 86.0f) {
-                    state->new_hour = (state->new_hour + 1) % 24;
-                    int new_end = state->new_hour * 60 + state->new_min + cur_dur;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 开始时间 - 加小时 [+]
-                if (mx >= mx0 + 88.0f && mx <= mx0 + 104.0f) {
-                    state->new_hour = (state->new_hour + 1) % 24;
-                    int new_end = state->new_hour * 60 + state->new_min + cur_dur;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    rife_request_redraw(core);
-                    return;
-                }
-
-                // 2. 开始时间 - 减分钟 [-]
-                if (mx >= mx0 + 114.0f && mx <= mx0 + 130.0f) {
-                    int new_start = state->new_hour * 60 + state->new_min - 1;
-                    if (new_start < 0) new_start = 0;
-                    state->new_hour = new_start / 60;
-                    state->new_min = new_start % 60;
-                    int new_end = new_start + cur_dur;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 点击开始分钟框步进
-                if (mx >= mx0 + 132.0f && mx <= mx0 + 154.0f) {
-                    int new_start = state->new_hour * 60 + state->new_min + 1;
-                    if (new_start > 1438) new_start = 1438;
-                    state->new_hour = new_start / 60;
-                    state->new_min = new_start % 60;
-                    int new_end = new_start + cur_dur;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 开始时间 - 加分钟 [+]
-                if (mx >= mx0 + 156.0f && mx <= mx0 + 172.0f) {
-                    int new_start = state->new_hour * 60 + state->new_min + 1;
-                    if (new_start > 1438) new_start = 1438;
-                    state->new_hour = new_start / 60;
-                    state->new_min = new_start % 60;
-                    int new_end = new_start + cur_dur;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    rife_request_redraw(core);
-                    return;
-                }
-
-                // 3. 结束时间 - 减小时 [-]
-                if (mx >= mx0 + 226.0f && mx <= mx0 + 242.0f) {
-                    int new_end = state->new_end_hour * 60 + state->new_end_min - 60;
-                    int cur_start = state->new_hour * 60 + state->new_min;
-                    if (new_end <= cur_start) new_end = cur_start + 1;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    state->new_duration_idx = -1;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 点击结束小时框步进
-                if (mx >= mx0 + 244.0f && mx <= mx0 + 266.0f) {
-                    int new_end = state->new_end_hour * 60 + state->new_end_min + 60;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    state->new_duration_idx = -1;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 结束时间 - 加小时 [+]
-                if (mx >= mx0 + 268.0f && mx <= mx0 + 284.0f) {
-                    int new_end = state->new_end_hour * 60 + state->new_end_min + 60;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    state->new_duration_idx = -1;
-                    rife_request_redraw(core);
-                    return;
-                }
-
-                // 4. 结束时间 - 减分钟 [-]
-                if (mx >= mx0 + 294.0f && mx <= mx0 + 310.0f) {
-                    int new_end = state->new_end_hour * 60 + state->new_end_min - 1;
-                    int cur_start = state->new_hour * 60 + state->new_min;
-                    if (new_end <= cur_start) new_end = cur_start + 1;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    state->new_duration_idx = -1;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 点击结束分钟框步进
-                if (mx >= mx0 + 312.0f && mx <= mx0 + 334.0f) {
-                    int new_end = state->new_end_hour * 60 + state->new_end_min + 1;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    state->new_duration_idx = -1;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 结束时间 - 加分钟 [+]
-                if (mx >= mx0 + 336.0f && mx <= mx0 + 352.0f) {
-                    int new_end = state->new_end_hour * 60 + state->new_end_min + 1;
-                    if (new_end > 1439) new_end = 1439;
-                    state->new_end_hour = new_end / 60;
-                    state->new_end_min = new_end % 60;
-                    state->new_duration_idx = -1;
-                    rife_request_redraw(core);
-                    return;
-                }
-            }
-
-            // D. 快捷时长增量胶囊行 (+1分, +15分, +30分, +1小时, +2小时)
-            float quick_y = my0 + 138.0f;
-            if (my >= quick_y && my <= quick_y + 22.0f) {
-                int cur_start = state->new_hour * 60 + state->new_min;
-                const int quick_mins[5] = { 1, 15, 30, 60, 120 };
-                const float q_widths[5] = { 36.0f, 40.0f, 40.0f, 44.0f, 44.0f };
-                float qx = mx0 + 48.0f;
-                for (int q = 0; q < 5; q++) {
-                    if (mx >= qx && mx <= qx + q_widths[q]) {
-                        int new_end = cur_start + quick_mins[q];
-                        if (new_end > 1439) new_end = 1439;
-                        state->new_end_hour = new_end / 60;
-                        state->new_end_min = new_end % 60;
-                        state->new_duration_idx = q;
-                        rife_request_redraw(core);
-                        return;
-                    }
-                    qx += q_widths[q] + 4.0f;
-                }
-            }
-
-            // E. 点击地点输入框
-            float loc_y = my0 + 168.0f;
-            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= loc_y && my <= loc_y + 30.0f) {
-                state->active_field = 2;
-                rife_request_redraw(core);
-                return;
-            }
-
-            // F. 点击备注/描述输入框
-            float desc_y = my0 + 206.0f;
-            if (mx >= mx0 + 16.0f && mx <= mx0 + 16.0f + box_w && my >= desc_y && my <= desc_y + 30.0f) {
-                state->active_field = 3;
-                rife_request_redraw(core);
-                return;
-            }
-
-            // G. 底部操作按钮：确认创建 / 取消
-            float btn_y = my0 + mh - 42.0f;
-            // 确认创建
-            if (mx >= mx0 + mw - 96.0f && mx <= mx0 + mw - 16.0f && my >= btn_y && my <= btn_y + 28.0f) {
-                if (state->event_count < CAL_MAX_EVENTS) {
-                    CalendarEvent* ne = &state->events[state->event_count++];
-                    static uint32_t s_next_id = 1000;
-                    ne->id = s_next_id++;
-                    if (state->input_title[0] != '\0') {
-                        snprintf(ne->title, sizeof(ne->title), "%s", state->input_title);
-                    } else {
-                        snprintf(ne->title, sizeof(ne->title), "%s", "新日程");
-                    }
-                    snprintf(ne->location, sizeof(ne->location), "%s", state->input_location);
-                    snprintf(ne->desc, sizeof(ne->desc), "%s", state->input_desc);
-                    ne->tag_idx = state->modal_tag_idx;
-                    ne->year = state->view_year;
-                    ne->month = state->view_month;
-                    ne->day = state->view_day;
-                    ne->start_hour = state->new_hour;
-                    ne->start_min = state->new_min;
-                    ne->end_hour = state->new_end_hour;
-                    ne->end_min = state->new_end_min;
-                    // 保证结束时间严格晚于开始时间
-                    if (ne->end_hour < ne->start_hour || (ne->end_hour == ne->start_hour && ne->end_min <= ne->start_min)) {
-                        int total_end = ne->start_hour * 60 + ne->start_min + 1;
-                        if (total_end > 1439) total_end = 1439;
-                        ne->end_hour = total_end / 60;
-                        ne->end_min = total_end % 60;
-                    }
-                    ne->is_completed = false;
-                    save_calendar_data(state);
-                }
-                state->show_new_modal = false;
-                state->active_field = 0;
-                state->input_title[0] = '\0';
-                state->input_location[0] = '\0';
-                state->input_desc[0] = '\0';
-                rife_request_redraw(core);
-                return;
-            }
-            // 取消
-            if (mx >= mx0 + mw - 170.0f && mx <= mx0 + mw - 104.0f && my >= btn_y && my <= btn_y + 28.0f) {
-                state->show_new_modal = false;
-                state->active_field = 0;
-                rife_request_redraw(core);
-                return;
-            }
-            return;
-        } else {
-            // 点击外部关闭弹窗
-            state->show_new_modal = false;
+        } else if (state->active_field == 2 || state->active_field == 3) {
             state->active_field = 0;
+            save_state_to_storage(state);
             rife_request_redraw(core);
-            return;
         }
     }
 
-    // 2. 详情浮层卡片点击关闭或操作 (支持完成标记与物理删除)
-    if (state->selected_event_id >= 0) {
-        float pop_w = 280.0f;
-        float pop_h = 175.0f;
-        float pop_x = client_w - pop_w - 20.0f;
-        float pop_y = 60.0f;
-        if (mx >= pop_x && mx <= pop_x + pop_w && my >= pop_y && my <= pop_y + pop_h) {
-            float act_y = pop_y + pop_h - 38.0f;
-            // 标记完成 / 切换
-            if (mx >= pop_x + 14.0f && mx <= pop_x + 100.0f && my >= act_y && my <= act_y + 26.0f) {
-                for (int i = 0; i < state->event_count; i++) {
-                    if ((int)state->events[i].id == state->selected_event_id) {
-                        state->events[i].is_completed = !state->events[i].is_completed;
-                        save_calendar_data(state);
-                        break;
+    if (input->key_pressed[VK_ESCAPE]) {
+        state->active_field = 0;
+        rife_request_redraw(core);
+    }
+
+    // 4. 鼠标点击响应 (Click Routing)
+    if (input->mouse_pressed[0]) {
+        if (state->view_mode == CAL_VIEW_TASKS) {
+            float col1_w = 180.0f;
+            float col3_w = (state->selected_event_id > 0) ? 340.0f : 0.0f;
+            float col2_w = client_w - col1_w - col3_w;
+
+            // A. 左栏清单点击
+            if (mx >= 0.0f && mx <= col1_w) {
+                float list_y = 38.0f;
+                for (int i = 0; i < 6; i++) {
+                    if (my >= list_y && my <= list_y + 32.0f) {
+                        state->active_list_idx = i;
+                        state->active_field = 0;
+                        save_state_to_storage(state);
+                        rife_request_redraw(core);
+                        return;
                     }
+                    list_y += 34.0f;
                 }
-                rife_request_redraw(core);
-                return;
+                list_y += 44.0f;
+                for (int c = 1; c < state->list_count && c < 4; c++) {
+                    if (my >= list_y && my <= list_y + 32.0f) {
+                        state->active_list_idx = 5 + c;
+                        state->active_field = 0;
+                        save_state_to_storage(state);
+                        rife_request_redraw(core);
+                        return;
+                    }
+                    list_y += 34.0f;
+                }
             }
-            // 删除日程 (直接移除并写盘)
-            if (mx >= pop_x + 104.0f && mx <= pop_x + 188.0f && my >= act_y && my <= act_y + 26.0f) {
-                for (int i = 0; i < state->event_count; i++) {
-                    if ((int)state->events[i].id == state->selected_event_id) {
-                        for (int j = i; j < state->event_count - 1; j++) {
-                            state->events[j] = state->events[j + 1];
+
+            // B. 中栏点击
+            if (mx > col1_w && mx <= col1_w + col2_w) {
+                float col2_x = col1_w;
+
+                // 过滤器切换
+                float f_w = 54.0f, f_h = 24.0f;
+                (void)f_h;
+                float f_x0 = col2_x + col2_w - (f_w * 3.0f + 24.0f);
+                if (my >= 14.0f && my <= 38.0f) {
+                    for (int f = 0; f < 3; f++) {
+                        float fx = f_x0 + (float)f * f_w;
+                        if (mx >= fx && mx <= fx + f_w) {
+                            state->task_filter = (f == 0 ? 1 : (f == 1 ? 0 : 2));
+                            rife_request_redraw(core);
+                            return;
                         }
-                        state->event_count--;
-                        save_calendar_data(state);
-                        break;
                     }
                 }
-                state->selected_event_id = -1;
-                rife_request_redraw(core);
-                return;
-            }
-            // 关闭详情
-            if (mx >= pop_x + pop_w - 68.0f && mx <= pop_x + pop_w - 14.0f && my >= act_y && my <= act_y + 26.0f) {
-                state->selected_event_id = -1;
-                rife_request_redraw(core);
-                return;
-            }
-            return;
-        } else {
-            state->selected_event_id = -1;
-            rife_request_redraw(core);
-        }
-    }
 
-    // 2.5 侧边栏搜索结果浮层交互 (当存在搜索关键词时)
-    if (state->search_query[0] != '\0') {
-        float pop_x = sidebar_w + 10.0f;
-        float search_y = header_h + 56.0f + 6.0f * 22.0f + 8.0f;
-        float pop_y = search_y - 8.0f;
-        float pop_w = 340.0f;
+                // 极速添加输入框
+                float q_y = 50.0f;
+                float q_w = col2_w - 40.0f;
+                float q_x = col2_x + 20.0f;
+                float q_h = 40.0f;
+                if (mx >= q_x && mx <= q_x + q_w && my >= q_y && my <= q_y + q_h) {
+                    // 右侧优先级切换旗帜
+                    if (mx >= q_x + q_w - 36.0f) {
+                        state->quick_add_priority = (state->quick_add_priority + 1) % 4;
+                    } else {
+                        state->active_field = 1;
+                    }
+                    rife_request_redraw(core);
+                    return;
+                }
 
-        int match_indices[CAL_MAX_EVENTS];
-        int match_count = 0;
-        for (int i = 0; i < state->event_count; i++) {
-            if (event_matches_search(state, &state->events[i])) {
-                match_indices[match_count++] = i;
-            }
-        }
-        int display_max = (match_count > 6) ? 6 : match_count;
-        float pop_h = (match_count == 0) ? 96.0f : (40.0f + (float)display_max * 48.0f + (match_count > 6 ? 26.0f : 10.0f));
+                // 任务卡片点击
+                float card_stream_y = q_y + q_h + 12.0f;
+                float card_h = 52.0f;
+                float card_gap = 6.0f;
+                float curr_y = card_stream_y + state->scroll_tasks;
 
-        if (mx >= pop_x && mx <= pop_x + pop_w && my >= pop_y && my <= pop_y + pop_h) {
-            // 点击右上角 [×] 关闭并清空搜索
-            if (mx >= pop_x + pop_w - 32.0f && mx <= pop_x + pop_w - 10.0f && my >= pop_y + 8.0f && my <= pop_y + 30.0f) {
-                state->search_query[0] = '\0';
-                state->active_field = 0;
-                rife_request_redraw(core);
-                return;
-            }
+                for (int i = 0; i < state->event_count; i++) {
+                    CalendarEvent* e = &state->events[i];
+                    if (!is_task_in_list(state, e, state->active_list_idx)) continue;
+                    if (state->task_filter == 1 && e->is_completed) continue;
+                    if (state->task_filter == 2 && !e->is_completed) continue;
 
-            // 点击搜索列表项：快速跳转并定位到该日程
-            if (match_count > 0) {
-                float list_y = pop_y + 42.0f;
-                for (int k = 0; k < display_max; k++) {
-                    float item_y = list_y + (float)k * 48.0f;
-                    if (my >= item_y && my <= item_y + 44.0f) {
-                        int event_idx = match_indices[k];
-                        CalendarEvent* e = &state->events[event_idx];
-                        state->view_year = e->year;
-                        state->view_month = e->month;
-                        state->view_day = e->day;
-                        float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
-                        state->scroll_y = start_f * state->time_scale - 80.0f;
-                        if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
-                        state->selected_event_id = (int)e->id;
-                        state->search_query[0] = '\0';
+                    if (my >= curr_y && my <= curr_y + card_h && mx >= q_x && mx <= q_x + q_w) {
+                        // 检查是否点在复选框圆圈内
+                        float chk_cx = q_x + 22.0f;
+                        float chk_cy = curr_y + card_h * 0.5f;
+                        float dx = mx - chk_cx, dy = my - chk_cy;
+                        if (dx * dx + dy * dy <= 16.0f * 16.0f) {
+                            e->is_completed = !e->is_completed;
+                            save_state_to_storage(state);
+                            rife_request_redraw(core);
+                            return;
+                        }
+
+                        // 否则选中任务打开 Inspector
+                        state->selected_event_id = e->id;
+                        snprintf(state->inspector_title, sizeof(state->inspector_title), "%s", e->title);
+                        snprintf(state->inspector_desc, sizeof(state->inspector_desc), "%s", e->desc);
                         state->active_field = 0;
                         rife_request_redraw(core);
                         return;
                     }
+                    curr_y += (card_h + card_gap);
                 }
             }
-            return; // 消费点击事件，防止穿透底层网格
-        } else {
-            // 点击搜索浮层外部
-            float search_w = sidebar_w - 32.0f;
-            bool inside_search_box = (mx >= 16.0f && mx <= 16.0f + search_w && my >= search_y && my <= search_y + 28.0f);
-            if (!inside_search_box) {
-                // 点击外部：关闭搜索浮层
-                state->search_query[0] = '\0';
-                state->active_field = 0;
-                rife_request_redraw(core);
-            }
-        }
-    }
 
-    // 3. 顶部 Header 交互
-    if (my >= 0.0f && my <= header_h) {
-        float today_btn_x = sidebar_w + 16.0f;
-        // A. "今天" 快速重置按钮
-        if (mx >= today_btn_x && mx <= today_btn_x + 58.0f && my >= 10.0f && my <= 38.0f) {
-            return_to_today(state, core);
-            return;
-        }
-        // B. 前翻页 `<` 按钮
-        float nav_x = today_btn_x + 64.0f;
-        if (mx >= nav_x && mx <= nav_x + 26.0f && my >= 10.0f && my <= 38.0f) {
-            if (state->view_mode == CAL_VIEW_WEEK) {
-                add_days(state->view_year, state->view_month, state->view_day, -7, &state->view_year, &state->view_month, &state->view_day);
-            } else if (state->view_mode == CAL_VIEW_DAY) {
-                add_days(state->view_year, state->view_month, state->view_day, -1, &state->view_year, &state->view_month, &state->view_day);
-            } else {
-                state->view_month--;
-                if (state->view_month < 1) { state->view_month = 12; state->view_year--; }
-            }
-            rife_request_redraw(core);
-            return;
-        }
-        // C. 后翻页 `>` 按钮
-        float nav_r_x = nav_x + 30.0f;
-        if (mx >= nav_r_x && mx <= nav_r_x + 26.0f && my >= 10.0f && my <= 38.0f) {
-            if (state->view_mode == CAL_VIEW_WEEK) {
-                add_days(state->view_year, state->view_month, state->view_day, 7, &state->view_year, &state->view_month, &state->view_day);
-            } else if (state->view_mode == CAL_VIEW_DAY) {
-                add_days(state->view_year, state->view_month, state->view_day, 1, &state->view_year, &state->view_month, &state->view_day);
-            } else {
-                state->view_month++;
-                if (state->view_month > 12) { state->view_month = 1; state->view_year++; }
-            }
-            rife_request_redraw(core);
-            return;
-        }
-        // D. 视图模式三段切换胶囊 [日] [周] [月]
-        static const CalendarViewMode s_tab_modes[3] = { CAL_VIEW_DAY, CAL_VIEW_WEEK, CAL_VIEW_MONTH };
-        float seg_item_w = 44.0f;
-        float seg_w = 3.0f * seg_item_w + 4.0f;
-        float seg_x = client_w - seg_w - 20.0f;
-        if (mx >= seg_x && mx <= seg_x + seg_w && my >= 10.0f && my <= 38.0f) {
-            for (int v = 0; v < 3; v++) {
-                float ix = seg_x + 2.0f + (float)v * seg_item_w;
-                if (mx >= ix && mx <= ix + seg_item_w) {
-                    state->view_mode = s_tab_modes[v];
-                    rife_request_redraw(core);
-                    return;
-                }
-            }
-        }
-    }
+            // C. 右栏 Inspector 点击
+            if (col3_w > 0.0f && mx > col1_w + col2_w) {
+                float col3_x = col1_w + col2_w;
+                float ins_x = col3_x + 18.0f;
+                float ins_w = col3_w - 36.0f;
 
-    // 4. 右下角 FAB 悬浮新建日程按钮点击 (44x44 圆形)
-    float fab_sz = 44.0f;
-    float fab_x = client_w - fab_sz - 24.0f;
-    float fab_y = client_h - fab_sz - 24.0f;
-    if (mx >= fab_x && mx <= fab_x + fab_sz && my >= fab_y && my <= fab_y + fab_sz) {
-        state->show_new_modal = true;
-        state->active_field = 1;
-        state->input_title[0] = '\0';
-        state->input_location[0] = '\0';
-        state->input_desc[0] = '\0';
-        state->new_hour = state->cur_hour;
-        state->new_min = (state->cur_min / 5) * 5;
-        int end_mins = state->new_hour * 60 + state->new_min + 30;
-        if (end_mins > 1439) end_mins = 1439;
-        state->new_end_hour = end_mins / 60;
-        state->new_end_min = end_mins % 60;
-        state->new_duration_idx = 2; // 默认 30 分钟
-        rife_request_redraw(core);
-        return;
-    }
-
-    // 4.1 快捷回到今天悬浮胶囊点击 (当非今天时可见)
-    bool is_today_view = (state->view_year == state->cur_year && state->view_month == state->cur_month && state->view_day == state->cur_day);
-    if (!is_today_view) {
-        float today_cap_w = 110.0f;
-        float today_cap_h = 32.0f;
-        float today_cap_x = client_w - fab_sz - 24.0f - today_cap_w - 12.0f;
-        float today_cap_y = client_h - fab_sz - 18.0f;
-        if (mx >= today_cap_x && mx <= today_cap_x + today_cap_w && my >= today_cap_y && my <= today_cap_y + today_cap_h) {
-            return_to_today(state, core);
-            return;
-        }
-    }
-
-    // 5. 左侧侧边栏交互 (迷你月历 & 搜索 & 自定义分类)
-    if (mx >= 0.0f && mx <= sidebar_w && my > header_h) {
-        float mini_y = header_h + 10.0f;
-        // 迷你日历月份左右切换
-        if (my >= mini_y && my <= mini_y + 24.0f) {
-            if (mx >= sidebar_w - 48.0f && mx <= sidebar_w - 26.0f) {
-                state->view_month--;
-                if (state->view_month < 1) { state->view_month = 12; state->view_year--; }
-                if (state->active_field == 5) state->active_field = 0;
-                rife_request_redraw(core);
-                return;
-            }
-            if (mx >= sidebar_w - 26.0f && mx <= sidebar_w - 6.0f) {
-                state->view_month++;
-                if (state->view_month > 12) { state->view_month = 1; state->view_year++; }
-                if (state->active_field == 5) state->active_field = 0;
-                rife_request_redraw(core);
-                return;
-            }
-        }
-
-        // A. 迷你月历点击日期跳转 (周日首列)
-        float days_y = header_h + 56.0f;
-        float cell_sz = 22.0f;
-        float grid_w = 7.0f * cell_sz;
-        float grid_x = (sidebar_w - grid_w) * 0.5f;
-
-        int first_wday = get_day_of_week_sun(state->view_year, state->view_month, 1);
-        int total_days = days_in_month(state->view_year, state->view_month);
-
-        for (int d = 1; d <= total_days; d++) {
-            int slot = first_wday + d - 1;
-            int row = slot / 7;
-            int col = slot % 7;
-            float cx = grid_x + (float)col * cell_sz;
-            float cy = days_y + (float)row * cell_sz;
-
-            if (mx >= cx && mx <= cx + cell_sz && my >= cy && my <= cy + cell_sz) {
-                state->view_day = d;
-                if (state->active_field == 5) state->active_field = 0;
-                rife_request_redraw(core);
-                return;
-            }
-        }
-
-        // B. 侧边栏搜索栏交互 (点击聚焦 / 清空 / 快捷新建)
-        float search_y = days_y + 6.0f * cell_sz + 8.0f;
-        float search_w = sidebar_w - 32.0f;
-        if (mx >= 16.0f && mx <= 16.0f + search_w && my >= search_y && my <= search_y + 28.0f) {
-            if (mx >= 16.0f + search_w - 24.0f) {
-                if (state->search_query[0] != '\0') {
-                    // 点击右侧 [×] 彻底清空当前搜索词
-                    state->search_query[0] = '\0';
-                    state->active_field = 5;
-                } else {
-                    // 点击右侧 [+] 快捷新建日程
-                    state->show_new_modal = true;
-                    state->active_field = 1;
-                    state->input_title[0] = '\0';
-                    state->input_location[0] = '\0';
-                    state->input_desc[0] = '\0';
-                    state->new_hour = state->cur_hour;
-                    state->new_min = (state->cur_min / 5) * 5;
-                    int end_mins = state->new_hour * 60 + state->new_min + 30;
-                    if (end_mins > 1439) end_mins = 1439;
-                    state->new_end_hour = end_mins / 60;
-                    state->new_end_min = end_mins % 60;
-                    state->new_duration_idx = 2;
-                }
-            } else {
-                // 点击搜索框文字区域：激活搜索输入焦点并准备接收键盘输入
-                state->active_field = 5;
-            }
-            rife_request_redraw(core);
-            return;
-        }
-
-        // C. 自定义标签列表勾选与新建
-        float sec_y = search_y + 36.0f;
-        // 点击右上角 [+] 打开新建分类弹窗
-        if (mx >= sidebar_w - 36.0f && mx <= sidebar_w - 12.0f && my >= sec_y && my <= sec_y + 22.0f) {
-            state->show_new_tag_modal = true;
-            state->new_tag_name[0] = '\0';
-            state->new_tag_color_idx = 0;
-            state->active_field = 4;
-            rife_request_redraw(core);
-            return;
-        }
-
-        for (int c = 0; c < state->tag_count; c++) {
-            float row_y = sec_y + 24.0f + (float)c * 26.0f;
-            float del_x = sidebar_w - 28.0f;
-            float del_y = row_y + 4.0f;
-
-            // 点击右侧 [×] 彻底删除此标签 (支持添加与删除)
-            if (mx >= del_x - 4.0f && mx <= del_x + 18.0f && my >= del_y - 2.0f && my <= del_y + 18.0f) {
-                for (int k = c; k < state->tag_count - 1; k++) {
-                    state->tags[k] = state->tags[k + 1];
-                }
-                state->tag_count--;
-
-                // 更新所有日程关联的 tag_idx
-                for (int i = 0; i < state->event_count; i++) {
-                    if (state->events[i].tag_idx == c) {
-                        state->events[i].tag_idx = 0;
-                    } else if (state->events[i].tag_idx > c) {
-                        state->events[i].tag_idx--;
+                CalendarEvent* cur_e = get_selected_event(state);
+                if (cur_e) {
+                    // 关闭按钮 [×]
+                    float close_x = col3_x + col3_w - 34.0f;
+                    if (mx >= close_x && mx <= close_x + 24.0f && my >= 16.0f && my <= 40.0f) {
+                        state->selected_event_id = 0;
+                        state->active_field = 0;
+                        rife_request_redraw(core);
+                        return;
                     }
-                }
 
-                // 更新弹窗所选标签索引
-                if (state->modal_tag_idx == c) {
-                    state->modal_tag_idx = 0;
-                } else if (state->modal_tag_idx > c) {
-                    state->modal_tag_idx--;
-                }
+                    // 完成复选框
+                    if (mx >= ins_x && mx <= ins_x + 24.0f && my >= 16.0f && my <= 44.0f) {
+                        cur_e->is_completed = !cur_e->is_completed;
+                        save_state_to_storage(state);
+                        rife_request_redraw(core);
+                        return;
+                    }
 
-                save_calendar_data(state);
-                rife_request_redraw(core);
-                return;
-            }
+                    // 标题编辑框
+                    if (mx >= ins_x + 30.0f && mx <= ins_x + ins_w - 40.0f && my >= 16.0f && my <= 48.0f) {
+                        state->active_field = 2;
+                        rife_request_redraw(core);
+                        return;
+                    }
 
-            // 点击左侧勾选框与标签名：切换显示/隐藏过滤状态
-            if (mx >= 16.0f && mx < del_x - 4.0f && my >= row_y && my <= row_y + 24.0f) {
-                state->tags[c].is_enabled = !state->tags[c].is_enabled;
-                save_calendar_data(state);
-                rife_request_redraw(core);
-                return;
-            }
-        }
-    }
+                    // 截止日期快捷项
+                    float pill_w = 66.0f;
+                    float d_y = 16.0f + 64.0f;
+                    if (my >= d_y && my <= d_y + 26.0f) {
+                        for (int p = 0; p < 4; p++) {
+                            float px = ins_x + (float)p * (pill_w + 6.0f);
+                            if (mx >= px && mx <= px + pill_w) {
+                                if (p == 0) { // 今天
+                                    cur_e->has_date = true;
+                                    cur_e->year = state->cur_year; cur_e->month = state->cur_month; cur_e->day = state->cur_day;
+                                } else if (p == 1) { // 明天
+                                    cur_e->has_date = true;
+                                    add_days(state->cur_year, state->cur_month, state->cur_day, 1, &cur_e->year, &cur_e->month, &cur_e->day);
+                                } else if (p == 2) { // 下周
+                                    cur_e->has_date = true;
+                                    add_days(state->cur_year, state->cur_month, state->cur_day, 7, &cur_e->year, &cur_e->month, &cur_e->day);
+                                } else { // 清除
+                                    cur_e->has_date = false;
+                                }
+                                save_state_to_storage(state);
+                                rife_request_redraw(core);
+                                return;
+                            }
+                        }
+                    }
 
-    // 6. 右侧工作区交互：周视图 / 日视图 / 月视图 / 日程列表
-    if (mx > sidebar_w && my > header_h) {
-        if (state->view_mode == CAL_VIEW_WEEK) {
-            float main_x = sidebar_w;
-            float main_w = client_w - sidebar_w;
-            float ruler_w = 46.0f;
-            float grid_left = main_x + ruler_w;
-            float col_w = (main_w - ruler_w - 6.0f) / 7.0f;
-            float header_bar_h = 52.0f;
-            float grid_top = header_h + header_bar_h;
-            float hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
+                    // 优先级旗帜
+                    float pri_y = d_y + 56.0f;
+                    if (my >= pri_y && my <= pri_y + 26.0f) {
+                        for (int p = 0; p < 4; p++) {
+                            float px = ins_x + (float)p * (pill_w + 6.0f);
+                            if (mx >= px && mx <= px + pill_w) {
+                                cur_e->priority = p;
+                                // 联动象限
+                                if (p == 3) cur_e->quadrant = 1;
+                                else if (p == 2) cur_e->quadrant = 2;
+                                else if (p == 1) cur_e->quadrant = 3;
+                                else cur_e->quadrant = 4;
+                                save_state_to_storage(state);
+                                rife_request_redraw(core);
+                                return;
+                            }
+                        }
+                    }
 
-            int sun_y, sun_m, sun_d;
-            get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
+                    // 所属清单选择
+                    float list_p_y = pri_y + 56.0f;
+                    if (my >= list_p_y && my <= list_p_y + 26.0f) {
+                        for (int l = 0; l < state->list_count && l < 4; l++) {
+                            float lx = ins_x + (float)l * (pill_w + 6.0f);
+                            if (mx >= lx && mx <= lx + pill_w) {
+                                cur_e->list_idx = l;
+                                save_state_to_storage(state);
+                                rife_request_redraw(core);
+                                return;
+                            }
+                        }
+                    }
 
-            // A. 先检查是否点击了已有日程卡片
-            for (int i = 0; i < state->event_count; i++) {
-                CalendarEvent* e = &state->events[i];
-                if (!is_event_visible(state, e)) continue;
+                    // 子任务项点击 (完成或删除)
+                    float sub_y = list_p_y + 60.0f;
+                    for (int s = 0; s < cur_e->subtask_count && s < TICK_MAX_SUBTASKS; s++) {
+                        if (my >= sub_y && my <= sub_y + 28.0f) {
+                            if (mx >= ins_x + ins_w - 28.0f) {
+                                // 删除该子任务
+                                for (int k = s; k < cur_e->subtask_count - 1; k++) {
+                                    cur_e->subtasks[k] = cur_e->subtasks[k + 1];
+                                }
+                                cur_e->subtask_count--;
+                            } else {
+                                // 切换完成
+                                cur_e->subtasks[s].is_done = !cur_e->subtasks[s].is_done;
+                            }
+                            save_state_to_storage(state);
+                            rife_request_redraw(core);
+                            return;
+                        }
+                        sub_y += 32.0f;
+                    }
 
-                for (int c = 0; c < 7; c++) {
-                    int col_y, col_m, col_d;
-                    add_days(sun_y, sun_m, sun_d, c, &col_y, &col_m, &col_d);
-                    if (e->year == col_y && e->month == col_m && e->day == col_d) {
-                        float cx = grid_left + (float)c * col_w + 2.0f;
-                        float cw = col_w - 4.0f;
-                        float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
-                        float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
-                        float cy = grid_top - state->scroll_y + start_f * hour_h + 1.0f;
-                        float ch = (end_f - start_f) * hour_h - 2.0f;
-                        if (ch < 14.0f) ch = 14.0f;
+                    // 添加子任务输入框点击
+                    if (cur_e->subtask_count < TICK_MAX_SUBTASKS && my >= sub_y && my <= sub_y + 28.0f) {
+                        state->active_field = 4;
+                        rife_request_redraw(core);
+                        return;
+                    }
 
-                        if (my >= grid_top && my <= client_h - 6.0f && mx >= cx && mx <= cx + cw && my >= cy && my <= cy + ch) {
-                            state->selected_event_id = (int)e->id;
+                    // 详细备注输入框点击
+                    float desc_y = sub_y + 58.0f;
+                    if (my >= desc_y && my <= desc_y + 70.0f) {
+                        state->active_field = 3;
+                        rife_request_redraw(core);
+                        return;
+                    }
+
+                    // 底部操作栏：开始番茄专注 与 删除
+                    float act_y = client_h - 54.0f;
+                    float pomo_w = ins_w - 90.0f;
+                    if (my >= act_y && my <= act_y + 36.0f) {
+                        if (mx >= ins_x && mx <= ins_x + pomo_w) {
+                            // 🍅 一键联动启动番茄专注
+                            state->active_focus_task_id = cur_e->id;
+                            snprintf(state->active_focus_title, sizeof(state->active_focus_title), "%s", cur_e->title);
+                            save_state_to_storage(state);
+                            rife_open_app_by_id("clock");
+                            return;
+                        }
+                        if (mx >= ins_x + pomo_w + 10.0f && mx <= ins_x + ins_w) {
+                            // 🗑️ 删除待办事项
+                            for (int k = 0; k < state->event_count; k++) {
+                                if (state->events[k].id == cur_e->id) {
+                                    for (int j = k; j < state->event_count - 1; j++) {
+                                        state->events[j] = state->events[j + 1];
+                                    }
+                                    state->event_count--;
+                                    break;
+                                }
+                            }
+                            state->selected_event_id = 0;
+                            save_state_to_storage(state);
                             rife_request_redraw(core);
                             return;
                         }
                     }
                 }
             }
+        } else if (state->view_mode == CAL_VIEW_MATRIX) {
+            // 四象限交互
+            float pad = 16.0f, gap = 12.0f;
+            float qw = (client_w - pad * 2.0f - gap) * 0.5f;
+            float qh = (client_h - pad * 2.0f - gap) * 0.5f;
 
-            // B. 点击/框选时间网格：启动拖拽或单击新建日程
-            if (my >= grid_top && my <= client_h - 6.0f && mx >= grid_left && mx <= grid_left + 7.0f * col_w) {
-                int c = (int)((mx - grid_left) / col_w);
-                if (c < 0) c = 0; if (c > 6) c = 6;
-                float exact_h = (my - grid_top + state->scroll_y) / hour_h;
-                int total_mins = (int)floorf(exact_h * 60.0f);
-                if (total_mins < 0) total_mins = 0;
-                if (total_mins > 1439) total_mins = 1439;
+            for (int q = 0; q < 4; q++) {
+                float qx = pad + (float)(q % 2) * (qw + gap);
+                float qy = pad + (float)(q / 2) * (qh + gap);
 
-                int target_y, target_m, target_d;
-                add_days(sun_y, sun_m, sun_d, c, &target_y, &target_m, &target_d);
-
-                state->is_dragging_time = true;
-                state->drag_col = c;
-                state->drag_target_year = target_y;
-                state->drag_target_month = target_m;
-                state->drag_target_day = target_d;
-                state->drag_start_mins = total_mins;
-                state->drag_cur_mins = total_mins;
-                state->drag_start_y = my;
-                rife_request_redraw(core);
-                return;
-            }
-        }
-        else if (state->view_mode == CAL_VIEW_DAY) {
-            float day_ruler_w = 56.0f;
-            float day_header_h = 36.0f;
-            float day_grid_top = header_h + day_header_h;
-            float day_hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
-            float ex = sidebar_w + day_ruler_w + 14.0f;
-            float ew = client_w - sidebar_w - day_ruler_w - 32.0f;
-
-            // A. 先检查是否点击了已有日程卡片
-            for (int i = 0; i < state->event_count; i++) {
-                CalendarEvent* e = &state->events[i];
-                if (!is_event_visible(state, e)) continue;
-                if (e->year == state->view_year && e->month == state->view_month && e->day == state->view_day) {
-                    float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
-                    float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
-                    float ey = day_grid_top - state->scroll_y + start_f * day_hour_h;
-                    float eh = (end_f - start_f) * day_hour_h;
-                    if (eh < 18.0f) eh = 18.0f;
-
-                    if (my >= day_grid_top && my <= client_h - 6.0f && mx >= ex && mx <= ex + ew && my >= ey && my <= ey + eh) {
-                        state->selected_event_id = (int)e->id;
+                // 右上角 [+] 快速添加
+                float add_btn_x = qx + qw - 36.0f;
+                float add_btn_y = qy + 12.0f;
+                if (mx >= add_btn_x && mx <= add_btn_x + 24.0f && my >= add_btn_y && my <= add_btn_y + 24.0f) {
+                    if (state->event_count < CAL_MAX_EVENTS) {
+                        CalendarEvent* e = &state->events[state->event_count++];
+                        memset(e, 0, sizeof(CalendarEvent));
+                        e->id = 3000 + (uint32_t)state->event_count;
+                        snprintf(e->title, sizeof(e->title), "象限 %d 攻坚新待办", q + 1);
+                        e->quadrant = q + 1;
+                        e->priority = (q == 0) ? TICK_PRIORITY_HIGH : ((q == 1) ? TICK_PRIORITY_MEDIUM : ((q == 2) ? TICK_PRIORITY_LOW : TICK_PRIORITY_NONE));
+                        state->selected_event_id = e->id;
+                        state->view_mode = CAL_VIEW_TASKS;
+                        snprintf(state->inspector_title, sizeof(state->inspector_title), "%s", e->title);
+                        save_state_to_storage(state);
                         rife_request_redraw(core);
                         return;
                     }
                 }
-            }
 
-            // B. 点击/框选日视图空白区域新建
-            if (my >= day_grid_top && my <= client_h - 6.0f && mx >= ex && mx <= ex + ew) {
-                float exact_h = (my - day_grid_top + state->scroll_y) / day_hour_h;
-                int total_mins = (int)floorf(exact_h * 60.0f);
-                if (total_mins < 0) total_mins = 0;
-                if (total_mins > 1439) total_mins = 1439;
+                // 任务卡片点击 (完成勾选或选中)
+                float task_y = qy + 54.0f;
+                int q_target = q + 1;
+                for (int i = 0; i < state->event_count; i++) {
+                    CalendarEvent* e = &state->events[i];
+                    if (e->quadrant != q_target && !(e->quadrant == 0 && (3 - e->priority + 1) == q_target)) continue;
 
-                state->is_dragging_time = true;
-                state->drag_col = 0;
-                state->drag_target_year = state->view_year;
-                state->drag_target_month = state->view_month;
-                state->drag_target_day = state->view_day;
-                state->drag_start_mins = total_mins;
-                state->drag_cur_mins = total_mins;
-                state->drag_start_y = my;
-                rife_request_redraw(core);
-                return;
-            }
-        }
-        else if (state->view_mode == CAL_VIEW_MONTH) {
-            float main_x = sidebar_w;
-            float main_w = client_w - sidebar_w;
-            float m_col_w = main_w / 7.0f;
-            float m_row_h = (client_h - header_h - 28.0f) / 6.0f;
-            float m_top = header_h + 28.0f;
-
-            if (my >= m_top && my <= client_h - 4.0f && mx >= main_x && mx <= main_x + main_w) {
-                int c = (int)((mx - main_x) / m_col_w);
-                int r = (int)((my - m_top) / m_row_h);
-                if (c >= 0 && c < 7 && r >= 0 && r < 6) {
-                    int first_w = get_day_of_week_sun(state->view_year, state->view_month, 1);
-                    int total_d = days_in_month(state->view_year, state->view_month);
-                    int slot = r * 7 + c;
-                    int d = slot - first_w + 1;
-                    if (d >= 1 && d <= total_d) {
-                        float cx = main_x + (float)c * m_col_w;
-                        float cy = m_top + (float)r * m_row_h;
-
-                        // 检查是否点击了当日日程芯片
-                        int item_idx = 0;
-                        for (int i = 0; i < state->event_count; i++) {
-                            CalendarEvent* e = &state->events[i];
-                            if (!is_event_visible(state, e)) continue;
-                            if (e->year == state->view_year && e->month == state->view_month && e->day == d) {
-                                float chip_y = cy + 32.0f + (float)item_idx * 20.0f;
-                                if (chip_y + 18.0f < cy + m_row_h) {
-                                    if (mx >= cx + 4.0f && mx <= cx + m_col_w - 4.0f && my >= chip_y && my <= chip_y + 18.0f) {
-                                        state->selected_event_id = (int)e->id;
-                                        rife_request_redraw(core);
-                                        return;
-                                    }
-                                    item_idx++;
-                                }
-                            }
+                    float t_h = 36.0f;
+                    if (my >= task_y && my <= task_y + t_h && mx >= qx + 12.0f && mx <= qx + qw - 12.0f) {
+                        float chk_cx = qx + 24.0f;
+                        float chk_cy = task_y + t_h * 0.5f;
+                        float dx = mx - chk_cx, dy = my - chk_cy;
+                        if (dx * dx + dy * dy <= 14.0f * 14.0f) {
+                            e->is_completed = !e->is_completed;
+                        } else {
+                            state->selected_event_id = e->id;
+                            state->view_mode = CAL_VIEW_TASKS;
+                            snprintf(state->inspector_title, sizeof(state->inspector_title), "%s", e->title);
                         }
-
-                        // 点击月历格子空白区域：设定日期并弹出新建
-                        state->view_day = d;
-                        state->new_hour = 10;
-                        state->new_min = 0;
-                        state->new_end_hour = 11;
-                        state->new_end_min = 0;
-                        state->new_duration_idx = 3;
-                        state->show_new_modal = true;
-                        state->active_field = 1;
-                        state->input_title[0] = '\0';
-                        state->input_location[0] = '\0';
-                        state->input_desc[0] = '\0';
+                        save_state_to_storage(state);
                         rife_request_redraw(core);
                         return;
                     }
+                    task_y += (t_h + 6.0f);
                 }
-            }
-        }
-        else if (state->view_mode == CAL_VIEW_AGENDA) {
-            float main_x = sidebar_w;
-            float main_w = client_w - sidebar_w;
-            float list_y = header_h + 16.0f;
-            float card_y = list_y + 36.0f;
-            float cw = main_w - 48.0f;
-            float ch = 48.0f;
-
-            for (int i = 0; i < state->event_count; i++) {
-                CalendarEvent* e = &state->events[i];
-                if (!is_event_visible(state, e)) continue;
-
-                float cy = card_y;
-                // 复选框点击：完成 / 取消完成
-                if (mx >= main_x + 36.0f && mx <= main_x + 60.0f && my >= cy + 12.0f && my <= cy + 36.0f) {
-                    e->is_completed = !e->is_completed;
-                    save_calendar_data(state);
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 卡片正文点击：查看详情
-                if (mx >= main_x + 24.0f && mx <= main_x + 24.0f + cw && my >= cy && my <= cy + ch) {
-                    state->selected_event_id = (int)e->id;
-                    rife_request_redraw(core);
-                    return;
-                }
-                card_y += ch + 10.0f;
-                if (card_y + ch > client_h) break;
             }
         }
     }
 }
 
-// -------------------------------------------------------------
-// 通用轻量文本输入框绘制器 (Text Box Widget)
-// -------------------------------------------------------------
-
-static void draw_input_box(RifeCore* core, float x, float y, float w, float h,
-                           const char* text, const char* placeholder,
-                           bool is_focused, bool cursor_on,
-                           bool is_dark, uint32_t accent_color, uint32_t border_col,
-                           uint32_t text_title, uint32_t text_muted)
-{
-    // Antigravity 极致深石板输入框 (1px 微边框 + 电光紫聚焦环)
-    (void)border_col;
-    uint32_t bg_col = is_dark ? (is_focused ? 0x161722FF : 0x0F1016FF) : (is_focused ? 0xFFFFFFFF : 0xF8F9FAFF);
-    uint32_t brd_col = is_focused ? (accent_color != 0 ? accent_color : (is_dark ? 0x6366F1FF : 0x4F46E5FF)) : (is_dark ? 0x242634FF : 0xE2E8F0FF);
-    rife_draw_round_rect(core, x, y, w, h, 6.0f, bg_col, brd_col);
-
-    float text_y = y + (h - 13.0f) * 0.5f;
-    float ph_y = y + (h - 12.0f) * 0.5f;
-    float caret_y = y + (h - 14.0f) * 0.5f;
-    uint32_t caret_col = is_dark ? 0x818CF8FF : 0x4F46E5FF;
-
-    if (text && text[0] != '\0') {
-        rife_draw_text_font(core, x + 10.0f, text_y, text, text_title, 0);
-        if (is_focused && cursor_on) {
-            float tw = cal_measure_text_width(text, 0);
-            float cur_x = x + 10.0f + tw + 1.0f;
-            if (cur_x < x + w - 8.0f) {
-                rife_draw_rect(core, cur_x, caret_y, 1.5f, 14.0f, caret_col);
-            }
-        }
-    } else {
-        if (is_focused) {
-            if (cursor_on) {
-                rife_draw_rect(core, x + 10.0f, caret_y, 1.5f, 14.0f, caret_col);
-            }
-            if (placeholder) {
-                rife_draw_text_font(core, x + 14.0f, ph_y, placeholder, is_dark ? 0x94A3B8FF : 0x64748BFF, 3);
-            }
-        } else {
-            if (placeholder) {
-                rife_draw_text_font(core, x + 10.0f, ph_y, placeholder, text_muted, 3);
-            }
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// Rtodo 多维渲染器 (Render)
-// -------------------------------------------------------------
-
-static void calendar_render(void* inst, RifeCore* core, float client_x, float client_y, float client_w, float client_h) {
+static void calendar_render(void* inst, RifeCore* core, float cx, float cy, float cw, float ch) {
     CalendarState* state = (CalendarState*)inst;
-    if (!state) return;
+    if (!state || !core) return;
 
-    RifeSystemConfig* cfg = rife_get_system_config();
-    bool is_zh = (cfg->language == LANG_ZH_CN);
-    bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
-
-    // Antigravity 极致暗黑深空与开发态调色板
-    uint32_t bg_main    = is_dark ? 0x0A0B0EFF : 0xFFFFFFFF;
-    uint32_t bg_sidebar = is_dark ? 0x101116FF : 0xF8F9FAFF;
-    uint32_t border_col = is_dark ? 0x1E202BFF : 0xE2E8F0FF;
-    uint32_t text_title = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
-    uint32_t text_muted = is_dark ? 0x94A3B8FF : 0x64748BFF;
-    uint32_t rtodo_blue = is_dark ? 0x6366F1FF : 0x4F46E5FF;
-
-    if (state->active_field > 0) {
-        state->cursor_blink_t += 0.035f;
-        if (state->cursor_blink_t > 1.0f) state->cursor_blink_t -= 1.0f;
-        rife_request_redraw(core);
-    }
-    bool cursor_on = (state->cursor_blink_t < 0.5f);
-
-    float header_h = 48.0f;
-    float sidebar_w = 185.0f;
-
-    // A. 基础容器底色 (Antigravity 干净双栏)
-    rife_draw_rect(core, client_x, client_y, sidebar_w, client_h, bg_sidebar);
-    rife_draw_rect(core, client_x + sidebar_w, client_y, client_w - sidebar_w, client_h, bg_main);
-    rife_draw_rect(core, client_x + sidebar_w, client_y, 1.0f, client_h, border_col);
-    rife_draw_rect(core, client_x + sidebar_w, client_y + header_h, client_w - sidebar_w, 1.0f, border_col);
-
-    // B. 顶部 Header 区域 (极简清爽通透)
-    float main_x = client_x + sidebar_w;
-    float main_w = client_w - sidebar_w;
-    float main_y = client_y + header_h;
-    float main_h = client_h - header_h;
-
-    // 1. "今天" 按钮 (58x28, 开发者质感按钮，非今天时高亮提示)
-    bool is_current_today = (state->view_year == state->cur_year && state->view_month == state->cur_month && state->view_day == state->cur_day);
-    float today_btn_x = main_x + 16.0f;
-    float today_btn_y = client_y + 10.0f;
-    if (!is_current_today) {
-        // 非今天状态：高亮电光紫胶囊，带快捷键提示 (T)
-        rife_draw_liquid_glass_button(core, today_btn_x, today_btn_y, 58.0f, 28.0f, 6.0f, is_zh ? "今天 T" : "Today T", 5, 0xFFFFFFFF, true, rtodo_blue, false, is_dark);
+    if (state->view_mode == CAL_VIEW_TASKS) {
+        render_tasks_three_column(state, core, cx, cy, cw, ch);
+    } else if (state->view_mode == CAL_VIEW_MATRIX) {
+        render_matrix_quadrants(state, core, cx, cy, cw, ch);
     } else {
-        rife_draw_liquid_glass_button(core, today_btn_x, today_btn_y, 54.0f, 28.0f, 6.0f, is_zh ? "今天" : "Today", 0, text_title, false, 0, false, is_dark);
-    }
-
-    // 2. 前翻 / 后翻箭头按钮
-    float nav_x = today_btn_x + 64.0f;
-    rife_draw_liquid_glass_button(core, nav_x, today_btn_y, 26.0f, 28.0f, 6.0f, "<", 0, text_title, false, 0, false, is_dark);
-
-    float nav_r_x = nav_x + 30.0f;
-    rife_draw_liquid_glass_button(core, nav_r_x, today_btn_y, 26.0f, 28.0f, 6.0f, ">", 0, text_title, false, 0, false, is_dark);
-
-    // 3. 当前年月大标题 (18px Semibold)
-    char title_buf[64];
-    static const char* mon_names[13] = { "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-    if (is_zh) {
-        snprintf(title_buf, sizeof(title_buf), "%d年%d月", state->view_year, state->view_month);
-    } else {
-        snprintf(title_buf, sizeof(title_buf), "%s %d", mon_names[state->view_month], state->view_year);
-    }
-    rife_draw_text_rect(core, nav_r_x + 32.0f, today_btn_y, 180.0f, 28.0f, title_buf, text_title, 2, 1);
-
-    // 4. 右侧视图切换三段胶囊 [日] [周] [月] (Antigravity Segmented Controls)
-    static const CalendarViewMode s_tab_modes[3] = { CAL_VIEW_DAY, CAL_VIEW_WEEK, CAL_VIEW_MONTH };
-    const char* view_labels_zh[3] = { "日", "周", "月" };
-    const char* view_labels_en[3] = { "Day", "Week", "Month" };
-
-    float seg_item_w = 46.0f;
-    float seg_w = 3.0f * seg_item_w + 4.0f;
-    float seg_x = client_x + client_w - seg_w - 20.0f;
-    float seg_y = today_btn_y;
-    rife_draw_round_rect(core, seg_x, seg_y, seg_w, 28.0f, 6.0f, is_dark ? 0x12131AFF : 0xF1F5F9FF, border_col);
-
-    for (int v = 0; v < 3; v++) {
-        float vx = seg_x + 2.0f + (float)v * seg_item_w;
-        bool is_act = (state->view_mode == s_tab_modes[v]);
-        const char* label = is_zh ? view_labels_zh[v] : view_labels_en[v];
-        if (is_act) {
-            uint32_t act_bg = is_dark ? 0x1E202BFF : 0xEEF2FFFF;
-            uint32_t act_bd = is_dark ? 0x313448FF : 0xC7D2FEFF;
-            uint32_t act_txt = is_dark ? 0xF8FAFCFF : 0x4F46E5FF;
-            rife_draw_round_rect(core, vx, seg_y + 2.0f, seg_item_w, 24.0f, 4.0f, act_bg, act_bd);
-            rife_draw_text_rect(core, vx, seg_y, seg_item_w, 28.0f, label, act_txt, 5, 0);
-        } else {
-            rife_draw_text_rect(core, vx, seg_y, seg_item_w, 28.0f, label, text_muted, 0, 0);
-        }
-    }
-
-    // C. 左侧侧边栏 (迷你月历 & 搜索 & 自定义分类)
-    float sb_x = client_x;
-    float sb_y = client_y + header_h;
-
-    // 1. 侧边栏顶部年月与翻页
-    char mini_m_str[32];
-    if (is_zh) snprintf(mini_m_str, sizeof(mini_m_str), "%d年%d月", state->view_year, state->view_month);
-    else snprintf(mini_m_str, sizeof(mini_m_str), "%s %d", mon_names[state->view_month], state->view_year);
-    rife_draw_text_font(core, sb_x + 16.0f, sb_y + 12.0f, mini_m_str, text_title, 1);
-    rife_draw_liquid_glass_button(core, sb_x + sidebar_w - 48.0f, sb_y + 10.0f, 20.0f, 20.0f, 4.0f, "<", 4, text_muted, false, 0, false, is_dark);
-    rife_draw_liquid_glass_button(core, sb_x + sidebar_w - 24.0f, sb_y + 10.0f, 20.0f, 20.0f, 4.0f, ">", 4, text_muted, false, 0, false, is_dark);
-
-    // 2. 迷你月历周表头 (周日首位)
-    float cell_sz = 22.0f;
-    float mini_w = 7.0f * cell_sz;
-    float mini_x = sb_x + (sidebar_w - mini_w) * 0.5f;
-    float mini_y = sb_y + 38.0f;
-
-    const char* mini_week_zh[7] = { "日", "一", "二", "三", "四", "五", "六" };
-    for (int i = 0; i < 7; i++) {
-        rife_draw_text_rect(core, mini_x + (float)i * cell_sz, mini_y, cell_sz, 14.0f, mini_week_zh[i], text_muted, 4, 0);
-    }
-
-    // 3. 迷你月历数字
-    int first_wday = get_day_of_week_sun(state->view_year, state->view_month, 1);
-    int total_days = days_in_month(state->view_year, state->view_month);
-    float days_y = mini_y + 18.0f;
-
-    for (int d = 1; d <= total_days; d++) {
-        int slot = first_wday + d - 1;
-        int row = slot / 7;
-        int col = slot % 7;
-        float cx = mini_x + (float)col * cell_sz;
-        float cy = days_y + (float)row * cell_sz;
-
-        bool is_today = (state->view_year == state->cur_year && state->view_month == state->cur_month && d == state->cur_day);
-        bool is_sel = (d == state->view_day);
-
-        if (is_today) {
-            rife_draw_liquid_glass_button(core, cx + 1.0f, cy + 1.0f, cell_sz - 2.0f, cell_sz - 2.0f, 10.0f, NULL, 0, 0, true, rtodo_blue, false, is_dark);
-        } else if (is_sel) {
-            rife_draw_round_rect(core, cx + 1.0f, cy + 1.0f, cell_sz - 2.0f, cell_sz - 2.0f, 4.0f, is_dark ? 0x241C3888 : 0xF1F5F988, border_col);
-        }
-
-        char d_str[8];
-        snprintf(d_str, sizeof(d_str), "%d", d);
-        uint32_t tc = is_today ? 0xFFFFFFFF : (is_sel ? (is_dark ? 0xC084FCFF : rtodo_blue) : text_title);
-        rife_draw_text_rect(core, cx, cy, cell_sz, cell_sz, d_str, tc, 4, 0);
-    }
-
-    // 4. 侧边栏搜索栏 (可交互液态玻璃输入框)
-    float search_y = days_y + 6.0f * cell_sz + 8.0f;
-    float search_w = sidebar_w - 32.0f;
-    bool is_search_focused = (state->active_field == 5);
-    bool search_has_text = (state->search_query[0] != '\0');
-    uint32_t search_bg = is_dark ? (is_search_focused ? 0x2A2044EE : 0x20183288) : (is_search_focused ? 0xFFFFFFEE : 0xFFFFFF66);
-    uint32_t search_brd = is_search_focused ? rtodo_blue : (search_has_text ? rtodo_blue : border_col);
-
-    rife_draw_round_rect(core, sb_x + 16.0f, search_y, search_w, 28.0f, 14.0f, search_bg, search_brd);
-    rife_draw_round_rect(core, sb_x + 24.0f, search_y + 1.0f, search_w - 16.0f, 1.0f, 1.0f, is_dark ? 0xFFFFFF18 : 0xFFFFFF40, 0x00000000);
-
-    // 搜索放大镜图标
-    rife_draw_text_font(core, sb_x + 24.0f, search_y + (28.0f - 11.0f) * 0.5f, "🔍", is_search_focused ? rtodo_blue : text_muted, 4);
-
-    // 搜索文本 / 占位符
-    float text_x = sb_x + 42.0f;
-    float max_text_w = search_w - 46.0f;
-    float text_y = search_y + (28.0f - 12.0f) * 0.5f;
-
-    if (search_has_text) {
-        // 使用局部剪切防止过长文字穿透右侧按钮
-        rife_push_scissor(core, text_x, search_y + 2.0f, max_text_w, 24.0f);
-        rife_draw_text_font(core, text_x, text_y, state->search_query, text_title, 4);
-        if (is_search_focused && cursor_on) {
-            float tw = cal_measure_text_width(state->search_query, 4);
-            rife_draw_rect(core, text_x + tw + 1.0f, search_y + 7.0f, 1.5f, 14.0f, rtodo_blue);
-        }
-        rife_pop_scissor(core);
-
-        // 右侧 [×] 清空按钮 (可点击)
-        float btn_x = sb_x + 16.0f + search_w - 20.0f;
-        float btn_y = search_y + 5.0f;
-        bool is_clr_hover = (core->input.mouse_x >= btn_x - 2.0f && core->input.mouse_x <= btn_x + 18.0f &&
-                             core->input.mouse_y >= btn_y - 2.0f && core->input.mouse_y <= btn_y + 18.0f);
-        if (is_clr_hover) {
-            rife_draw_round_rect(core, btn_x - 1.0f, btn_y - 1.0f, 18.0f, 18.0f, 9.0f, is_dark ? 0x44FF3B30 : 0x22FF3B30, 0);
-            rife_draw_text_rect(core, btn_x - 1.0f, btn_y - 1.0f, 18.0f, 18.0f, "×", 0xFF3B30FF, 3, 0);
-        } else {
-            rife_draw_text_rect(core, btn_x - 1.0f, btn_y - 1.0f, 18.0f, 18.0f, "×", text_muted, 3, 0);
-        }
-    } else {
-        if (is_search_focused) {
-            if (cursor_on) {
-                rife_draw_rect(core, text_x, search_y + 7.0f, 1.5f, 14.0f, rtodo_blue);
-            }
-            rife_draw_text_font(core, text_x + 4.0f, text_y, is_zh ? "输入关键词..." : "Type to search...", is_dark ? 0x6B5888FF : 0xCBD5E1FF, 4);
-        } else {
-            rife_draw_text_font(core, text_x, text_y, is_zh ? "搜索日程、会议..." : "Search...", text_muted, 4);
-        }
-
-        // 右侧 [+] 快捷新建日程按钮
-        float btn_x = sb_x + 16.0f + search_w - 20.0f;
-        float btn_y = search_y + 4.0f;
-        rife_draw_text_rect(core, btn_x, btn_y, 18.0f, 18.0f, "+", text_muted, 1, 0);
-    }
-
-    // 5. 用户自定义标签列表 (动态展示自定义标签)
-    float sec_y = search_y + 36.0f;
-    rife_draw_text_font(core, sb_x + 16.0f, sec_y, is_zh ? "标签" : "Tags", text_title, 5);
-    // 侧边栏新建标签快捷 [+] 按钮
-    rife_draw_liquid_glass_button(core, sb_x + sidebar_w - 32.0f, sec_y - 2.0f, 18.0f, 18.0f, 9.0f, "+", 4, rtodo_blue, false, 0, false, is_dark);
-
-    for (int c = 0; c < state->tag_count; c++) {
-        float row_y = sec_y + 24.0f + (float)c * 26.0f;
-        CustomTag* tag = &state->tags[c];
-        TagColorStyle cc = get_tag_style(tag->color_bar, is_dark);
-        bool checked = tag->is_enabled;
-
-        if (checked) {
-            rife_draw_round_rect(core, sb_x + 16.0f, row_y + 3.0f, 13.0f, 13.0f, 3.0f, cc.bar, cc.bar);
-            rife_draw_rect(core, sb_x + 18.0f, row_y + 8.0f, 2.0f, 4.0f, 0xFFFFFFFF);
-            rife_draw_rect(core, sb_x + 20.0f, row_y + 10.0f, 2.0f, 2.0f, 0xFFFFFFFF);
-            rife_draw_rect(core, sb_x + 22.0f, row_y + 6.0f, 2.0f, 6.0f, 0xFFFFFFFF);
-        } else {
-            rife_draw_round_rect(core, sb_x + 16.0f, row_y + 3.0f, 13.0f, 13.0f, 3.0f, is_dark ? 0x221B33FF : 0xFFFFFFFF, border_col);
-        }
-
-        rife_draw_text_font(core, sb_x + 36.0f, row_y + 1.0f, tag->name, text_title, 3);
-
-        // 标签删除操作按钮 (×)
-        float del_x = sb_x + sidebar_w - 28.0f;
-        float del_y = row_y + 4.0f;
-        bool is_del_hover = (core->input.mouse_x >= del_x - 2.0f && core->input.mouse_x <= del_x + 18.0f &&
-                             core->input.mouse_y >= del_y - 2.0f && core->input.mouse_y <= del_y + 18.0f);
-        if (is_del_hover) {
-            rife_draw_round_rect(core, del_x, del_y, 16.0f, 16.0f, 8.0f, is_dark ? 0x44FF3B30 : 0x22FF3B30, 0x00000000);
-            rife_draw_text_rect(core, del_x, del_y, 16.0f, 16.0f, "×", 0xFF3B30FF, 3, 0);
-        } else {
-            rife_draw_text_rect(core, del_x, del_y, 16.0f, 16.0f, "×", is_dark ? 0x8A80A044 : 0x8A80A055, 3, 0);
-        }
-    }
-
-    // D. 右侧主工作区 (周视图 / 日视图 / 月视图)
-    uint32_t grid_line_col = is_dark ? 0x1A1C27FF : 0xF1F5F9FF; // Antigravity 极致细腻分割线
-
-    // ==========================================
-    // 视图 1：周视图 (Week View - 纵向滚动舒展大表格)
-    // ==========================================
-    if (state->view_mode == CAL_VIEW_WEEK) {
-        float ruler_w = 46.0f;
-        float grid_left = main_x + ruler_w;
-        float col_w = (main_w - ruler_w - 6.0f) / 7.0f;
-        float header_bar_h = 52.0f;
-        float grid_top = main_y + header_bar_h;
-        float avail_h = main_h - header_bar_h - 4.0f;
-        float hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f; // 舒适大格子，支持Ctrl+滚轮平滑缩放
-        float total_content_h = 24.0f * hour_h;
-        float max_scroll = total_content_h - avail_h;
-        if (max_scroll < 0.0f) max_scroll = 0.0f;
-        if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
-        if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
-
-        int sun_y, sun_m, sun_d;
-        get_week_sunday(state->view_year, state->view_month, state->view_day, &sun_y, &sun_m, &sun_d);
-
-        // 1. 周列头固定顶栏 (Antigravity 开发者表头)
-        rife_draw_rect(core, main_x, main_y, main_w, header_bar_h, is_dark ? 0x0E0F14FF : 0xFFFFFFFF);
-        rife_draw_text_font(core, main_x + 6.0f, main_y + 12.0f, "GMT+8", text_muted, 4);
-
-        const char* wk_names[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
-        const char* wk_names_en[7] = { "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
-
-        for (int c = 0; c < 7; c++) {
-            float cx = grid_left + (float)c * col_w;
-            int cy_y, cy_m, cy_d;
-            add_days(sun_y, sun_m, sun_d, c, &cy_y, &cy_m, &cy_d);
-            bool is_col_today = (cy_y == state->cur_year && cy_m == state->cur_month && cy_d == state->cur_day);
-
-            // 列分割细线 (表头)
-            rife_draw_rect(core, cx, main_y, 1.0f, header_bar_h, grid_line_col);
-
-            // 上层：星期文字居中 (12px)
-            rife_draw_text_rect(core, cx, main_y + 4.0f, col_w, 16.0f, is_zh ? wk_names[c] : wk_names_en[c], is_col_today ? rtodo_blue : text_muted, 4, 0);
-
-            // 下层：日期数字居中 (Antigravity 电光紫矩形微徽标)
-            char d_buf[8];
-            snprintf(d_buf, sizeof(d_buf), "%d", cy_d);
-            if (is_col_today) {
-                float badge_sz = 26.0f;
-                float badge_x = cx + (col_w - badge_sz) * 0.5f;
-                float badge_y = main_y + 21.0f;
-                rife_draw_round_rect(core, badge_x, badge_y, badge_sz, badge_sz, 6.0f, rtodo_blue, 0x818CF888);
-                rife_draw_text_rect(core, badge_x, badge_y, badge_sz, badge_sz, d_buf, 0xFFFFFFFF, 5, 0);
-            } else {
-                rife_draw_text_rect(core, cx, main_y + 20.0f, col_w, 28.0f, d_buf, text_title, 1, 0);
-            }
-        }
-        // 表头下边缘底线
-        rife_draw_rect(core, main_x, grid_top, main_w, 1.0f, border_col);
-
-        // 2. 纵向可滚动时间网格区域 (硬件视口裁剪)
-        rife_push_scissor(core, main_x, grid_top + 1.0f, main_w, avail_h);
-
-        // 绘制 7 列纵向贯通网格线
-        for (int c = 0; c < 7; c++) {
-            float cx = grid_left + (float)c * col_w;
-            rife_draw_rect(core, cx, grid_top, 1.0f, avail_h, grid_line_col);
-        }
-        rife_draw_rect(core, grid_left + 7.0f * col_w, grid_top, 1.0f, avail_h, grid_line_col);
-
-        // 时间标尺与横向网格线 (以 1 分钟为最小精度，多级平滑微刻度)
-        for (int h = 0; h <= 24; h++) {
-            float hy = grid_top - state->scroll_y + (float)h * hour_h;
-
-            if (hy >= grid_top - 12.0f && hy <= grid_top + avail_h + 12.0f) {
-                char h_str[8];
-                snprintf(h_str, sizeof(h_str), "%02d:00", h);
-                rife_draw_text_font(core, main_x + 8.0f, hy - 6.0f, h_str, text_muted, 4);
-                rife_draw_rect(core, grid_left, hy, col_w * 7.0f, 1.0f, grid_line_col);
-                rife_draw_rect(core, grid_left - 8.0f, hy, 8.0f, 1.0f, grid_line_col);
-            }
-
-            if (h < 24) {
-                float min_h = hour_h / 60.0f;
-                // 当放大到高倍率 (hour_h >= 240) 时，整个网格绘制全贯通 1 分钟细密水平格线，形成清晰可见的 1 分钟格子
-                if (hour_h >= 240.0f) {
-                    uint32_t line_1m = is_dark ? (hour_h >= 480.0f ? 0x38285522 : 0x38285514)
-                                               : (hour_h >= 480.0f ? 0x0000000B : 0x00000006);
-                    uint32_t tick_1m = is_dark ? 0x3828552E : 0x00000014;
-                    for (int m = 1; m < 60; m++) {
-                        if (m % 5 == 0) continue;
-                        float my = hy + (float)m * min_h;
-                        if (my < grid_top || my > grid_top + avail_h) continue;
-                        // 贯通 7 列，形成完整的 1 分钟矩形格子 (1-minute cells)
-                        rife_draw_rect(core, grid_left, my, col_w * 7.0f, 1.0f, line_1m);
-                        rife_draw_rect(core, grid_left - 4.0f, my, 4.0f, 1.0f, tick_1m);
-                    }
-                } else if (hour_h >= 180.0f) {
-                    uint32_t tick_1m = is_dark ? 0x38285516 : 0x00000008;
-                    for (int m = 1; m < 60; m++) {
-                        if (m % 5 == 0) continue;
-                        float my = hy + (float)m * min_h;
-                        if (my >= grid_top && my <= grid_top + avail_h) {
-                            rife_draw_rect(core, grid_left - 3.0f, my, 3.0f, 1.0f, tick_1m);
-                        }
-                    }
-                }
-
-                // 5 分钟与 15 分钟刻度
-                float min5_h = hour_h * (5.0f / 60.0f);
-                for (int m5 = 1; m5 < 12; m5++) {
-                    int m = m5 * 5;
-                    float qy = hy + (float)m5 * min5_h;
-                    if (qy < grid_top || qy > grid_top + avail_h) continue;
-
-                    if (m == 30) {
-                        // :30 半点线 (清晰微淡实线)
-                        uint32_t line_30 = is_dark ? 0x38285526 : 0x0000000C;
-                        rife_draw_rect(core, grid_left, qy, col_w * 7.0f, 1.0f, line_30);
-                        rife_draw_rect(core, grid_left - 7.0f, qy, 7.0f, 1.0f, line_30);
-                        if (hour_h >= 64.0f) {
-                            char m30_str[8];
-                            snprintf(m30_str, sizeof(m30_str), "%02d:30", h);
-                            rife_draw_text_font(core, main_x + 8.0f, qy - 6.0f, m30_str, is_dark ? 0x8A80A055 : 0x8A80A066, 4);
-                        }
-                    } else if (m == 15 || m == 45) {
-                        // :15 和 :45 刻度细分子线
-                        uint32_t line_15 = is_dark ? 0x38285514 : 0x00000006;
-                        rife_draw_rect(core, grid_left, qy, col_w * 7.0f, 1.0f, line_15);
-                        rife_draw_rect(core, grid_left - 6.0f, qy, 6.0f, 1.0f, line_15);
-                        if (hour_h >= 110.0f) {
-                            char mq_str[8];
-                            snprintf(mq_str, sizeof(mq_str), "%02d:%02d", h, m);
-                            rife_draw_text_font(core, main_x + 8.0f, qy - 6.0f, mq_str, is_dark ? 0x8A80A044 : 0x8A80A055, 4);
-                        }
-                    } else if (hour_h >= 90.0f) {
-                        // 5 分钟标尺刻度
-                        uint32_t tick_5m = is_dark ? 0x38285520 : 0x0000000A;
-                        rife_draw_rect(core, grid_left - 5.0f, qy, 5.0f, 1.0f, tick_5m);
-                        if (hour_h >= 240.0f) {
-                            uint32_t line_5m = is_dark ? 0x3828550D : 0x00000004;
-                            rife_draw_rect(core, grid_left, qy, col_w * 7.0f, 1.0f, line_5m);
-                            char m5_str[8];
-                            snprintf(m5_str, sizeof(m5_str), "%02d:%02d", h, m);
-                            rife_draw_text_font(core, main_x + 8.0f, qy - 6.0f, m5_str, is_dark ? 0x8A80A033 : 0x8A80A044, 4);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2.5 悬停高亮 1 分钟吸附格子 (当放大至高倍率时，直观呈现当前指针所在的一分钟格子)
-        if (hour_h >= 240.0f && !state->show_new_modal && !state->show_new_tag_modal) {
-            float hmx = core->input.mouse_x;
-            float hmy = core->input.mouse_y;
-            if (hmx >= grid_left && hmx <= grid_left + 7.0f * col_w && hmy >= grid_top && hmy <= grid_top + avail_h) {
-                int hc = (int)((hmx - grid_left) / col_w);
-                if (hc >= 0 && hc < 7) {
-                    float exact_h = (hmy - grid_top + state->scroll_y) / hour_h;
-                    int h_total_mins = (int)floorf(exact_h * 60.0f);
-                    if (h_total_mins >= 0 && h_total_mins < 1440) {
-                        float cell_top = grid_top - state->scroll_y + (float)h_total_mins * (hour_h / 60.0f);
-                        float cell_h = hour_h / 60.0f;
-                        float cell_left = grid_left + (float)hc * col_w;
-                        rife_draw_rect(core, cell_left + 1.0f, cell_top + 0.5f, col_w - 2.0f, cell_h, is_dark ? 0x3370FF24 : 0x3370FF16);
-                        rife_draw_rect(core, cell_left + 1.0f, cell_top, col_w - 2.0f, 1.0f, rtodo_blue);
-                        rife_draw_rect(core, cell_left + 1.0f, cell_top + cell_h, col_w - 2.0f, 1.0f, rtodo_blue);
-                    }
-                }
-            }
-        }
-
-        // 3. 渲染事件卡片 (舒展大格卡片)
-        for (int i = 0; i < state->event_count; i++) {
-            CalendarEvent* e = &state->events[i];
-            if (!is_event_visible(state, e)) continue;
-
-            for (int c = 0; c < 7; c++) {
-                int cy_y, cy_m, cy_d;
-                add_days(sun_y, sun_m, sun_d, c, &cy_y, &cy_m, &cy_d);
-                if (e->year == cy_y && e->month == cy_m && e->day == cy_d) {
-                    float cx = grid_left + (float)c * col_w + 2.0f;
-                    float cw = col_w - 4.0f;
-                    float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
-                    float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
-                    float cy = grid_top - state->scroll_y + start_f * hour_h + 1.0f;
-                    float ch = (end_f - start_f) * hour_h - 2.0f;
-                    if (ch < 14.0f) ch = 14.0f;
-
-                    if (cy + ch < grid_top || cy > grid_top + avail_h) continue;
-
-                    TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
-
-                    rife_push_scissor(core, cx + 1.0f, cy, cw - 2.0f, ch);
-                    rife_draw_round_rect(core, cx, cy, cw, ch, 6.0f, cc.bg, cc.border);
-                    rife_draw_round_rect(core, cx + 2.0f, cy + 3.0f, 3.0f, ch - 6.0f, 1.5f, cc.bar, cc.bar);
-
-                    rife_draw_text_font(core, cx + 8.0f, cy + 4.0f, e->title, cc.text, 3);
-                    if (ch >= 32.0f) {
-                        char time_buf[32];
-                        snprintf(time_buf, sizeof(time_buf), "%02d:%02d-%02d:%02d", e->start_hour, e->start_min, e->end_hour, e->end_min);
-                        rife_draw_text_font(core, cx + 8.0f, cy + 20.0f, time_buf, text_muted, 4);
-                    }
-                    if (ch >= 52.0f && e->location[0]) {
-                        rife_draw_text_font(core, cx + 8.0f, cy + 34.0f, e->location, text_muted, 4);
-                    }
-                    rife_pop_scissor(core);
-                }
-            }
-        }
-
-        // 4. 实时时间红线 (Current Time Red Indicator Line)
-        float cur_f = (float)state->cur_hour + (float)state->cur_min / 60.0f;
-        float red_y = grid_top - state->scroll_y + cur_f * hour_h;
-        if (red_y >= grid_top && red_y <= grid_top + avail_h) {
-            char red_str[16];
-            snprintf(red_str, sizeof(red_str), "%02d:%02d", state->cur_hour, state->cur_min);
-            rife_draw_round_rect(core, main_x + 4.0f, red_y - 8.0f, 38.0f, 16.0f, 4.0f, 0xF53F3FFF, 0xF53F3FFF);
-            rife_draw_text_font(core, main_x + 7.0f, red_y - 7.0f, red_str, 0xFFFFFFFF, 4);
-            rife_draw_rect(core, grid_left, red_y - 0.5f, col_w * 7.0f, 1.5f, 0xF53F3FFF);
-
-            for (int c = 0; c < 7; c++) {
-                int cy_y, cy_m, cy_d;
-                add_days(sun_y, sun_m, sun_d, c, &cy_y, &cy_m, &cy_d);
-                if (cy_y == state->cur_year && cy_m == state->cur_month && cy_d == state->cur_day) {
-                    float red_dot_x = grid_left + (float)c * col_w;
-                    rife_draw_round_rect(core, red_dot_x - 3.0f, red_y - 3.0f, 6.0f, 6.0f, 3.0f, 0xF53F3FFF, 0xFFFFFFFF);
-                    break;
-                }
-            }
-        }
-
-        // 5. 右侧微动滚动条 (Scrollbar Thumb)
-        if (max_scroll > 0.0f) {
-            float sb_bar_w = 4.0f;
-            float sb_bar_x = main_x + main_w - sb_bar_w - 2.0f;
-            float thumb_h = avail_h * (avail_h / total_content_h);
-            if (thumb_h < 36.0f) thumb_h = 36.0f;
-            float thumb_y = grid_top + (state->scroll_y / max_scroll) * (avail_h - thumb_h);
-            rife_draw_round_rect(core, sb_bar_x, thumb_y, sb_bar_w, thumb_h, 2.0f, is_dark ? 0x634E8C66 : 0xCBD5E199, 0);
-        }
-
-        // 6. 时间网格框选拖拽动态实时预览 (Drag-to-select live preview)
-        if (state->is_dragging_time && state->drag_col >= 0 && state->drag_col < 7) {
-            int start_m = (state->drag_start_mins < state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
-            int end_m = (state->drag_start_mins > state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
-            float cx = grid_left + (float)state->drag_col * col_w + 2.0f;
-            float cw = col_w - 4.0f;
-            float sy1 = grid_top - state->scroll_y + ((float)start_m / 60.0f) * hour_h;
-            float sy2 = grid_top - state->scroll_y + ((float)end_m / 60.0f) * hour_h;
-            float sel_h = sy2 - sy1;
-            if (sel_h < 14.0f) sel_h = 14.0f;
-
-            if (sy1 + sel_h >= grid_top && sy1 <= grid_top + avail_h) {
-                // 液态玻璃高光选区卡片
-                rife_draw_round_rect(core, cx, sy1, cw, sel_h, 6.0f,
-                                     is_dark ? 0x3370FF40 : 0x3370FF24,
-                                     is_dark ? 0x60A5FAAA : 0x3370FFCC);
-                // 顶部晶莹反光镜面
-                rife_draw_round_rect(core, cx + 2.0f, sy1 + 1.0f, cw - 4.0f, 1.0f, 1.0f, 0xFFFFFF88, 0x00000000);
-
-                // 悬浮时间提示药丸徽标
-                int dur = end_m - start_m;
-                char tip_buf[48];
-                if (dur == 0) {
-                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d", start_m / 60, start_m % 60);
-                } else if (dur >= 60) {
-                    if (dur % 60 == 0) {
-                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60);
-                    } else {
-                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh%02dm)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60, dur % 60);
-                    }
-                } else {
-                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%d分)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur);
-                }
-
-                float badge_w = fminf(cw - 4.0f, 130.0f);
-                if (badge_w < 70.0f) badge_w = cw - 4.0f;
-                float badge_x = cx + (cw - badge_w) * 0.5f;
-                float badge_y = sy1 + (sel_h - 20.0f) * 0.5f;
-                if (badge_y < grid_top + 2.0f) badge_y = grid_top + 2.0f;
-                if (badge_y > grid_top + avail_h - 22.0f) badge_y = grid_top + avail_h - 22.0f;
-
-                rife_draw_round_rect(core, badge_x, badge_y, badge_w, 20.0f, 4.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, rtodo_blue);
-                rife_draw_text_rect(core, badge_x, badge_y, badge_w, 20.0f, tip_buf, is_dark ? 0x93C5FDFF : 0x1D4ED8FF, 4, 0);
-            }
-        }
-
-        rife_pop_scissor(core);
-    }
-    // ==========================================
-    // 视图 2：日视图 (Day View - 纵向滚动大时间轴)
-    // ==========================================
-    else if (state->view_mode == CAL_VIEW_DAY) {
-        float day_ruler_w = 56.0f;
-        float day_header_h = 36.0f;
-        float day_grid_top = main_y + day_header_h;
-        float day_avail_h = main_h - day_header_h - 4.0f;
-        float day_hour_h = (state->time_scale >= 40.0f) ? state->time_scale : 96.0f;
-        float total_day_h = 24.0f * day_hour_h;
-        float max_scroll = total_day_h - day_avail_h;
-        if (max_scroll < 0.0f) max_scroll = 0.0f;
-        if (state->scroll_y < 0.0f) state->scroll_y = 0.0f;
-        if (state->scroll_y > max_scroll) state->scroll_y = max_scroll;
-
-        // 固定顶栏标题 (磨砂毛玻璃)
-        rife_draw_rect(core, main_x, main_y, main_w, day_header_h, is_dark ? 0x16112240 : 0xFFFFFF35);
-        rife_draw_text_font(core, main_x + 18.0f, main_y + 10.0f, is_zh ? "今日重点时间轴" : "Daily Agenda Timeline", text_title, 1);
-        rife_draw_rect(core, main_x, day_grid_top, main_w, 1.0f, border_col);
-
-        rife_push_scissor(core, main_x, day_grid_top + 1.0f, main_w, day_avail_h);
-
-        float ex = main_x + day_ruler_w + 14.0f;
-        float ew = main_w - day_ruler_w - 32.0f;
-
-        // 时间标尺与横向网格线 (以 1 分钟为最小精度，多级平滑微刻度)
-        for (int h = 0; h <= 24; h++) {
-            float hy = day_grid_top - state->scroll_y + (float)h * day_hour_h;
-
-            if (hy >= day_grid_top - 12.0f && hy <= day_grid_top + day_avail_h + 12.0f) {
-                char h_str[8];
-                snprintf(h_str, sizeof(h_str), "%02d:00", h);
-                rife_draw_text_font(core, main_x + 14.0f, hy - 6.0f, h_str, text_muted, 4);
-                rife_draw_rect(core, ex, hy, ew, 1.0f, grid_line_col);
-                rife_draw_rect(core, main_x + day_ruler_w - 8.0f, hy, 8.0f, 1.0f, grid_line_col);
-            }
-
-            if (h < 24) {
-                float min_h = day_hour_h / 60.0f;
-                // 当放大到高倍率 (day_hour_h >= 240) 时，绘制全贯通 1 分钟细密水平格线，形成清晰可见的 1 分钟格子
-                if (day_hour_h >= 240.0f) {
-                    uint32_t line_1m = is_dark ? (day_hour_h >= 480.0f ? 0x38285522 : 0x38285514)
-                                               : (day_hour_h >= 480.0f ? 0x0000000B : 0x00000006);
-                    uint32_t tick_1m = is_dark ? 0x3828552E : 0x00000014;
-                    for (int m = 1; m < 60; m++) {
-                        if (m % 5 == 0) continue;
-                        float my = hy + (float)m * min_h;
-                        if (my < day_grid_top || my > day_grid_top + day_avail_h) continue;
-                        rife_draw_rect(core, ex, my, ew, 1.0f, line_1m);
-                        rife_draw_rect(core, main_x + day_ruler_w - 4.0f, my, 4.0f, 1.0f, tick_1m);
-                    }
-                } else if (day_hour_h >= 180.0f) {
-                    uint32_t tick_1m = is_dark ? 0x38285516 : 0x00000008;
-                    for (int m = 1; m < 60; m++) {
-                        if (m % 5 == 0) continue;
-                        float my = hy + (float)m * min_h;
-                        if (my >= day_grid_top && my <= day_grid_top + day_avail_h) {
-                            rife_draw_rect(core, main_x + day_ruler_w - 3.0f, my, 3.0f, 1.0f, tick_1m);
-                        }
-                    }
-                }
-
-                // 5 分钟与 15 分钟刻度
-                float min5_h = day_hour_h * (5.0f / 60.0f);
-                for (int m5 = 1; m5 < 12; m5++) {
-                    int m = m5 * 5;
-                    float qy = hy + (float)m5 * min5_h;
-                    if (qy < day_grid_top || qy > day_grid_top + day_avail_h) continue;
-
-                    if (m == 30) {
-                        uint32_t line_30 = is_dark ? 0x38285526 : 0x0000000C;
-                        rife_draw_rect(core, ex, qy, ew, 1.0f, line_30);
-                        rife_draw_rect(core, main_x + day_ruler_w - 7.0f, qy, 7.0f, 1.0f, line_30);
-                        if (day_hour_h >= 64.0f) {
-                            char m30_str[8];
-                            snprintf(m30_str, sizeof(m30_str), "%02d:30", h);
-                            rife_draw_text_font(core, main_x + 14.0f, qy - 6.0f, m30_str, is_dark ? 0x8A80A055 : 0x8A80A066, 4);
-                        }
-                    } else if (m == 15 || m == 45) {
-                        uint32_t line_15 = is_dark ? 0x38285514 : 0x00000006;
-                        rife_draw_rect(core, ex, qy, ew, 1.0f, line_15);
-                        rife_draw_rect(core, main_x + day_ruler_w - 6.0f, qy, 6.0f, 1.0f, line_15);
-                        if (day_hour_h >= 110.0f) {
-                            char mq_str[8];
-                            snprintf(mq_str, sizeof(mq_str), "%02d:%02d", h, m);
-                            rife_draw_text_font(core, main_x + 14.0f, qy - 6.0f, mq_str, is_dark ? 0x8A80A044 : 0x8A80A055, 4);
-                        }
-                    } else if (day_hour_h >= 90.0f) {
-                        uint32_t tick_5m = is_dark ? 0x38285520 : 0x0000000A;
-                        rife_draw_rect(core, main_x + day_ruler_w - 5.0f, qy, 5.0f, 1.0f, tick_5m);
-                        if (day_hour_h >= 240.0f) {
-                            uint32_t line_5m = is_dark ? 0x3828550D : 0x00000004;
-                            rife_draw_rect(core, ex, qy, ew, 1.0f, line_5m);
-                            char m5_str[8];
-                            snprintf(m5_str, sizeof(m5_str), "%02d:%02d", h, m);
-                            rife_draw_text_font(core, main_x + 14.0f, qy - 6.0f, m5_str, is_dark ? 0x8A80A033 : 0x8A80A044, 4);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2.5 悬停高亮 1 分钟吸附格子 (日视图)
-        if (day_hour_h >= 240.0f && !state->show_new_modal && !state->show_new_tag_modal) {
-            float hmx = core->input.mouse_x;
-            float hmy = core->input.mouse_y;
-            if (hmx >= ex && hmx <= ex + ew && hmy >= day_grid_top && hmy <= day_grid_top + day_avail_h) {
-                float exact_h = (hmy - day_grid_top + state->scroll_y) / day_hour_h;
-                int h_total_mins = (int)floorf(exact_h * 60.0f);
-                if (h_total_mins >= 0 && h_total_mins < 1440) {
-                    float cell_top = day_grid_top - state->scroll_y + (float)h_total_mins * (day_hour_h / 60.0f);
-                    float cell_h = day_hour_h / 60.0f;
-                    rife_draw_rect(core, ex + 1.0f, cell_top + 0.5f, ew - 2.0f, cell_h, is_dark ? 0x3370FF24 : 0x3370FF16);
-                    rife_draw_rect(core, ex + 1.0f, cell_top, ew - 2.0f, 1.0f, rtodo_blue);
-                    rife_draw_rect(core, ex + 1.0f, cell_top + cell_h, ew - 2.0f, 1.0f, rtodo_blue);
-                }
-            }
-        }
-
-        // 渲染单日大日程卡片
-        for (int i = 0; i < state->event_count; i++) {
-            CalendarEvent* e = &state->events[i];
-            if (!is_event_visible(state, e)) continue;
-            if (e->year == state->view_year && e->month == state->view_month && e->day == state->view_day) {
-                float start_f = (float)e->start_hour + (float)e->start_min / 60.0f;
-                float end_f = (float)e->end_hour + (float)e->end_min / 60.0f;
-                float ey = day_grid_top - state->scroll_y + start_f * day_hour_h;
-                float eh = (end_f - start_f) * day_hour_h;
-                if (eh < 18.0f) eh = 18.0f;
-
-                if (ey + eh < day_grid_top || ey > day_grid_top + day_avail_h) continue;
-
-                TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
-                rife_push_scissor(core, ex, ey, ew, eh);
-
-                rife_draw_round_rect(core, ex, ey, ew, eh, 8.0f, cc.bg, cc.border);
-                rife_draw_round_rect(core, ex + 2.0f, ey + 2.0f, 5.0f, eh - 4.0f, 2.5f, cc.bar, cc.bar);
-
-                rife_draw_text_font(core, ex + 14.0f, ey + 6.0f, e->title, cc.text, 1);
-                char t_sub[64];
-                snprintf(t_sub, sizeof(t_sub), "%02d:%02d - %02d:%02d · %s", e->start_hour, e->start_min, e->end_hour, e->end_min, e->location);
-                rife_draw_text_font(core, ex + 14.0f, ey + 24.0f, t_sub, text_muted, 3);
-                if (eh >= 56.0f && e->desc[0]) {
-                    rife_draw_text_font(core, ex + 14.0f, ey + 42.0f, e->desc, text_muted, 4);
-                }
-
-                rife_pop_scissor(core);
-            }
-        }
-
-        // 当前时间红线 (日视图 - 红色防重叠圆角胶囊徽标)
-        float cur_f = (float)state->cur_hour + (float)state->cur_min / 60.0f;
-        float red_y = day_grid_top - state->scroll_y + cur_f * day_hour_h;
-        if (red_y >= day_grid_top && red_y <= day_grid_top + day_avail_h) {
-            char red_str[16];
-            snprintf(red_str, sizeof(red_str), "%02d:%02d", state->cur_hour, state->cur_min);
-            rife_draw_round_rect(core, main_x + 6.0f, red_y - 8.0f, 38.0f, 16.0f, 4.0f, 0xF53F3FFF, 0xF53F3FFF);
-            rife_draw_text_font(core, main_x + 9.0f, red_y - 7.0f, red_str, 0xFFFFFFFF, 4);
-            rife_draw_rect(core, ex, red_y - 0.5f, ew, 1.5f, 0xF53F3FFF);
-        }
-
-        // 滚动条
-        if (max_scroll > 0.0f) {
-            float sb_bar_w = 4.0f;
-            float sb_bar_x = main_x + main_w - sb_bar_w - 2.0f;
-            float thumb_h = day_avail_h * (day_avail_h / total_day_h);
-            if (thumb_h < 36.0f) thumb_h = 36.0f;
-            float thumb_y = day_grid_top + (state->scroll_y / max_scroll) * (day_avail_h - thumb_h);
-            rife_draw_round_rect(core, sb_bar_x, thumb_y, sb_bar_w, thumb_h, 2.0f, is_dark ? 0x634E8C66 : 0xCBD5E199, 0);
-        }
-
-        // 拖拽选区实时动态预览 (日视图)
-        if (state->is_dragging_time) {
-            int start_m = (state->drag_start_mins < state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
-            int end_m = (state->drag_start_mins > state->drag_cur_mins) ? state->drag_start_mins : state->drag_cur_mins;
-            float cx = ex;
-            float cw = ew;
-            float sy1 = day_grid_top - state->scroll_y + ((float)start_m / 60.0f) * day_hour_h;
-            float sy2 = day_grid_top - state->scroll_y + ((float)end_m / 60.0f) * day_hour_h;
-            float sel_h = sy2 - sy1;
-            if (sel_h < 14.0f) sel_h = 14.0f;
-
-            if (sy1 + sel_h >= day_grid_top && sy1 <= day_grid_top + day_avail_h) {
-                // 液态玻璃高光选区卡片
-                rife_draw_round_rect(core, cx, sy1, cw, sel_h, 6.0f,
-                                     is_dark ? 0x3370FF40 : 0x3370FF24,
-                                     is_dark ? 0x60A5FAAA : 0x3370FFCC);
-                // 顶部晶莹反光镜面
-                rife_draw_round_rect(core, cx + 2.0f, sy1 + 1.0f, cw - 4.0f, 1.0f, 1.0f, 0xFFFFFF88, 0x00000000);
-
-                int dur = end_m - start_m;
-                char tip_buf[48];
-                if (dur == 0) {
-                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d", start_m / 60, start_m % 60);
-                } else if (dur >= 60) {
-                    if (dur % 60 == 0) {
-                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60);
-                    } else {
-                        snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%dh%02dm)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur / 60, dur % 60);
-                    }
-                } else {
-                    snprintf(tip_buf, sizeof(tip_buf), "%02d:%02d-%02d:%02d (%d分)", start_m / 60, start_m % 60, end_m / 60, end_m % 60, dur);
-                }
-
-                float badge_w = fminf(cw - 8.0f, 140.0f);
-                float badge_x = cx + (cw - badge_w) * 0.5f;
-                float badge_y = sy1 + (sel_h - 22.0f) * 0.5f;
-                if (badge_y < day_grid_top + 2.0f) badge_y = day_grid_top + 2.0f;
-                if (badge_y > day_grid_top + day_avail_h - 24.0f) badge_y = day_grid_top + day_avail_h - 24.0f;
-
-                rife_draw_round_rect(core, badge_x, badge_y, badge_w, 22.0f, 4.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, rtodo_blue);
-                rife_draw_text_rect(core, badge_x, badge_y, badge_w, 22.0f, tip_buf, is_dark ? 0x93C5FDFF : 0x1D4ED8FF, 4, 0);
-            }
-        }
-
-        rife_pop_scissor(core);
-    }
-    // ==========================================
-    // 视图 3：月视图 (Month View - 35/42格大月历)
-    // ==========================================
-    else if (state->view_mode == CAL_VIEW_MONTH) {
-        float m_col_w = main_w / 7.0f;
-        float m_row_h = (main_h - 28.0f) / 6.0f;
-        float m_top = main_y + 28.0f;
-
-        const char* wk_names[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
-        for (int c = 0; c < 7; c++) {
-            float col_x = main_x + (float)c * m_col_w;
-            rife_draw_text_rect(core, col_x, main_y + 4.0f, m_col_w, 20.0f, wk_names[c], text_muted, 3, 0);
-        }
-        rife_draw_rect(core, main_x, m_top, main_w, 1.0f, border_col);
-
-        int first_w = get_day_of_week_sun(state->view_year, state->view_month, 1);
-        int total_d = days_in_month(state->view_year, state->view_month);
-
-        for (int d = 1; d <= total_d; d++) {
-            int slot = first_w + d - 1;
-            int r = slot / 7;
-            int c = slot % 7;
-            if (r >= 6) break;
-
-            float cx = main_x + (float)c * m_col_w;
-            float cy = m_top + (float)r * m_row_h;
-
-            rife_draw_round_rect(core, cx, cy, m_col_w, m_row_h, 0.0f, 0x00000000, border_col);
-
-            char d_str[8];
-            snprintf(d_str, sizeof(d_str), "%d", d);
-            bool is_td = (state->view_year == state->cur_year && state->view_month == state->cur_month && d == state->cur_day);
-            if (is_td) {
-                rife_draw_round_rect(core, cx + 8.0f, cy + 6.0f, 22.0f, 22.0f, 11.0f, rtodo_blue, rtodo_blue);
-                rife_draw_text_rect(core, cx + 8.0f, cy + 6.0f, 22.0f, 22.0f, d_str, 0xFFFFFFFF, 5, 0);
-            } else {
-                rife_draw_text_rect(core, cx + 8.0f, cy + 6.0f, 22.0f, 22.0f, d_str, text_title, 3, 0);
-            }
-
-            // 该日日程圆点胶囊
-            int item_idx = 0;
-            for (int i = 0; i < state->event_count; i++) {
-                CalendarEvent* e = &state->events[i];
-                if (!is_event_visible(state, e)) continue;
-                if (e->year == state->view_year && e->month == state->view_month && e->day == d) {
-                    TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
-                    float chip_y = cy + 32.0f + (float)item_idx * 20.0f;
-                    if (chip_y + 18.0f < cy + m_row_h) {
-                        rife_draw_round_rect(core, cx + 4.0f, chip_y, m_col_w - 8.0f, 18.0f, 4.0f, cc.bg, cc.border);
-                        rife_draw_round_rect(core, cx + 6.0f, chip_y + 3.0f, 3.0f, 12.0f, 1.5f, cc.bar, cc.bar);
-                        rife_draw_text_font(core, cx + 14.0f, chip_y + 2.0f, e->title, cc.text, 4);
-                        item_idx++;
-                    }
-                }
-            }
-        }
-    }
-    // ==========================================
-    // 视图 4：日程清单列表 (Agenda View - 信息流卡片)
-    // ==========================================
-    else if (state->view_mode == CAL_VIEW_AGENDA) {
-        float list_y = main_y + 16.0f;
-        rife_draw_text_font(core, main_x + 24.0f, list_y, is_zh ? "全部日程待办清单" : "Agenda & Task Overview", text_title, 1);
-
-        int visible_events = 0;
-        for (int i = 0; i < state->event_count; i++) {
-            if (is_event_visible(state, &state->events[i])) visible_events++;
-        }
-
-        if (visible_events == 0) {
-            float empty_cx = main_x + main_w * 0.5f;
-            float empty_cy = main_y + main_h * 0.42f;
-
-            // 柔和磨砂空状态大圆盘
-            rife_draw_round_rect(core, empty_cx - 36.0f, empty_cy - 36.0f, 72.0f, 72.0f, 36.0f, is_dark ? 0x271D4288 : 0xF1F5F9CC, border_col);
-            // 内部小徽标勾选图标
-            rife_draw_round_rect(core, empty_cx - 16.0f, empty_cy - 16.0f, 32.0f, 32.0f, 16.0f, rtodo_blue, rtodo_blue);
-            rife_draw_rect(core, empty_cx - 7.0f, empty_cy + 2.0f, 2.5f, 6.0f, 0xFFFFFFFF);
-            rife_draw_rect(core, empty_cx - 4.5f, empty_cy + 6.0f, 4.0f, 2.5f, 0xFFFFFFFF);
-            rife_draw_rect(core, empty_cx - 0.5f, empty_cy - 4.0f, 2.5f, 12.0f, 0xFFFFFFFF);
-
-            rife_draw_text_font(core, empty_cx - (is_zh ? 48.0f : 60.0f), empty_cy + 48.0f, is_zh ? "暂无待办日程" : "No Upcoming Events", text_title, 1);
-            rife_draw_text_font(core, empty_cx - (is_zh ? 116.0f : 140.0f), empty_cy + 74.0f, is_zh ? "点击右下角 '+' 或网格空白处快速创建新日程" : "Click '+' or any grid slot to create an event", text_muted, 3);
-        } else {
-            float card_y = list_y + 36.0f;
-            for (int i = 0; i < state->event_count; i++) {
-                CalendarEvent* e = &state->events[i];
-                if (!is_event_visible(state, e)) continue;
-
-                TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
-                float cw = main_w - 48.0f;
-                float ch = 48.0f;
-
-                rife_draw_round_rect(core, main_x + 24.0f, card_y, cw, ch, 8.0f, cc.bg, cc.border);
-                rife_draw_round_rect(core, main_x + 26.0f, card_y + 3.0f, 4.0f, ch - 6.0f, 2.0f, cc.bar, cc.bar);
-
-                // 精致矢量对勾完成状态
-                if (e->is_completed) {
-                    rife_draw_round_rect(core, main_x + 40.0f, card_y + 16.0f, 16.0f, 16.0f, 4.0f, 0x10B981FF, 0x10B981FF);
-                    rife_draw_rect(core, main_x + 43.0f, card_y + 24.0f, 2.0f, 4.0f, 0xFFFFFFFF);
-                    rife_draw_rect(core, main_x + 45.0f, card_y + 26.0f, 2.0f, 2.0f, 0xFFFFFFFF);
-                    rife_draw_rect(core, main_x + 47.0f, card_y + 21.0f, 2.0f, 7.0f, 0xFFFFFFFF);
-                } else {
-                    rife_draw_round_rect(core, main_x + 40.0f, card_y + 16.0f, 16.0f, 16.0f, 4.0f, is_dark ? 0x221B35FF : 0xFFFFFFFF, border_col);
-                }
-
-                // 标题
-                rife_draw_text_font(core, main_x + 68.0f, card_y + 8.0f, e->title, e->is_completed ? text_muted : cc.text, 1);
-
-                // 时间与地点标签
-                char meta_str[64];
-                snprintf(meta_str, sizeof(meta_str), "%d月%d日 %02d:%02d - %02d:%02d · %s", e->month, e->day, e->start_hour, e->start_min, e->end_hour, e->end_min, e->location[0] ? e->location : "无地点");
-                rife_draw_text_font(core, main_x + 68.0f, card_y + 26.0f, meta_str, text_muted, 3);
-
-                card_y += ch + 10.0f;
-                if (card_y + ch > client_y + client_h) break;
-            }
-        }
-    }
-
-    // ==========================================
-    // E. 右下角悬浮操作区 (FAB 与快捷回到今天胶囊)
-    // ==========================================
-    float fab_sz = 44.0f;
-    float fab_x = client_x + client_w - fab_sz - 24.0f;
-    float fab_y = client_y + client_h - fab_sz - 24.0f;
-
-    // 快捷回到今天悬浮胶囊 (当非今天时可见)
-    if (!is_current_today) {
-        float today_cap_w = 110.0f;
-        float today_cap_h = 32.0f;
-        float today_cap_x = client_x + client_w - fab_sz - 24.0f - today_cap_w - 12.0f;
-        float today_cap_y = client_y + client_h - fab_sz - 18.0f;
-        rife_draw_liquid_glass_button(core, today_cap_x, today_cap_y, today_cap_w, today_cap_h, 16.0f,
-                                      is_zh ? "⟲ 回到今天" : "⟲ Today (T)", 5, 0xFFFFFFFF, true, rtodo_blue, false, is_dark);
-    }
-
-    // FAB 悬浮新建日程水晶球
-    rife_draw_round_rect(core, fab_x, fab_y + 2.0f, fab_sz, fab_sz, fab_sz * 0.5f, is_dark ? 0x00000066 : 0x3370FF33, 0x00000000);
-    rife_draw_round_rect(core, fab_x, fab_y, fab_sz, fab_sz, fab_sz * 0.5f, rtodo_blue, is_dark ? 0x60A5FA88 : 0x93C5FDAA);
-    // 顶部镜面反光光晕
-    rife_draw_round_rect(core, fab_x + 8.0f, fab_y + 2.0f, fab_sz - 16.0f, 2.0f, 1.0f, 0xFFFFFF66, 0x00000000);
-    // 精确绝对居中十字图标
-    rife_draw_rect(core, fab_x + 21.0f, fab_y + 13.0f, 2.0f, 18.0f, 0xFFFFFFFF);
-    rife_draw_rect(core, fab_x + 13.0f, fab_y + 21.0f, 18.0f, 2.0f, 0xFFFFFFFF);
-
-    // ==========================================
-    // 弹窗浮层：新建日程模态卡片 (New Event Modal - 100% 用户自定义)
-    // ==========================================
-    if (state->show_new_modal) {
-        float mw = 420.0f;
-        float mh = 340.0f;
-        float mx0 = client_x + (client_w - mw) * 0.5f;
-        float my0 = client_y + (client_h - mh) * 0.5f;
-        float box_w = mw - 32.0f;
-
-        // 半透环境遮罩与液态玻璃透光浮层卡片
-        rife_draw_rect(core, client_x, client_y, client_w, client_h, 0x00000044);
-        rife_draw_round_rect(core, mx0, my0, mw, mh, 12.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, is_dark ? 0x5D458FAA : 0x00000018);
-        rife_draw_round_rect(core, mx0 + 4.0f, my0 + 1.0f, mw - 8.0f, 1.5f, 2.0f, 0xFFFFFF66, 0x00000000);
-
-        // 标题
-        rife_draw_text_font(core, mx0 + 16.0f, my0 + 14.0f, is_zh ? "新建日程" : "New Event", text_title, 1);
-
-        // 1. 标题输入框 (Title Input)
-        float title_y = my0 + 40.0f;
-        draw_input_box(core, mx0 + 16.0f, title_y, box_w, 30.0f,
-                       state->input_title,
-                       is_zh ? "日程标题 (如: 团队例会、设计评审...)" : "Event Title...",
-                       state->active_field == 1, cursor_on,
-                       is_dark, rtodo_blue, border_col, text_title, text_muted);
-
-        // 2. 自定义分类标签胶囊行与 [+ 标签]
-        float tag_y = my0 + 76.0f;
-        float px = mx0 + 16.0f;
-        for (int c = 0; c < state->tag_count; c++) {
-            CustomTag* tag = &state->tags[c];
-            TagColorStyle ts = get_tag_style(tag->color_bar, is_dark);
-            bool is_sel = (state->modal_tag_idx == c);
-            float pw = 60.0f;
-            rife_draw_round_rect(core, px, tag_y, pw, 24.0f, 6.0f, is_sel ? ts.bar : ts.bg, ts.border);
-            rife_draw_text_rect(core, px, tag_y, pw, 24.0f, tag->name, is_sel ? 0xFFFFFFFF : ts.text, 4, 0);
-            px += pw + 8.0f;
-        }
-        // [+ 标签] 按钮 (液态玻璃)
-        float add_w = 64.0f;
-        rife_draw_liquid_glass_button(core, px, tag_y, add_w, 24.0f, 6.0f, is_zh ? "+ 标签" : "+ Tag", 4, rtodo_blue, false, 0, false, is_dark);
-
-        // 3. 自由起止时间设定行 (开始时间 [-] HH [+] : [-] MM [+]  至  结束时间 [-] HH [+] : [-] MM [+])
-        float time_y = my0 + 108.0f;
-        rife_draw_text_font(core, mx0 + 16.0f, time_y + 4.0f, is_zh ? "时间:" : "Time:", text_muted, 3);
-
-        // A. 开始时间 - 小时调整器 [-] HH [+]
-        rife_draw_liquid_glass_button(core, mx0 + 46.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
-        char hh_buf[8];
-        snprintf(hh_buf, sizeof(hh_buf), "%02d", state->new_hour);
-        rife_draw_round_rect(core, mx0 + 64.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
-        rife_draw_text_rect(core, mx0 + 64.0f, time_y, 22.0f, 24.0f, hh_buf, text_title, 4, 0);
-        rife_draw_liquid_glass_button(core, mx0 + 88.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
-
-        // 冒号分隔符
-        rife_draw_text_font(core, mx0 + 106.0f, time_y + 3.0f, ":", text_title, 1);
-
-        // 开始时间 - 分钟调整器 [-] MM [+] (1分钟原子级微调)
-        rife_draw_liquid_glass_button(core, mx0 + 114.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
-        char mm_buf[8];
-        snprintf(mm_buf, sizeof(mm_buf), "%02d", state->new_min);
-        rife_draw_round_rect(core, mx0 + 132.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
-        rife_draw_text_rect(core, mx0 + 132.0f, time_y, 22.0f, 24.0f, mm_buf, text_title, 4, 0);
-        rife_draw_liquid_glass_button(core, mx0 + 156.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
-
-        // 中间衔接符：至 / To
-        rife_draw_text_rect(core, mx0 + 176.0f, time_y, 46.0f, 24.0f, is_zh ? "至" : "To", text_muted, 3, 0);
-
-        // B. 结束时间 - 小时调整器 [-] HH [+]
-        rife_draw_liquid_glass_button(core, mx0 + 226.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
-        char end_hh_buf[8];
-        snprintf(end_hh_buf, sizeof(end_hh_buf), "%02d", state->new_end_hour);
-        rife_draw_round_rect(core, mx0 + 244.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
-        rife_draw_text_rect(core, mx0 + 244.0f, time_y, 22.0f, 24.0f, end_hh_buf, text_title, 4, 0);
-        rife_draw_liquid_glass_button(core, mx0 + 268.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
-
-        // 冒号分隔符
-        rife_draw_text_font(core, mx0 + 286.0f, time_y + 3.0f, ":", text_title, 1);
-
-        // 结束时间 - 分钟调整器 [-] MM [+] (1分钟原子级微调)
-        rife_draw_liquid_glass_button(core, mx0 + 294.0f, time_y, 16.0f, 24.0f, 4.0f, "-", 0, text_title, false, 0, false, is_dark);
-        char end_mm_buf[8];
-        snprintf(end_mm_buf, sizeof(end_mm_buf), "%02d", state->new_end_min);
-        rife_draw_round_rect(core, mx0 + 312.0f, time_y, 22.0f, 24.0f, 4.0f, is_dark ? 0x22183888 : 0xFFFFFF88, border_col);
-        rife_draw_text_rect(core, mx0 + 312.0f, time_y, 22.0f, 24.0f, end_mm_buf, text_title, 4, 0);
-        rife_draw_liquid_glass_button(core, mx0 + 336.0f, time_y, 16.0f, 24.0f, 4.0f, "+", 0, text_title, false, 0, false, is_dark);
-
-        // 4. 快捷时长预设与动态时长胶囊行 (+1分, +15分, +30分, +1h, +2h)
-        float quick_y = my0 + 138.0f;
-        rife_draw_text_font(core, mx0 + 16.0f, quick_y + 3.0f, is_zh ? "快捷:" : "Quick:", text_muted, 3);
-        const char* q_labels_zh[5] = { "+1分", "+15分", "+30分", "+1h", "+2h" };
-        const char* q_labels_en[5] = { "+1m", "+15m", "+30m", "+1h", "+2h" };
-        const int quick_mins[5] = { 1, 15, 30, 60, 120 };
-        const float q_widths[5] = { 36.0f, 40.0f, 40.0f, 44.0f, 44.0f };
-        int cur_dur = (state->new_end_hour * 60 + state->new_end_min) - (state->new_hour * 60 + state->new_min);
-        if (cur_dur < 0) cur_dur = 0;
-
-        float qx = mx0 + 48.0f;
-        for (int q = 0; q < 5; q++) {
-            bool is_match = (cur_dur == quick_mins[q]);
-            const char* ql = is_zh ? q_labels_zh[q] : q_labels_en[q];
-            rife_draw_liquid_glass_button(core, qx, quick_y, q_widths[q], 22.0f, 4.0f, ql, 4, is_match ? 0xFFFFFFFF : text_muted, is_match, is_match ? rtodo_blue : 0, false, is_dark);
-            qx += q_widths[q] + 4.0f;
-        }
-
-        // 右侧动态时长胶囊 (实时显示总时长)
-        float dur_w = 110.0f;
-        float dur_x = mx0 + mw - 16.0f - dur_w;
-        char dur_badge[48];
-        if (cur_dur >= 60) {
-            if (cur_dur % 60 == 0) {
-                snprintf(dur_badge, sizeof(dur_badge), is_zh ? "时长: %d小时" : "Dur: %dh", cur_dur / 60);
-            } else {
-                snprintf(dur_badge, sizeof(dur_badge), is_zh ? "时长: %d小时%02d分" : "Dur: %dh %02dm", cur_dur / 60, cur_dur % 60);
-            }
-        } else {
-            snprintf(dur_badge, sizeof(dur_badge), is_zh ? "时长: %d分钟" : "Dur: %dm", cur_dur);
-        }
-        uint32_t dur_bg = is_dark ? 0x60A5FA22 : 0x3B82F618;
-        uint32_t dur_brd = is_dark ? 0x60A5FA55 : 0x3B82F633;
-        rife_draw_round_rect(core, dur_x, quick_y, dur_w, 22.0f, 4.0f, dur_bg, dur_brd);
-        rife_draw_text_rect(core, dur_x, quick_y, dur_w, 22.0f, dur_badge, is_dark ? 0x93C5FDFF : 0x2563EBFF, 4, 0);
-
-        // 5. 地点输入框 (Location Input)
-        float loc_y = my0 + 168.0f;
-        draw_input_box(core, mx0 + 16.0f, loc_y, box_w, 30.0f,
-                       state->input_location,
-                       is_zh ? "地点 / 会议链接 (如: 线上会议、会议室A...)" : "Location / Meeting URL...",
-                       state->active_field == 2, cursor_on,
-                       is_dark, rtodo_blue, border_col, text_title, text_muted);
-
-        // 6. 描述/备注输入框 (Notes Input)
-        float desc_y = my0 + 206.0f;
-        draw_input_box(core, mx0 + 16.0f, desc_y, box_w, 30.0f,
-                       state->input_desc,
-                       is_zh ? "备注信息 / 议程大纲 (选填)..." : "Notes / Agenda Outline...",
-                       state->active_field == 3, cursor_on,
-                       is_dark, rtodo_blue, border_col, text_title, text_muted);
-
-        // 7. 日程时间详情总览
-        char sched_summary[80];
-        snprintf(sched_summary, sizeof(sched_summary), "%d月%d日 %02d:%02d 至 %02d:%02d  (共 %d 分钟)",
-                 state->view_month, state->view_day, state->new_hour, state->new_min, state->new_end_hour, state->new_end_min, cur_dur);
-        rife_draw_text_font(core, mx0 + 16.0f, my0 + 246.0f, sched_summary, text_title, 3);
-
-        // 分割线
-        rife_draw_rect(core, mx0 + 16.0f, my0 + 270.0f, mw - 32.0f, 1.0f, border_col);
-
-        // 底部操作按钮：取消 / 确认创建 (液态玻璃 + 严格居中)
-        float btn_y = my0 + mh - 42.0f;
-        rife_draw_liquid_glass_button(core, mx0 + mw - 170.0f, btn_y, 66.0f, 28.0f, 6.0f, is_zh ? "取消" : "Cancel", 0, text_muted, false, 0, false, is_dark);
-        rife_draw_liquid_glass_button(core, mx0 + mw - 96.0f, btn_y, 80.0f, 28.0f, 6.0f, is_zh ? "确认创建" : "Create", 5, 0xFFFFFFFF, true, rtodo_blue, false, is_dark);
-    }
-
-    // ==========================================
-    // 弹窗浮层：新建自定义标签模态卡片 (New Custom Tag Modal)
-    // ==========================================
-    if (state->show_new_tag_modal) {
-        float tw = 300.0f;
-        float th = 170.0f;
-        float tx0 = client_x + (client_w - tw) * 0.5f;
-        float ty0 = client_y + (client_h - th) * 0.5f;
-
-        // 半透遮罩
-        rife_draw_rect(core, client_x, client_y, client_w, client_h, 0x00000055);
-
-        // 卡片底板 (液态玻璃)
-        rife_draw_round_rect(core, tx0, ty0, tw, th, 12.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, is_dark ? 0x5D458FAA : 0x00000018);
-        rife_draw_round_rect(core, tx0 + 3.0f, ty0 + 1.0f, tw - 6.0f, 1.5f, 2.0f, 0xFFFFFF66, 0x00000000);
-
-        rife_draw_text_font(core, tx0 + 16.0f, ty0 + 14.0f, is_zh ? "新建自定义分类标签" : "New Custom Tag", text_title, 1);
-
-        // 标签名称输入框 (液态玻璃)
-        draw_input_box(core, tx0 + 16.0f, ty0 + 40.0f, tw - 32.0f, 32.0f,
-                       state->new_tag_name,
-                       is_zh ? "标签名称 (如: 健身、项目A...)" : "Tag Name...",
-                       state->active_field == 4, cursor_on,
-                       is_dark, s_tag_palette[state->new_tag_color_idx], border_col, text_title, text_muted);
-
-        // 6 种色彩圆点 (亚像素抗锯齿圆球)
-        float dot_y = ty0 + 82.0f;
-        for (int i = 0; i < 6; i++) {
-            float dot_x = tx0 + 20.0f + (float)i * 32.0f;
-            uint32_t col = s_tag_palette[i];
-            bool is_sel = (state->new_tag_color_idx == i);
-            rife_draw_round_rect(core, dot_x, dot_y, 22.0f, 22.0f, 11.0f, col, is_sel ? 0xFFFFFFFF : 0x00000018);
-            if (is_sel) {
-                rife_draw_round_rect(core, dot_x + 7.0f, dot_y + 7.0f, 8.0f, 8.0f, 4.0f, 0xFFFFFFFF, 0x00000000);
-            }
-        }
-
-        // 底部按钮：取消 / 确定 (液态玻璃 + 严格数学居中)
-        float act_y = ty0 + th - 40.0f;
-        rife_draw_liquid_glass_button(core, tx0 + tw - 150.0f, act_y, 62.0f, 28.0f, 6.0f, is_zh ? "取消" : "Cancel", 0, text_muted, false, 0, false, is_dark);
-
-        uint32_t sel_color = s_tag_palette[state->new_tag_color_idx];
-        rife_draw_liquid_glass_button(core, tx0 + tw - 80.0f, act_y, 66.0f, 28.0f, 6.0f, is_zh ? "确定" : "Save", 5, 0xFFFFFFFF, true, sel_color, false, is_dark);
-    }
-
-    // ==========================================
-    // 弹窗浮层：日程详情卡片 (Event Popover)
-    // ==========================================
-    if (state->selected_event_id >= 0) {
-        CalendarEvent* cur_e = NULL;
-        for (int i = 0; i < state->event_count; i++) {
-            if ((int)state->events[i].id == state->selected_event_id) {
-                cur_e = &state->events[i];
-                break;
-            }
-        }
-        if (cur_e) {
-            float pop_w = 280.0f;
-            float pop_h = 175.0f;
-            float pop_x = client_x + client_w - pop_w - 20.0f;
-            float pop_y = client_y + 60.0f;
-
-            // 液态玻璃底板
-            rife_draw_round_rect(core, pop_x, pop_y, pop_w, pop_h, 10.0f, is_dark ? 0x221838F0 : 0xFFFFFFF0, is_dark ? 0x47336ECC : 0x00000018);
-            rife_draw_round_rect(core, pop_x + 3.0f, pop_y + 1.0f, pop_w - 6.0f, 1.2f, 1.0f, 0xFFFFFF66, 0x00000000);
-
-            TagColorStyle cc = get_event_style(state, cur_e->tag_idx, is_dark);
-            const char* tag_str = get_event_tag_name(state, cur_e->tag_idx);
-            rife_draw_round_rect(core, pop_x + 14.0f, pop_y + 14.0f, 64.0f, 20.0f, 4.0f, cc.bg, cc.border);
-            rife_draw_text_rect(core, pop_x + 14.0f, pop_y + 14.0f, 64.0f, 20.0f, tag_str, cc.text, 4, 0);
-
-            rife_draw_text_font(core, pop_x + 14.0f, pop_y + 40.0f, cur_e->title, text_title, 1);
-
-            char time_loc[64];
-            snprintf(time_loc, sizeof(time_loc), "%d月%d日 %02d:%02d-%02d:%02d · %s", cur_e->month, cur_e->day, cur_e->start_hour, cur_e->start_min, cur_e->end_hour, cur_e->end_min, cur_e->location[0] ? cur_e->location : "无地点");
-            rife_draw_text_font(core, pop_x + 14.0f, pop_y + 64.0f, time_loc, text_muted, 3);
-
-            rife_draw_text_font(core, pop_x + 14.0f, pop_y + 86.0f, cur_e->desc[0] ? cur_e->desc : "暂无详细备注", text_muted, 3);
-
-            // 操作：标记完成 / 删除日程 / 关闭 (液态玻璃按钮 + 严格居中)
-            float act_y = pop_y + pop_h - 38.0f;
-            // 完成状态切换
-            const char* comp_txt = cur_e->is_completed ? (is_zh ? "已完成" : "Completed") : (is_zh ? "标记完成" : "Mark Done");
-            if (cur_e->is_completed) {
-                rife_draw_liquid_glass_button(core, pop_x + 14.0f, act_y, 86.0f, 26.0f, 6.0f, comp_txt, 5, 0xFFFFFFFF, true, 0x10B981FF, false, is_dark);
-            } else {
-                rife_draw_liquid_glass_button(core, pop_x + 14.0f, act_y, 86.0f, 26.0f, 6.0f, comp_txt, 5, rtodo_blue, false, 0, false, is_dark);
-            }
-
-            // 删除日程 (醒目警示红框)
-            rife_draw_liquid_glass_button(core, pop_x + 104.0f, act_y, 80.0f, 26.0f, 6.0f, is_zh ? "删除日程" : "Delete", 5, 0xEF4444FF, false, 0, false, is_dark);
-
-            // 关闭按钮
-            rife_draw_liquid_glass_button(core, pop_x + pop_w - 68.0f, act_y, 54.0f, 26.0f, 6.0f, is_zh ? "关闭" : "Close", 0, text_muted, false, 0, false, is_dark);
-        }
-    }
-
-    // ==========================================
-    // 弹窗浮层：侧边栏实时搜索结果面板 (Search Results Popover)
-    // ==========================================
-    if (state->search_query[0] != '\0') {
-        float pop_x = client_x + sidebar_w + 10.0f;
-        float pop_y = search_y - 8.0f;
-        float pop_w = 340.0f;
-
-        int match_indices[CAL_MAX_EVENTS];
-        int match_count = 0;
-        for (int i = 0; i < state->event_count; i++) {
-            if (event_matches_search(state, &state->events[i])) {
-                match_indices[match_count++] = i;
-            }
-        }
-
-        int display_max = (match_count > 6) ? 6 : match_count;
-        float pop_h = (match_count == 0) ? 96.0f : (40.0f + (float)display_max * 48.0f + (match_count > 6 ? 26.0f : 10.0f));
-
-        // 1. 液态玻璃浮层卡片底板与阴影反光
-        rife_draw_round_rect(core, pop_x, pop_y + 3.0f, pop_w, pop_h, 12.0f, is_dark ? 0x00000066 : 0x00000018, 0x00000000);
-        rife_draw_round_rect(core, pop_x, pop_y, pop_w, pop_h, 12.0f, is_dark ? 0x221838F6 : 0xFFFFFFF6, is_dark ? 0x5D458FAA : 0x00000018);
-        rife_draw_round_rect(core, pop_x + 6.0f, pop_y + 1.0f, pop_w - 12.0f, 1.5f, 2.0f, 0xFFFFFF66, 0x00000000);
-
-        // 2. 顶栏标题与统计
-        char head_title[64];
-        snprintf(head_title, sizeof(head_title), is_zh ? "🔍 搜索结果 (%d 条)" : "🔍 Results (%d)", match_count);
-        rife_draw_text_font(core, pop_x + 16.0f, pop_y + 12.0f, head_title, text_title, 1);
-
-        // 右上角关闭 [×] 按钮
-        float close_btn_x = pop_x + pop_w - 32.0f;
-        float close_btn_y = pop_y + 8.0f;
-        rife_draw_text_rect(core, close_btn_x, close_btn_y, 20.0f, 20.0f, "×", text_muted, 1, 0);
-
-        // 分割线
-        rife_draw_rect(core, pop_x + 14.0f, pop_y + 36.0f, pop_w - 28.0f, 1.0f, border_col);
-
-        // 3. 结果列表
-        if (match_count == 0) {
-            char empty_msg[80];
-            snprintf(empty_msg, sizeof(empty_msg), is_zh ? "未找到包含 \"%s\" 的相关日程" : "No events matching \"%s\"", state->search_query);
-            rife_draw_text_font(core, pop_x + 16.0f, pop_y + 54.0f, empty_msg, text_muted, 4);
-        } else {
-            float list_y = pop_y + 42.0f;
-            for (int k = 0; k < display_max; k++) {
-                int event_idx = match_indices[k];
-                CalendarEvent* e = &state->events[event_idx];
-                float item_y = list_y + (float)k * 48.0f;
-
-                // 检查鼠标 hover
-                bool is_item_hover = (core->input.mouse_x >= pop_x + 8.0f && core->input.mouse_x <= pop_x + pop_w - 8.0f &&
-                                      core->input.mouse_y >= item_y && core->input.mouse_y <= item_y + 44.0f);
-                if (is_item_hover) {
-                    rife_draw_round_rect(core, pop_x + 8.0f, item_y, pop_w - 16.0f, 44.0f, 8.0f, is_dark ? 0x362752C8 : 0xF3F4F6EE, rtodo_blue);
-                } else {
-                    rife_draw_round_rect(core, pop_x + 8.0f, item_y, pop_w - 16.0f, 44.0f, 8.0f, is_dark ? 0x1A142866 : 0xFFFFFF66, is_dark ? 0x38285533 : 0x0000000C);
-                }
-
-                // 标签彩色条
-                TagColorStyle cc = get_event_style(state, e->tag_idx, is_dark);
-                rife_draw_round_rect(core, pop_x + 14.0f, item_y + 6.0f, 4.0f, 32.0f, 2.0f, cc.bar, cc.bar);
-
-                // 日程标题 (Bold / Title)
-                rife_draw_text_font(core, pop_x + 24.0f, item_y + 6.0f, e->title, text_title, 1);
-
-                // 日期与时段信息 (Meta)
-                char meta_str[64];
-                snprintf(meta_str, sizeof(meta_str), "%d月%d日 %02d:%02d - %02d:%02d · %s",
-                         e->month, e->day, e->start_hour, e->start_min, e->end_hour, e->end_min,
-                         e->location[0] ? e->location : get_event_tag_name(state, e->tag_idx));
-                rife_draw_text_font(core, pop_x + 24.0f, item_y + 24.0f, meta_str, text_muted, 4);
-            }
-
-            if (match_count > 6) {
-                char more_str[32];
-                snprintf(more_str, sizeof(more_str), is_zh ? "还有 %d 条匹配结果..." : "+%d more results...", match_count - 6);
-                rife_draw_text_font(core, pop_x + 16.0f, pop_y + pop_h - 20.0f, more_str, text_muted, 4);
-            }
-        }
+        render_calendar_timeline(state, core, cx, cy, cw, ch);
     }
 }
 
@@ -3071,13 +1609,13 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
 const RifePluginApp g_calendar_plugin_app = {
     .app_id = 2002,
     .id = "rtodo",
-    .name_zh = "Rtodo",
-    .name_en = "Rtodo",
-    .glyph = "Rt",
-    .color_top = 0x3370FFFF, // Rtodo 品牌蓝
-    .color_bot = 0x1E40AFFF,
-    .default_w = 940.0f,
-    .default_h = 600.0f,
+    .name_zh = "滴答清单",
+    .name_en = "TickTick",
+    .glyph = "Tk",
+    .color_top = 0x6366F1FF, // Electric Indigo
+    .color_bot = 0x4338CAFF,
+    .default_w = 1100.0f,
+    .default_h = 700.0f,
     .pin_to_dock = true,
     .create = calendar_create,
     .destroy = calendar_destroy,

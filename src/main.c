@@ -29,10 +29,15 @@
 #define MIN_WINDOW_H    640
 
 typedef enum {
-    PAGE_SCHEDULE = 0, // 📅 多维日程 (Rtodo)
-    PAGE_CLOCK    = 1, // ⏱️ 极简时钟 (Rclock)
-    PAGE_SETTINGS = 2  // ⚙️ 偏好设置 (Settings)
+    PAGE_TASKS    = 0, // ✅ 待办清单 (Tasks 3-Column)
+    PAGE_MATRIX   = 1, // 📊 四象限 (Eisenhower Matrix)
+    PAGE_CALENDAR = 2, // 📅 日历视图 (Calendar & Timeline)
+    PAGE_POMO     = 3, // 🍅 番茄专注 (Pomodoro & Clock)
+    PAGE_SETTINGS = 4  // ⚙️ 偏好设置 (Settings)
 } AppPage;
+
+#define PAGE_SCHEDULE PAGE_TASKS
+#define PAGE_CLOCK    PAGE_POMO
 
 typedef struct {
     HWND hwnd;
@@ -85,8 +90,10 @@ static inline void rife_reclaim_physical_memory(void) {
 // -------------------------------------------------------------
 void rife_open_app_by_id(const char* app_id) {
     if (!app_id || !s_app || !s_core) return;
-    if (strcmp(app_id, "rtodo") == 0) s_app->active_page = PAGE_SCHEDULE;
-    else if (strcmp(app_id, "clock") == 0) s_app->active_page = PAGE_CLOCK;
+    if (strcmp(app_id, "rtodo") == 0 || strcmp(app_id, "tasks") == 0) s_app->active_page = PAGE_TASKS;
+    else if (strcmp(app_id, "matrix") == 0) s_app->active_page = PAGE_MATRIX;
+    else if (strcmp(app_id, "calendar") == 0) s_app->active_page = PAGE_CALENDAR;
+    else if (strcmp(app_id, "clock") == 0 || strcmp(app_id, "pomo") == 0) s_app->active_page = PAGE_POMO;
     else if (strcmp(app_id, "settings") == 0) s_app->active_page = PAGE_SETTINGS;
     rife_reclaim_physical_memory();
     rife_request_redraw(s_core);
@@ -671,6 +678,23 @@ static void app_flush_render_commands(AppContext* app, RifeCore* core) {
 // 纯 C 过程式亚像素矢量图符光栅化引擎 (Procedural Vector Icons)
 // -------------------------------------------------------------
 
+// 矢量待办清单复选图标 (14x14)
+static void rife_draw_vector_icon_tasks(RifeCore* core, float cx, float cy, uint32_t color) {
+    rife_draw_round_rect(core, cx - 6.5f, cy - 6.5f, 13.0f, 13.0f, 3.0f, 0x00000000, color);
+    rife_draw_line(core, cx - 3.5f, cy, cx - 1.0f, cy + 2.5f, 1.4f, color);
+    rife_draw_line(core, cx - 1.0f, cy + 2.5f, cx + 4.0f, cy - 2.5f, 1.4f, color);
+}
+
+// 矢量四象限矩阵图标 (14x14)
+static void rife_draw_vector_icon_matrix(RifeCore* core, float cx, float cy, uint32_t color) {
+    float sz = 4.5f;
+    float gap = 2.0f;
+    rife_draw_round_rect(core, cx - sz - gap * 0.5f, cy - sz - gap * 0.5f, sz, sz, 1.5f, color, 0);
+    rife_draw_round_rect(core, cx + gap * 0.5f, cy - sz - gap * 0.5f, sz, sz, 1.5f, color, 0);
+    rife_draw_round_rect(core, cx - sz - gap * 0.5f, cy + gap * 0.5f, sz, sz, 1.5f, color, 0);
+    rife_draw_round_rect(core, cx + gap * 0.5f, cy + gap * 0.5f, sz, sz, 1.5f, color, 0);
+}
+
 // 矢量日历图标 (16x16)
 static void rife_draw_vector_icon_calendar(RifeCore* core, float cx, float cy, uint32_t color) {
     rife_draw_round_rect(core, cx - 7.0f, cy - 7.0f, 14.0f, 14.0f, 3.0f, 0x00000000, color);
@@ -809,12 +833,12 @@ static void app_render(AppContext* app, RifeCore* core) {
     rife_draw_antigravity_spark(core, logo_x + logo_sz * 0.5f, logo_y + logo_sz * 0.5f, logo_sz);
 
     float brand_tx = logo_x + logo_sz + 10.0f;
-    rife_draw_text_font(core, brand_tx, logo_y - 2.0f, "Antigravity", txt_title, 1);
+    rife_draw_text_font(core, brand_tx, logo_y - 2.0f, "TickTick", txt_title, 1);
     float pro_badge_w = 34.0f;
     float pro_badge_x = SIDEBAR_WIDTH - 16.0f - pro_badge_w;
     rife_draw_round_rect(core, pro_badge_x, logo_y - 1.0f, pro_badge_w, 16.0f, 4.0f, is_dark ? 0x1E202BFF : 0xEEF2FFFF, is_dark ? 0x2E3245FF : 0xC7D2FEFF);
     rife_draw_text_rect(core, pro_badge_x, logo_y - 1.0f, pro_badge_w, 16.0f, "PRO", accent_pri, 4, 0);
-    rife_draw_text_font(core, brand_tx, logo_y + 17.0f, is_zh ? "智能工作台 · C11" : "Agentic OS · C11", txt_muted, 4);
+    rife_draw_text_font(core, brand_tx, logo_y + 17.0f, is_zh ? "滴答清单 · 极客桌面" : "TickTick · Pure C11", txt_muted, 4);
 
     rife_draw_rect(core, 16.0f, 50.0f, SIDEBAR_WIDTH - 32.0f, 1.0f, col_div);
 
@@ -835,18 +859,18 @@ static void app_render(AppContext* app, RifeCore* core) {
     // 文本 "+ 新建待办" / "+ New Task"
     rife_draw_text_font(core, create_btn_x + 36.0f, create_btn_y + 9.0f, is_zh ? "新建待办事项" : "New Task", 0xFFFFFFFF, 5);
 
-    // 4. 侧边栏导航分组 (Modern IDE Activity Bar Items)
-    const char* nav_labels_zh[3] = { "多维日程", "极简时钟", "偏好设置" };
-    const char* nav_labels_en[3] = { "Schedule", "Clock", "Settings" };
-    const char* nav_shortcuts[3] = { "Alt+1", "Alt+2", "Alt+3" };
+    // 4. 侧边栏导航分组 (TickTick 5 大核心工作区)
+    const char* nav_labels_zh[5] = { "待办清单", "四象限", "日历视图", "番茄专注", "偏好设置" };
+    const char* nav_labels_en[5] = { "Tasks", "Matrix", "Calendar", "Pomodoro", "Settings" };
+    const char* nav_shortcuts[5] = { "Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5" };
 
-    float nav_y0 = 106.0f;
-    float nav_item_h = 36.0f;
+    float nav_y0 = 104.0f;
+    float nav_item_h = 34.0f;
     float nav_item_w = SIDEBAR_WIDTH - 24.0f;
     float nav_item_x = 12.0f;
     float nav_gap = 4.0f;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 5; i++) {
         float ny = nav_y0 + (float)i * (nav_item_h + nav_gap);
         bool is_active = (app->active_page == (AppPage)i);
         bool is_hover = (app->hovered_nav_idx == i && !is_active);
@@ -855,7 +879,6 @@ static void app_render(AppContext* app, RifeCore* core) {
         uint32_t item_text_col;
 
         if (is_active) {
-            // Antigravity 激活项：深石板底色 + 细微内描边 + 左侧 3px 电光紫指示色条
             uint32_t act_bg = is_dark ? 0x1A1C27FF : 0xEEF2FFFF;
             uint32_t act_bd = is_dark ? 0x2A2E42FF : 0xC7D2FEFF;
             rife_draw_round_rect(core, nav_item_x, ny, nav_item_w, nav_item_h, 7.0f, act_bg, act_bd);
@@ -875,14 +898,16 @@ static void app_render(AppContext* app, RifeCore* core) {
 
         float icon_cx = nav_item_x + 20.0f;
         float icon_cy = ny + nav_item_h * 0.5f;
-        if (i == 0)      rife_draw_vector_icon_calendar(core, icon_cx, icon_cy, item_icon_col);
-        else if (i == 1) rife_draw_vector_icon_clock(core, icon_cx, icon_cy, item_icon_col);
-        else if (i == 2) rife_draw_vector_icon_settings(core, icon_cx, icon_cy, item_icon_col);
+        if (i == 0)      rife_draw_vector_icon_tasks(core, icon_cx, icon_cy, item_icon_col);
+        else if (i == 1) rife_draw_vector_icon_matrix(core, icon_cx, icon_cy, item_icon_col);
+        else if (i == 2) rife_draw_vector_icon_calendar(core, icon_cx, icon_cy, item_icon_col);
+        else if (i == 3) rife_draw_vector_icon_clock(core, icon_cx, icon_cy, item_icon_col);
+        else if (i == 4) rife_draw_vector_icon_settings(core, icon_cx, icon_cy, item_icon_col);
 
-        rife_draw_text_font(core, nav_item_x + 36.0f, ny + 9.0f, is_zh ? nav_labels_zh[i] : nav_labels_en[i], item_text_col, is_active ? 5 : 0);
+        rife_draw_text_font(core, nav_item_x + 36.0f, ny + 8.0f, is_zh ? nav_labels_zh[i] : nav_labels_en[i], item_text_col, is_active ? 5 : 0);
         // 右侧快捷键 Badge 胶囊
-        rife_draw_round_rect(core, nav_item_x + nav_item_w - 42.0f, ny + 8.0f, 36.0f, 20.0f, 4.0f, is_dark ? 0x12131AFF : 0xE2E8F0FF, is_dark ? 0x222432FF : 0xCBD5E1FF);
-        rife_draw_text_rect(core, nav_item_x + nav_item_w - 42.0f, ny + 8.0f, 36.0f, 20.0f, nav_shortcuts[i], is_active ? accent_pri : txt_muted, 4, 0);
+        rife_draw_round_rect(core, nav_item_x + nav_item_w - 42.0f, ny + 7.0f, 36.0f, 20.0f, 4.0f, is_dark ? 0x12131AFF : 0xE2E8F0FF, is_dark ? 0x222432FF : 0xCBD5E1FF);
+        rife_draw_text_rect(core, nav_item_x + nav_item_w - 42.0f, ny + 7.0f, 36.0f, 20.0f, nav_shortcuts[i], is_active ? accent_pri : txt_muted, 4, 0);
     }
 
     // 5. 侧边栏底部面板 (Theme Switch & Privacy Signature)
@@ -914,12 +939,18 @@ static void app_render(AppContext* app, RifeCore* core) {
     // A. 页面面包屑与当前模块定位 (左侧)
     float bread_x = SIDEBAR_WIDTH + 18.0f;
     float bread_y = 12.0f;
-    if (app->active_page == PAGE_SCHEDULE) {
-        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "日程安排" : "Schedule", txt_title, 1);
-        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 84.0f), bread_y + 2.0f, is_zh ? "// 多维矩阵与待办工作流" : "// Matrix & Task Engine", txt_muted, 4);
-    } else if (app->active_page == PAGE_CLOCK) {
-        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "极简时钟" : "Clock", txt_title, 1);
-        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 64.0f), bread_y + 2.0f, is_zh ? "// 24H 环形流与专注遥测" : "// Radial Chronometer HUD", txt_muted, 4);
+    if (app->active_page == PAGE_TASKS) {
+        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "待办清单" : "Tasks", txt_title, 1);
+        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 60.0f), bread_y + 2.0f, is_zh ? "// 滴答三栏流 · 智能分类与待办流" : "// TickTick 3-Column Productivity Flow", txt_muted, 4);
+    } else if (app->active_page == PAGE_MATRIX) {
+        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "四象限" : "Matrix", txt_title, 1);
+        rife_draw_text_font(core, bread_x + (is_zh ? 64.0f : 60.0f), bread_y + 2.0f, is_zh ? "// 艾森豪威尔法则 · 重要紧急矩阵" : "// Eisenhower Quadrants Matrix", txt_muted, 4);
+    } else if (app->active_page == PAGE_CALENDAR) {
+        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "日历视图" : "Calendar", txt_title, 1);
+        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 72.0f), bread_y + 2.0f, is_zh ? "// 多维排程 · 日周月规划矩阵" : "// Multi-Dimensional Timeline Grid", txt_muted, 4);
+    } else if (app->active_page == PAGE_POMO) {
+        rife_draw_text_font(core, bread_x, bread_y, is_zh ? "番茄专注" : "Pomodoro", txt_title, 1);
+        rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 78.0f), bread_y + 2.0f, is_zh ? "// 25:00 沉浸表盘 · 环形流与专注统计" : "// Radial Chronometer & Focus Stats", txt_muted, 4);
     } else if (app->active_page == PAGE_SETTINGS) {
         rife_draw_text_font(core, bread_x, bread_y, is_zh ? "系统偏好" : "Settings", txt_title, 1);
         rife_draw_text_font(core, bread_x + (is_zh ? 76.0f : 76.0f), bread_y + 2.0f, is_zh ? "// 调色板与微内核配置" : "// Visuals & Microkernel", txt_muted, 4);
@@ -957,9 +988,10 @@ static void app_render(AppContext* app, RifeCore* core) {
     if (client_w > 100.0f && client_h > 100.0f) {
         rife_push_scissor_round(core, client_x, client_y, client_w, client_h, 0.0f);
 
-        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+        if ((app->active_page == PAGE_TASKS || app->active_page == PAGE_MATRIX || app->active_page == PAGE_CALENDAR) && app->calendar_inst) {
+            rtodo_set_active_view(app->calendar_inst, (int)app->active_page);
             g_calendar_plugin_app.render(app->calendar_inst, core, client_x, client_y, client_w, client_h);
-        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+        } else if (app->active_page == PAGE_POMO && app->clock_inst) {
             g_clock_plugin_app.render(app->clock_inst, core, client_x, client_y, client_w, client_h);
         } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
             g_settings_plugin_app.render(app->settings_inst, core, client_x, client_y, client_w, client_h);
@@ -1112,10 +1144,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         float nav_item_w = SIDEBAR_WIDTH - 24.0f;
         if (mx >= 12.0f && mx <= 12.0f + nav_item_w) {
             float nav_y0 = 104.0f;
-            float nav_h = 36.0f;
+            float nav_h = 34.0f;
             float nav_gap = 4.0f;
             app->hovered_nav_idx = -1;
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 5; i++) {
                 float ny = nav_y0 + (float)i * (nav_h + nav_gap);
                 if (my >= ny && my <= ny + nav_h) {
                     app->hovered_nav_idx = i;
@@ -1140,9 +1172,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         page_in.mouse_x -= client_x;
         page_in.mouse_y -= client_y;
 
-        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+        if ((app->active_page == PAGE_TASKS || app->active_page == PAGE_MATRIX || app->active_page == PAGE_CALENDAR) && app->calendar_inst) {
+            rtodo_set_active_view(app->calendar_inst, (int)app->active_page);
             g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
-        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+        } else if (app->active_page == PAGE_POMO && app->clock_inst) {
             g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
         } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
             g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
@@ -1198,20 +1231,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // 2. Antigravity "+ 新建待办" 按钮点击响应
         float create_btn_w = SIDEBAR_WIDTH - 24.0f;
         if (mx >= 12.0f && mx <= 12.0f + create_btn_w && my >= 56.0f && my <= 56.0f + 36.0f) {
-            app->active_page = PAGE_SCHEDULE;
+            app->active_page = PAGE_TASKS;
             rtodo_open_create_modal(app->calendar_inst);
             rife_reclaim_physical_memory();
             rife_request_redraw(core);
             return 0;
         }
 
-        // 3. 侧边栏导航点击响应
+        // 3. 侧边栏导航点击响应 (5 大工作区)
         float nav_item_w = SIDEBAR_WIDTH - 24.0f;
         if (mx >= 12.0f && mx <= 12.0f + nav_item_w) {
             float nav_y0 = 104.0f;
-            float nav_h = 36.0f;
+            float nav_h = 34.0f;
             float nav_gap = 4.0f;
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 5; i++) {
                 float ny = nav_y0 + (float)i * (nav_h + nav_gap);
                 if (my >= ny && my <= ny + nav_h) {
                     if (app->active_page != (AppPage)i) {
@@ -1245,9 +1278,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         page_in.mouse_x -= client_x;
         page_in.mouse_y -= client_y;
 
-        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+        if ((app->active_page == PAGE_TASKS || app->active_page == PAGE_MATRIX || app->active_page == PAGE_CALENDAR) && app->calendar_inst) {
+            rtodo_set_active_view(app->calendar_inst, (int)app->active_page);
             g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
-        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+        } else if (app->active_page == PAGE_POMO && app->clock_inst) {
             g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
         } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
             g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
@@ -1270,9 +1304,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         page_in.mouse_x -= client_x;
         page_in.mouse_y -= client_y;
 
-        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+        if ((app->active_page == PAGE_TASKS || app->active_page == PAGE_MATRIX || app->active_page == PAGE_CALENDAR) && app->calendar_inst) {
+            rtodo_set_active_view(app->calendar_inst, (int)app->active_page);
             g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
-        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+        } else if (app->active_page == PAGE_POMO && app->clock_inst) {
             g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
         } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
             g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
@@ -1295,9 +1330,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         page_in.mouse_x -= client_x;
         page_in.mouse_y -= client_y;
 
-        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+        if ((app->active_page == PAGE_TASKS || app->active_page == PAGE_MATRIX || app->active_page == PAGE_CALENDAR) && app->calendar_inst) {
+            rtodo_set_active_view(app->calendar_inst, (int)app->active_page);
             g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
-        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+        } else if (app->active_page == PAGE_POMO && app->clock_inst) {
             g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
         } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
             g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
@@ -1314,19 +1350,29 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             app->input.key_pressed[vk] = true;
         }
 
-        // Alt+1 / Alt+2 / Alt+3 快速切换工作空间页面
+        // Alt+1 / Alt+2 / Alt+3 / Alt+4 / Alt+5 快速切换工作空间页面
         if (GetKeyState(VK_MENU) & 0x8000) {
             if (vk == '1') {
-                app->active_page = PAGE_SCHEDULE;
+                app->active_page = PAGE_TASKS;
                 rife_reclaim_physical_memory();
                 rife_request_redraw(core);
                 return 0;
             } else if (vk == '2') {
-                app->active_page = PAGE_CLOCK;
+                app->active_page = PAGE_MATRIX;
                 rife_reclaim_physical_memory();
                 rife_request_redraw(core);
                 return 0;
             } else if (vk == '3') {
+                app->active_page = PAGE_CALENDAR;
+                rife_reclaim_physical_memory();
+                rife_request_redraw(core);
+                return 0;
+            } else if (vk == '4') {
+                app->active_page = PAGE_POMO;
+                rife_reclaim_physical_memory();
+                rife_request_redraw(core);
+                return 0;
+            } else if (vk == '5') {
                 app->active_page = PAGE_SETTINGS;
                 rife_reclaim_physical_memory();
                 rife_request_redraw(core);
@@ -1358,14 +1404,32 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         page_in.mouse_x -= client_x;
         page_in.mouse_y -= client_y;
 
-        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+        if ((app->active_page == PAGE_TASKS || app->active_page == PAGE_MATRIX || app->active_page == PAGE_CALENDAR) && app->calendar_inst) {
+            rtodo_set_active_view(app->calendar_inst, (int)app->active_page);
             g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
-        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+        } else if (app->active_page == PAGE_POMO && app->clock_inst) {
             g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
         } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
             g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
         }
         rife_request_redraw(core);
+        return 0;
+    }
+
+    case WM_TIMER: {
+        if (!app || !core) break;
+        if (app->active_page == PAGE_POMO && app->clock_inst) {
+            float client_x = SIDEBAR_WIDTH;
+            float client_y = TITLEBAR_HEIGHT;
+            float client_w = (float)app->win_width - SIDEBAR_WIDTH;
+            float client_h = (float)app->win_height - TITLEBAR_HEIGHT;
+
+            RifeInput page_in = app->input;
+            page_in.mouse_x -= client_x;
+            page_in.mouse_y -= client_y;
+
+            g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
+        }
         return 0;
     }
 
@@ -1400,9 +1464,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             page_in.mouse_x -= client_x;
             page_in.mouse_y -= client_y;
 
-            if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+            if ((app->active_page == PAGE_TASKS || app->active_page == PAGE_MATRIX || app->active_page == PAGE_CALENDAR) && app->calendar_inst) {
+                rtodo_set_active_view(app->calendar_inst, (int)app->active_page);
                 g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
-            } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+            } else if (app->active_page == PAGE_POMO && app->clock_inst) {
                 g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
             } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
                 g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
@@ -1519,6 +1584,7 @@ int main(void) {
     // 8. 呈现窗口并强制首次工作集物理紧凑
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
+    SetTimer(hwnd, 1001, 100, NULL);
     app_render(&app, &core);
     rife_reclaim_physical_memory();
 
