@@ -416,11 +416,12 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     RifeSystemConfig* cfg = rife_get_system_config();
     bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
 
-    uint32_t col_txt_main = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
-    uint32_t col_txt_sub  = is_dark ? 0x94A3B8FF : 0x64748BFF;
-    uint32_t col_txt_mute = is_dark ? 0x64748BFF : 0x94A3B8FF;
-    uint32_t col_border   = is_dark ? 0x1E223588 : 0xE2E8F0AA;
-    uint32_t col_card_bg  = is_dark ? 0x141824DD : 0xFFFFFFEE;
+    uint32_t col_txt_main = is_dark ? 0xE8EAEDFF : 0x202124FF;
+    uint32_t col_txt_sub  = is_dark ? 0x9AA0A6FF : 0x5F6368FF;
+    uint32_t col_txt_mute = is_dark ? 0x80868BFF : 0x80868BFF;
+    uint32_t col_border   = is_dark ? 0x3C4043FF : 0xDADCE0FF;
+    uint32_t col_card_bg  = is_dark ? 0x1E1F22FF : 0xFFFFFFFF;
+    uint32_t col_blue     = is_dark ? 0x8AB4F8FF : 0x1A73E8FF;
 
     ClockAnalytics an;
     clock_compute_analytics(state, &an);
@@ -428,25 +429,25 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     // ---------------------------------------------------------
     // 1. 顶栏 (Top Bar: 44px)
     // ---------------------------------------------------------
-    rife_draw_rect(core, client_x, client_y, client_w, 44.0f, is_dark ? 0x0E111AFF : 0xF8FAFCFF);
+    rife_draw_rect(core, client_x, client_y, client_w, 44.0f, is_dark ? 0x181A1FFF : 0xFFFFFFFF);
     rife_draw_rect(core, client_x, client_y + 43.0f, client_w, 1.0f, col_border);
 
     // 应用标题与图标
-    rife_draw_round_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, 6.0f, 0x6366F1FF, 0x818CF8FF);
+    rife_draw_round_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, 6.0f, col_blue, 0);
     rife_draw_text_rect(core, client_x + 16.0f, client_y + 10.0f, 24.0f, 24.0f, "Rc", 0xFFFFFFFF, 3, 0);
     rife_draw_text_font(core, client_x + 48.0f, client_y + 13.0f, "Rclock 时钟图", col_txt_main, 5);
 
     // 日期切换器 [<] [ 今天 ] [>]
-    rife_draw_round_rect(core, client_x + 160.0f, client_y + 8.0f, 26.0f, 26.0f, 6.0f, is_dark ? 0x2A204488 : 0xF1F5F9AA, col_border);
+    rife_draw_round_rect(core, client_x + 160.0f, client_y + 8.0f, 26.0f, 26.0f, 13.0f, is_dark ? 0x202124FF : 0xF1F3F4FF, col_border);
     rife_draw_text_rect(core, client_x + 160.0f, client_y + 8.0f, 26.0f, 26.0f, "<", col_txt_main, 3, 0);
 
     bool is_today = clock_is_today(state);
-    uint32_t today_btn_bg = is_today ? (is_dark ? 0x4F46E5CC : 0x3B82F6CC) : (is_dark ? 0x2A204488 : 0xF1F5F9AA);
-    uint32_t today_btn_txt = is_today ? 0xFFFFFFFF : col_txt_main;
-    rife_draw_round_rect(core, client_x + 192.0f, client_y + 8.0f, 62.0f, 26.0f, 6.0f, today_btn_bg, col_border);
+    uint32_t today_btn_bg = is_today ? (is_dark ? 0x004A77FF : 0xE8F0FEFF) : (is_dark ? 0x202124FF : 0xF1F3F4FF);
+    uint32_t today_btn_txt = is_today ? col_blue : col_txt_main;
+    rife_draw_round_rect(core, client_x + 192.0f, client_y + 8.0f, 62.0f, 26.0f, 13.0f, today_btn_bg, is_today ? 0 : col_border);
     rife_draw_text_rect(core, client_x + 192.0f, client_y + 8.0f, 62.0f, 26.0f, "今天", today_btn_txt, 3, 0);
 
-    rife_draw_round_rect(core, client_x + 260.0f, client_y + 8.0f, 26.0f, 26.0f, 6.0f, is_dark ? 0x2A204488 : 0xF1F5F9AA, col_border);
+    rife_draw_round_rect(core, client_x + 260.0f, client_y + 8.0f, 26.0f, 26.0f, 13.0f, is_dark ? 0x202124FF : 0xF1F3F4FF, col_border);
     rife_draw_text_rect(core, client_x + 260.0f, client_y + 8.0f, 26.0f, 26.0f, ">", col_txt_main, 3, 0);
 
     // 日期标题
@@ -457,8 +458,8 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
 
     // 右侧制式切换胶囊 [ 24小时制 ]
     float mode_btn_x = client_x + client_w - 116.0f;
-    rife_draw_round_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, 13.0f, is_dark ? 0x312E8188 : 0xEEF2FFCC, 0x6366F1AA);
-    rife_draw_text_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, (state->dial_mode == CLOCK_DIAL_24H) ? "24小时制" : "12小时制", is_dark ? 0xC7D2FEFF : 0x4338CAFF, 3, 0);
+    rife_draw_round_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, 13.0f, is_dark ? 0x004A77FF : 0xE8F0FEFF, 0);
+    rife_draw_text_rect(core, mode_btn_x, client_y + 8.0f, 100.0f, 26.0f, (state->dial_mode == CLOCK_DIAL_24H) ? "24小时制" : "12小时制", col_blue, 3, 0);
 
     // ---------------------------------------------------------
     // 2. 左侧圆形时钟图 (Radial Clock Dial)
@@ -482,9 +483,9 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
                              is_dark ? 0x0F172A44 : 0xE2E8F033, 0);
     }
 
-    // B. 表盘环形轨道底色 (Dial Ring Track)
+    // B. 表盘环形轨道底色 (Material 3 Dial Ring Track)
     rife_draw_arc_sector(core, dial_cx, dial_cy, dial_r_in, dial_r_out, 0.0f, 360.0f,
-                         is_dark ? 0x14182499 : 0xF1F5F9AA, is_dark ? 0x1E223588 : 0xE2E8F0AA);
+                         is_dark ? 0x202124FF : 0xF1F3F4FF, col_border);
 
     // C. 刻度线与时钟标注 (Ticks & Hour Markings)
     int total_hours = (state->dial_mode == CLOCK_DIAL_24H) ? 24 : 12;
@@ -603,9 +604,9 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
         rife_draw_circle(core, nx2, ny2, 4.5f, 0xF43F5EFF, 0xFFFFFFFF);
     }
 
-    // F. 中央多功能液晶控制核 (Central Glass Hub)
-    rife_draw_circle(core, dial_cx, dial_cy, hub_r, is_dark ? 0x181128F0 : 0xFFFFFFF2, is_dark ? 0x4C376EE0 : 0xE2E8F0E0);
-    rife_draw_circle(core, dial_cx, dial_cy, hub_r - 4.0f, is_dark ? 0x20173688 : 0xF8FAFC88, 0);
+    // F. 中央多功能数字时间核 (Material 3 Digital Hub)
+    rife_draw_circle(core, dial_cx, dial_cy, hub_r, is_dark ? 0x1E1F22FF : 0xFFFFFFFF, col_border);
+    rife_draw_circle(core, dial_cx, dial_cy, hub_r - 4.0f, is_dark ? 0x242830FF : 0xF8F9FAFF, 0);
 
     SYSTEMTIME st;
     GetLocalTime(&st);
@@ -701,28 +702,28 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     float list_h = client_h - 44.0f;
 
     rife_draw_rect(core, list_x, list_y, 1.0f, list_h, col_border);
-    rife_draw_rect(core, list_x + 1.0f, list_y, list_w - 1.0f, list_h, is_dark ? 0x16102655 : 0xF8FAFC44);
+    rife_draw_rect(core, list_x + 1.0f, list_y, list_w - 1.0f, list_h, is_dark ? 0x121316FF : 0xF8F9FAFF);
 
     // 双标签分段切换器 [ 日程流 (N) ]  [ 📊 数据分析 ]
     float tab_w = (list_w - 28.0f - 8.0f) * 0.5f;
     float tab0_x = list_x + 14.0f;
     float tab1_x = tab0_x + tab_w + 8.0f;
     float tab_y = list_y + 8.0f;
-    float tab_h = 26.0f;
+    float tab_h = 28.0f;
 
     bool tab0_active = (state->right_panel_tab == 0);
-    uint32_t t0_bg = tab0_active ? (is_dark ? 0x4F46E5EE : 0x3B82F6EE) : (is_dark ? 0x2A204466 : 0xE2E8F088);
-    uint32_t t0_txt = tab0_active ? 0xFFFFFFFF : col_txt_sub;
-    rife_draw_round_rect(core, tab0_x, tab_y, tab_w, tab_h, 6.0f, t0_bg, tab0_active ? 0x818CF8AA : col_border);
+    uint32_t t0_bg = tab0_active ? (is_dark ? 0x004A77FF : 0xE8F0FEFF) : (is_dark ? 0x202124FF : 0xF1F3F4FF);
+    uint32_t t0_txt = tab0_active ? col_blue : col_txt_sub;
+    rife_draw_round_rect(core, tab0_x, tab_y, tab_w, tab_h, 14.0f, t0_bg, tab0_active ? 0 : col_border);
 
     char tab0_label[32];
     snprintf(tab0_label, sizeof(tab0_label), "日程流 (%d)", an.total_events);
     rife_draw_text_rect(core, tab0_x, tab_y, tab_w, tab_h, tab0_label, t0_txt, 3, 0);
 
     bool tab1_active = (state->right_panel_tab == 1);
-    uint32_t t1_bg = tab1_active ? (is_dark ? 0x4F46E5EE : 0x3B82F6EE) : (is_dark ? 0x2A204466 : 0xE2E8F088);
-    uint32_t t1_txt = tab1_active ? 0xFFFFFFFF : col_txt_sub;
-    rife_draw_round_rect(core, tab1_x, tab_y, tab_w, tab_h, 6.0f, t1_bg, tab1_active ? 0x818CF8AA : col_border);
+    uint32_t t1_bg = tab1_active ? (is_dark ? 0x004A77FF : 0xE8F0FEFF) : (is_dark ? 0x202124FF : 0xF1F3F4FF);
+    uint32_t t1_txt = tab1_active ? col_blue : col_txt_sub;
+    rife_draw_round_rect(core, tab1_x, tab_y, tab_w, tab_h, 14.0f, t1_bg, tab1_active ? 0 : col_border);
     rife_draw_text_rect(core, tab1_x, tab_y, tab_w, tab_h, "数据分析", t1_txt, 3, 0);
 
     // 分割线
@@ -740,11 +741,11 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
 
         // 亚像素微型完成进度条
         float pbar_w = list_w - 32.0f;
-        rife_draw_round_rect(core, list_x + 16.0f, list_y + 66.0f, pbar_w, 4.0f, 2.0f, is_dark ? 0x2A204488 : 0xE2E8F0AA, 0);
+        rife_draw_round_rect(core, list_x + 16.0f, list_y + 66.0f, pbar_w, 4.0f, 2.0f, is_dark ? 0x202124FF : 0xE2E8F0AA, 0);
         if (an.total_events > 0 && an.completed_events > 0) {
             float fill_w = pbar_w * (an.completion_pct / 100.0f);
             if (fill_w < 6.0f) fill_w = 6.0f;
-            rife_draw_round_rect(core, list_x + 16.0f, list_y + 66.0f, fill_w, 4.0f, 2.0f, 0x10B981FF, 0);
+            rife_draw_round_rect(core, list_x + 16.0f, list_y + 66.0f, fill_w, 4.0f, 2.0f, 0x34A853FF, 0);
         }
 
         // 日程卡片滚动列表

@@ -56,6 +56,7 @@ typedef struct {
 void rtodo_get_storage_path(char* out_path, size_t max_len);
 bool rtodo_load_storage(RtodoStorage* out_storage);
 bool rtodo_save_storage(const RtodoStorage* in_storage);
+void rtodo_open_create_modal(void* inst);
 
 extern const RifePluginApp g_calendar_plugin_app;
 
