@@ -93,10 +93,12 @@ d:\MyProjects\VS\RIFEOS
 │   └── generate_icon.ps1       # 纯 .NET GDI+ 矢量绘制多分辨率 rifeos.ico 脚本
 └── src/
     ├── rife_core.h / .c        # 双 Arena 内存模型、渲染命令队列、数学动画缓动工具函数
-    ├── rife_app_api.h          # 调色板枚举、流体云枚举、系统配置契约、应用虚表 API
-    ├── app_manifest.h / .c     # 应用注册中心（解耦挂载点）
-    ├── app_settings.h / .c     # "系统设置" App (支持明亮模式与黑曜石深色暗晶卡片模式)
-    └── main.c                  # Win32 平台宿主、消息循环、液态玻璃光栅化、流体云动力学、WinMain
+    ├── rife_app_api.h          # 调色板枚举、系统配置契约、应用虚表 API
+    ├── app_manifest.h / .c     # 应用注册中心（解耦挂载点）与跨应用导航
+    ├── app_calendar.h / .c     # Rtodo 多维日程应用（周/日/月/清单、1分钟网格、拖拽创建、自定义标签、持久化）
+    ├── app_clock.h / .c        # Rclock 极简时钟图应用（24H/12H 激光表盘、环形扇区渲染、深度时间数据分析看板）
+    ├── app_settings.h / .c     # 系统设置 App (支持明亮模式与黑曜石深色暗晶卡片模式)
+    └── main.c                  # 现代原生无边框单窗工作台宿主（Win32 消息循环、SDF 亚像素光栅化、一体化标题栏与侧边栏）
 ```
 
 ---
@@ -236,3 +238,5 @@ d:\MyProjects\VS\RIFEOS
 | **Milestone 32** | **收回态流体云纯净 22x22 呼吸微核与后台程序桌面实时窗口预览 (Pristine Collapsed 22px Breathing Bead & Desktop Live Window Preview Engine)**：<br>1. **流体云收回态彻底净化 (`src/main.c`)**：彻底剔除收回/静止态右侧的后台程序微型缩略图（`Rt`/`Rc` 图标）；收回状态下尺寸严格锁定为 `22x22px` 超紧凑亚像素圆形呼吸晶核，呼吸核光点恒定绝对居中，无任何多余元素，视觉极致纯净；<br>2. **后台程序桌面实时窗口预览引擎 (Desktop Live Window Preview Engine, `src/main.c`)**：在展开流体云中，当鼠标悬停于任意后台任务紧凑胶囊（如 `Rt` 或 `Rc`）时，系统自动在桌面唤起该程序的完整实时窗口预览（Aero Peek 级深度交互体验）：<br>   - 底层 CPU pass 绘制高通透液态玻璃底板（`rife_draw_subpixel_liquid_glass`，启用晶莹折射边缘高光与景深）；<br>   - 标题栏呈现专属微型三色控制灯与「应用名 · 桌面实时预览」高对比度紫晶徽标；<br>   - 插件界面调用 `win->plugin->render` 结合圆角视口硬件安全保护（`rife_push_scissor_round`），100% 完整复现应用实时界面（日历周时间网格、时钟图 24H 动态表盘与激光红线指针）；<br>   - 智能视口保护：顶部严格留出 56px 安全距离，确保顶部流体云 100% 不被遮挡且可随时点击恢复或关闭；鼠标移开即刻平滑退出预览。 | `src/main.c`, `AI_CONTINUITY.md`, `walkthrough.md` |
 | **Milestone 33** | **物理级内存深度回收与操作系统工作集紧凑引擎 (Physical Memory Reclamation & OS Working Set Trim Engine)**：<br>1. **C 语言与插件对象生命周期闭环 (`src/main.c`)**：窗口点击红灯 `X` 彻底关闭、流体云任务胶囊点击 `[ × ]`、以及流体云一键清理时，100% 触发各插件虚表 `.destroy()` 物理析构函数（如 `calendar_destroy`、`clock_destroy`），清空堆指针 `win->inst = NULL`，彻底切断内存泄漏。<br>2. **操作系统级工作集深度紧凑 (OS Working Set Trim, `rife_reclaim_physical_memory`)**：针对 Windows CRT 堆释放后不自动归还物理工作集页给操作系统的特性，引入原生 Win32 内核调用 `HeapCompact(GetProcessHeap(), 0)` 与 `SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1)`；在窗口关闭、后台任务销毁、一键清理及首屏渲染完成后自动执行物理级回收；实测物理工作集内存（Working Set）从 31.8MB 瞬间骤降并锁定在 **~5MB 警戒线** 内，实现任务管理器肉眼可见的物理级回收。 | `src/main.c`, `AI_CONTINUITY.md`, `walkthrough.md` |
 | **Milestone 34** | **桌面实时预览防穿透隔离与 Aero Peek 纯净视口重构 (Desktop Live Preview Anti-bleed & Aero Peek Viewport Isolation)**：<br>1. **Aero Peek 视口纯净化 (`src/main.c`)**：在 Section 3（底板光栅化）与 Section 10（插件内容 GDI pass）中增加 `if (plat->preview_win_idx >= 0) continue;`，当处于桌面预览态时自动暂停渲染桌面上其他已打开窗口，把整幅桌面视口完全让给悬停预览的应用，彻底根治两窗重叠重叠、文字互相穿透混杂的视觉缺陷；鼠标离开胶囊即刻无损还原原窗口。<br>2. **预览窗口专属高密度微透底板与独立顶栏 (`src/main.c`)**：在 Section 10.5 中为预览窗口绘制高密度亚像素圆角微透底板（`0x161122F5` / `0xFFFFFFF5`）以及 36px 独立顶栏和 1px 分割线，彻底切断下层桌面元素透射，表盘与日程清单呈现纯净锐利、晶莹剔透的高级质感。 | `src/main.c`, `AI_CONTINUITY.md`, `walkthrough.md` |
+| **Milestone 35** | **彻底重构：告别虚拟系统模拟、蜕变为现代一体化单窗时间管理工作室 (Total Refactoring: Unified Modern Single-Window Time Studio)**：<br>1. **架构彻底瘦身与定位重构**：响应用户“完全重构这个软件，不要复杂的各种接口了，直接做成一个正常软件”的诉求，彻底剥离原先模拟“虚拟桌面操作系统”的繁冗外壳（移除壁纸底板、顶部流体云水滴胶囊、弹性 Dock 栏、虚拟窗口层级管理器拖拽缩放、后台驻留任务池与桌面预览等 3000+ 行复杂胶水代码）。<br>2. **现代原生无边框单窗沉浸布局 (`src/main.c`)**：<br>   - 采用标准 Win32 `WM_NCCALCSIZE` + `WM_NCHITTEST`，实现 Windows 11 原生级窗口拖拽、双击全屏/还原、Snap Layouts 分屏吸附与 6px 边缘光标缩放；<br>   - 顶部一体化 38px 磨砂标题栏：包含品牌 Logo（`[R] Rife`）、中央动态本地日期星期标尺、以及原生三态窗口控制胶囊（最小化、最大化/还原、危险红 Hover 关闭按钮）；<br>   - 左侧 190px 垂直导航侧边栏：多维日程（📅 Rtodo）、极简时钟（⏱️ Rclock）、偏好设置（⚙️ Settings）三大核心功能一键丝滑切换；底部配备快速深浅色主题切换胶囊（🌙 黑曜石 / ☀️ 明亮）以及严格合规的作者署名（`Rife v1.0 · Renly`）；<br>   - 右侧主视口内容区：硬件级视口裁剪（`rife_push_scissor_round`），直接承载各功能插件渲染，输入事件直通；<br>3. **插件无缝兼容与极致性能**：保留 Rtodo 多维日程、Rclock 24H 激光表盘与时间分析看板、Settings 偏好设置的全部核心能力与持久化机制；零堆抖动、极速 60FPS 渲染，静态编译产物仅 332KB，内存物理级紧凑；<br>4. **编译与打包全线绿灯**：修复 `app_settings.h` 冗余宏冲突与 `rife_render_flush` 符号导出，MSVC 14.51 `/W4 /utf-8` 保持 0 错误 0 警告；一键打包生成 `RifeOS_Setup_v1.0.0.exe`。 | `src/main.c`, `src/app_settings.h`, `AI_CONTINUITY.md`, `walkthrough.md` |
+

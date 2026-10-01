@@ -1,56 +1,38 @@
 #define _CRT_SECURE_NO_WARNINGS
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
-#include <shellapi.h>
-#include <mmsystem.h>
+#include <windowsx.h>
 #include <dwmapi.h>
+#include <timeapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <math.h>
-#include <time.h>
+
 #include "rife_core.h"
 #include "rife_app_api.h"
 #include "app_manifest.h"
+#include "app_calendar.h"
+#include "app_clock.h"
+#include "app_settings.h"
 
-#pragma comment(lib, "user32.lib")
-#pragma comment(lib, "gdi32.lib")
-#pragma comment(lib, "dwmapi.lib")
-#pragma comment(lib, "winmm.lib")
-#pragma comment(lib, "shell32.lib")
+// -------------------------------------------------------------
+// Rife 现代一体化单窗架构定义 (Modern Unified Single-Window Architecture)
+// -------------------------------------------------------------
 
-#define GRID_W 40
-#define GRID_H 30
-#define MAX_SHORTCUTS 32
-#define MAX_PLUGIN_WINDOWS 16
+#define TITLEBAR_HEIGHT 38.0f
+#define SIDEBAR_WIDTH   190.0f
+#define MIN_WINDOW_W    920
+#define MIN_WINDOW_H    620
 
-typedef struct {
-    char name[64];
-    char path[MAX_PATH];
-    float x;
-    float y;
-    uint32_t color_top;
-    uint32_t color_bot;
-    HICON custom_icon;
-} DesktopShortcut;
-
-typedef struct {
-    int x0;
-    int x1;
-    float tx;
-} HorizLookup;
-
-typedef struct {
-    const RifePluginApp* plugin;
-    void* inst;
-    bool is_open;
-    bool is_minimized;
-    bool is_maximized;
-    float anim;
-
-    float x, y, w, h;
-    float restore_x, restore_y, restore_w, restore_h;
-    bool inited;
-} ActiveWindow;
+typedef enum {
+    PAGE_SCHEDULE = 0, // 📅 多维日程 (Rtodo)
+    PAGE_CLOCK    = 1, // ⏱️ 极简时钟 (Rclock)
+    PAGE_SETTINGS = 2  // ⚙️ 偏好设置 (Settings)
+} AppPage;
 
 typedef struct {
     HWND hwnd;
@@ -58,155 +40,79 @@ typedef struct {
     HBITMAP hbm_mem;
     HBITMAP hbm_old;
     uint32_t* pixels;
-    HFONT hfont_panel_title;
+    int win_width;
+    int win_height;
+
+    // 清晰字体句柄 (负值 EM 像素高度)
     HFONT hfont_display;
+    HFONT hfont_panel_title;
     HFONT hfont_title;
     HFONT hfont_body;
     HFONT hfont_bold;
     HFONT hfont_sm;
     HFONT hfont_caption;
-    int win_width;
-    int win_height;
-    HorizLookup* hlook;
-    float dock_anim;
-    float drawer_anim;
-    bool drawer_open;
-    DesktopShortcut shortcuts[MAX_SHORTCUTS];
-    size_t shortcut_count;
-    float grid_r[GRID_H][GRID_W];
-    float grid_g[GRID_H][GRID_W];
-    float grid_b[GRID_H][GRID_W];
-    float aura_time;
-    float breath_t;
-    DesktopModeType current_mode;
-    bool is_fullscreen;
-    RECT prev_rect;
     FontScaleType current_font_scale;
-    ActiveWindow windows[MAX_PLUGIN_WINDOWS];
 
-    bool cloud_expanded;
-    float cloud_anim;
-    float absorption_ripple_t;
+    // 核心页面状态
+    AppPage active_page;
+    int hovered_nav_idx;      // -1 或 0..2
+    int hovered_title_btn;    // -1, 0: min, 1: max, 2: close
+    bool mouse_in_window;
 
-    int active_win_idx;
-    int drag_mode;
-    int resize_dir;
-    int hover_resize_dir;
-    float drag_start_mx, drag_start_my;
-    float drag_start_wx, drag_start_wy, drag_start_ww, drag_start_wh;
-    bool snap_preview;
-    int preview_win_idx;
-} Win32Platform;
+    // 插件应用实例 (常驻双 Arena / 零堆搅动)
+    void* calendar_inst;
+    void* clock_inst;
+    void* settings_inst;
 
-static Win32Platform* s_global_plat = NULL;
-static RifeCore* s_global_core = NULL;
+    // 运行期输入状态
+    RifeInput input;
+} AppContext;
 
-// 强制操作系统紧凑进程堆并回收未使用的物理工作集页 (OS Working Set Trim)
+static AppContext* s_app = NULL;
+static RifeCore*   s_core = NULL;
+
+// -------------------------------------------------------------
+// 物理级工作集深度紧凑 (OS Working Set Trim)
+// -------------------------------------------------------------
 static inline void rife_reclaim_physical_memory(void) {
     HeapCompact(GetProcessHeap(), 0);
     SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
 }
 
+// -------------------------------------------------------------
+// 跨模块页面跳转 API
+// -------------------------------------------------------------
 void rife_open_app_by_id(const char* app_id) {
-    if (!s_global_plat || !s_global_core || !app_id) return;
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        if (g_installed_apps[i] && g_installed_apps[i]->id && strcmp(g_installed_apps[i]->id, app_id) == 0) {
-            ActiveWindow* win = &s_global_plat->windows[i];
-            for (size_t k = 0; k < g_installed_app_count; k++) {
-                if (k != i && s_global_plat->windows[k].is_open) {
-                    s_global_plat->windows[k].is_open = false;
-                    s_global_plat->windows[k].is_minimized = true;
-                }
-            }
-            if (!win->inst) {
-                win->inst = win->plugin->create(s_global_core);
-            }
-            win->is_open = true;
-            win->is_minimized = false;
-            win->anim = 0.0f;
-            if (!win->inited) {
-                float ww = (float)s_global_plat->win_width;
-                float wh = (float)s_global_plat->win_height;
-                win->w = win->plugin->default_w;
-                win->h = win->plugin->default_h;
-                if (win->w > ww - 48.0f) win->w = ww - 48.0f;
-                if (win->h > wh - 110.0f) win->h = wh - 110.0f;
-                if (win->w < 360.0f) win->w = 360.0f;
-                if (win->h < 260.0f) win->h = 260.0f;
-                win->x = (ww - win->w) * 0.5f;
-                win->y = (wh - 80.0f - win->h) * 0.5f;
-                if (win->y < 36.0f) win->y = 36.0f;
-                win->inited = true;
-            }
-            s_global_plat->active_win_idx = (int)i;
-            break;
-        }
-    }
+    if (!app_id || !s_app || !s_core) return;
+    if (strcmp(app_id, "rtodo") == 0) s_app->active_page = PAGE_SCHEDULE;
+    else if (strcmp(app_id, "clock") == 0) s_app->active_page = PAGE_CLOCK;
+    else if (strcmp(app_id, "settings") == 0) s_app->active_page = PAGE_SETTINGS;
+    rife_reclaim_physical_memory();
+    rife_request_redraw(s_core);
 }
 
-void rife_render_immediate(RifeCore* core);
-
-static inline float rife_clampf(float v, float min_v, float max_v) {
-    if (v < min_v) return min_v;
-    if (v > max_v) return max_v;
-    return v;
+// -------------------------------------------------------------
+// 字体引擎管理 (Font Management)
+// -------------------------------------------------------------
+static void destroy_fonts(AppContext* app) {
+    if (!app) return;
+    if (app->hfont_display)     { DeleteObject(app->hfont_display);     app->hfont_display = NULL; }
+    if (app->hfont_panel_title) { DeleteObject(app->hfont_panel_title); app->hfont_panel_title = NULL; }
+    if (app->hfont_title)       { DeleteObject(app->hfont_title);       app->hfont_title = NULL; }
+    if (app->hfont_body)        { DeleteObject(app->hfont_body);        app->hfont_body = NULL; }
+    if (app->hfont_bold)        { DeleteObject(app->hfont_bold);        app->hfont_bold = NULL; }
+    if (app->hfont_sm)          { DeleteObject(app->hfont_sm);          app->hfont_sm = NULL; }
+    if (app->hfont_caption)     { DeleteObject(app->hfont_caption);     app->hfont_caption = NULL; }
 }
 
-static inline float rife_lerpf(float a, float b, float t) {
-    return a + (b - a) * t;
-}
+static void update_system_fonts(AppContext* app, FontScaleType scale) {
+    if (!app) return;
+    destroy_fonts(app);
 
-static inline float rife_fluid_decay(float current, float target, float lambda, float dt) {
-    if (dt <= 0.0f) return current;
-    float t = 1.0f - expf(-lambda * dt);
-    return current + (target - current) * t;
-}
-
-static inline float rife_smootherstep(float t) {
-    if (t <= 0.0f) return 0.0f;
-    if (t >= 1.0f) return 1.0f;
-    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-}
-
-static inline float rife_fluid_elastic_step(float t) {
-    if (t <= 0.0f) return 0.0f;
-    if (t >= 1.0f) return 1.0f;
-    float s = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-    float overshoot = 0.055f * sinf(3.14159265f * t) * (t * t) * (1.0f - t);
-    return s + overshoot;
-}
-
-static void rife_draw_text_u8(HDC hdc, int x, int y, const char* utf8_str) {
-    if (!utf8_str || !utf8_str[0]) return;
-    wchar_t wbuf[256];
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, wbuf, 256);
-    if (wlen > 0) {
-        TextOutW(hdc, x, y, wbuf, wlen - 1);
-    }
-}
-
-static void set_system_taskbar_visible(bool visible) {
-    HWND taskbar = FindWindowA("Shell_TrayWnd", NULL);
-    if (taskbar) {
-        ShowWindow(taskbar, visible ? SW_SHOW : SW_HIDE);
-    }
-}
-
-static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
-    if (!plat) return;
     float factor = 1.0f;
-    if (scale == FONT_SCALE_125) factor = 1.25f;
-    else if (scale == FONT_SCALE_150) factor = 1.50f;
+    if (scale == FONT_SCALE_125) factor = 1.20f;
+    else if (scale == FONT_SCALE_150) factor = 1.40f;
 
-    if (plat->hfont_panel_title) DeleteObject(plat->hfont_panel_title);
-    if (plat->hfont_display) DeleteObject(plat->hfont_display);
-    if (plat->hfont_title) DeleteObject(plat->hfont_title);
-    if (plat->hfont_body) DeleteObject(plat->hfont_body);
-    if (plat->hfont_bold) DeleteObject(plat->hfont_bold);
-    if (plat->hfont_sm) DeleteObject(plat->hfont_sm);
-    if (plat->hfont_caption) DeleteObject(plat->hfont_caption);
-
-    // 查询 Windows 系统默认 UI 字体 (System Default UI Font)
     wchar_t font_face[LF_FACESIZE] = L"Microsoft YaHei UI";
     NONCLIENTMETRICSW ncm;
     memset(&ncm, 0, sizeof(NONCLIENTMETRICSW));
@@ -217,679 +123,79 @@ static void update_system_fonts(Win32Platform* plat, FontScaleType scale) {
         }
     }
 
-    // 使用负值获得纯粹字符 EM 像素高度 (Pixel EM Height)，杜绝正值导致字符被额外挤压模糊
     int s_display = -(int)(21 * factor + 0.5f);
-    int s_panel   = -(int)(18 * factor + 0.5f);
+    int s_panel   = -(int)(17 * factor + 0.5f);
     int s_title   = -(int)(15 * factor + 0.5f);
     int s_body    = -(int)(13 * factor + 0.5f);
     int s_bold    = -(int)(13 * factor + 0.5f);
     int s_sm      = -(int)(12 * factor + 0.5f);
     int s_cap     = -(int)(11 * factor + 0.5f);
 
-    plat->hfont_display = CreateFontW(s_display, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_panel_title = CreateFontW(s_panel, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_title = CreateFontW(s_title, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_body = CreateFontW(s_body, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_bold = CreateFontW(s_bold, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_sm = CreateFontW(s_sm, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
-    plat->hfont_caption = CreateFontW(s_cap, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_display     = CreateFontW(s_display, 0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_panel_title = CreateFontW(s_panel,   0, 0, 0, FW_NORMAL,   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_title       = CreateFontW(s_title,   0, 0, 0, FW_NORMAL,   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_body        = CreateFontW(s_body,    0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_bold        = CreateFontW(s_bold,    0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_sm          = CreateFontW(s_sm,      0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
+    app->hfont_caption     = CreateFontW(s_cap,     0, 0, 0, FW_LIGHT,    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_face);
 
-    plat->current_font_scale = scale;
+    app->current_font_scale = scale;
 }
 
-static void toggle_immersion_fullscreen(Win32Platform* plat) {
-    if (!plat || !plat->hwnd) return;
-    if (plat->is_fullscreen) {
-        plat->is_fullscreen = false;
-        set_system_taskbar_visible(true);
-        SetWindowLongA(plat->hwnd, GWL_STYLE, WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_POPUP);
-        int w = plat->prev_rect.right - plat->prev_rect.left;
-        int h = plat->prev_rect.bottom - plat->prev_rect.top;
-        if (w < 400 || h < 300) { w = 680; h = 480; }
-        SetWindowPos(plat->hwnd, HWND_NOTOPMOST, plat->prev_rect.left, plat->prev_rect.top, w, h,
-            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    }
-    else {
-        plat->is_fullscreen = true;
-        GetWindowRect(plat->hwnd, &plat->prev_rect);
-        set_system_taskbar_visible(false);
-        int sx = GetSystemMetrics(SM_CXSCREEN);
-        int sy = GetSystemMetrics(SM_CYSCREEN);
-        SetWindowLongA(plat->hwnd, GWL_STYLE, WS_POPUP);
-        SetWindowPos(plat->hwnd, HWND_TOPMOST, 0, 0, sx, sy, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    }
-}
+// -------------------------------------------------------------
+// DIBSection 软件光栅化帧缓冲管理
+// -------------------------------------------------------------
+static void recreate_backbuffer(AppContext* app, int w, int h) {
+    if (!app || w <= 0 || h <= 0) return;
+    app->win_width = w;
+    app->win_height = h;
 
-static HWND g_workerw_cache = NULL;
-static BOOL CALLBACK EnumWindowsWorkerWProc(HWND hwnd, LPARAM lParam) {
-    (void)lParam;
-    HWND p = FindWindowExA(hwnd, NULL, "SHELLDLL_DefView", NULL);
-    if (p != NULL) {
-        g_workerw_cache = FindWindowExA(NULL, hwnd, "WorkerW", NULL);
-    }
-    return TRUE;
-}
-
-HWND get_wallpaper_workerw(void) {
-    HWND progman = FindWindowA("Progman", NULL);
-    SendMessageTimeoutA(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, NULL);
-    g_workerw_cache = NULL;
-    EnumWindows(EnumWindowsWorkerWProc, 0);
-    return g_workerw_cache;
-}
-
-void apply_desktop_mode(Win32Platform* plat, DesktopModeType mode) {
-    if (plat->current_mode == mode) return;
-    plat->current_mode = mode;
-
-    if (mode == DESKTOP_MODE_WALLPAPER) {
-        HWND workerw = get_wallpaper_workerw();
-        if (workerw) {
-            SetParent(plat->hwnd, workerw);
-            RECT rc;
-            GetWindowRect(workerw, &rc);
-            SetWindowPos(plat->hwnd, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top, SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    if (app->hdc_mem) {
+        if (app->hbm_old) SelectObject(app->hdc_mem, app->hbm_old);
+        if (app->hbm_mem) {
+            DeleteObject(app->hbm_mem);
+            app->hbm_mem = NULL;
         }
-    }
-    else {
-        SetParent(plat->hwnd, NULL);
-        SetWindowLongA(plat->hwnd, GWL_STYLE, WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_POPUP);
-        SetWindowPos(plat->hwnd, NULL, 100, 100, 680, 480, SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    }
-}
-
-HICON rife_load_custom_icon(const char* icon_path) {
-    if (!icon_path || !icon_path[0]) return NULL;
-    HICON h = (HICON)LoadImageA(NULL, icon_path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
-    if (h) return h;
-    SHFILEINFOA sfi = { 0 };
-    DWORD_PTR res = SHGetFileInfoA(icon_path, 0, &sfi, sizeof(sfi), SHGFI_ICON | SHGFI_LARGEICON);
-    if (res && sfi.hIcon) return sfi.hIcon;
-    return NULL;
-}
-
-void update_horiz_lookup(Win32Platform* plat, int width) {
-    if (!plat || !plat->hlook || width <= 0) return;
-    int w = (width > 7680) ? 7680 : width;
-    float inv_w = (w > 1) ? (1.0f / (float)(w - 1)) : 0.0f;
-    float gw_scale = (float)(GRID_W - 1);
-    for (int x = 0; x < w; x++) {
-        float gx = (float)x * inv_w * gw_scale;
-        int x0 = (int)gx;
-        int x1 = (x0 < GRID_W - 1) ? x0 + 1 : x0;
-        plat->hlook[x].x0 = x0;
-        plat->hlook[x].x1 = x1;
-        plat->hlook[x].tx = gx - (float)x0;
+        HDC hdc_win = GetDC(app->hwnd);
+        BITMAPINFO bmi = { 0 };
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = w;
+        bmi.bmiHeader.biHeight = -h; // 自顶向下
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        app->hbm_mem = CreateDIBSection(hdc_win, &bmi, DIB_RGB_COLORS, (void**)&app->pixels, NULL, 0);
+        ReleaseDC(app->hwnd, hdc_win);
+        app->hbm_old = (HBITMAP)SelectObject(app->hdc_mem, app->hbm_mem);
     }
 }
 
-void desktop_add_shortcut(Win32Platform* plat, const char* file_path, bool grid_align) {
-    if (!plat || plat->shortcut_count >= MAX_SHORTCUTS || !file_path) return;
-    for (size_t i = 0; i < plat->shortcut_count; i++) {
-        if (_stricmp(plat->shortcuts[i].path, file_path) == 0) return;
-    }
-    DesktopShortcut* sc = &plat->shortcuts[plat->shortcut_count];
-    snprintf(sc->path, sizeof(sc->path), "%s", file_path);
-
-    const char* filename = strrchr(file_path, '\\');
-    filename = filename ? filename + 1 : file_path;
-    snprintf(sc->name, sizeof(sc->name), "%s", filename);
-
-    size_t idx = plat->shortcut_count;
-    int col = grid_align ? (int)(idx % 6) : (int)(idx % 8);
-    int row = grid_align ? (int)(idx / 6) : (int)(idx / 8);
-    sc->x = 24.0f + (float)col * 92.0f;
-    sc->y = 52.0f + (float)row * 96.0f;
-    sc->custom_icon = rife_load_custom_icon(file_path);
-
-    uint32_t gradients[][2] = {
-        {0x0284C7FF, 0x0369A1FF},
-        {0x059669FF, 0x047857FF},
-        {0x7C3AEDFF, 0x6D28D9FF},
-        {0xD97706FF, 0xB45309FF},
-        {0xDB2777FF, 0xBE185DFF},
-        {0x475569FF, 0x334155FF}
-    };
-    sc->color_top = gradients[idx % 6][0];
-    sc->color_bot = gradients[idx % 6][1];
-    plat->shortcut_count++;
+static inline float rife_clampf(float val, float min_val, float max_val) {
+    if (val < min_val) return min_val;
+    if (val > max_val) return max_val;
+    return val;
 }
 
-void rife_render_gemini_light_field(RifeCore* core, Win32Platform* plat, const RifeSystemConfig* cfg) {
-    if (!plat || !plat->pixels) return;
-    float ww = (float)plat->win_width;
-    float wh = (float)plat->win_height;
-    float mx = core->input.mouse_x;
-    float my = core->input.mouse_y;
-    float t = plat->aura_time;
-
-    float n1_x = ww * 0.18f + sinf(t * 0.70f) * (ww * 0.14f) + cosf(t * 1.35f) * (ww * 0.035f);
-    float n1_y = wh * 0.22f + cosf(t * 0.85f) * (wh * 0.12f) + sinf(t * 1.60f) * (wh * 0.025f);
-    float n2_x = ww * 0.52f + cosf(t * 0.80f) * (ww * 0.17f) + sinf(t * 1.45f) * (ww * 0.035f);
-    float n2_y = wh * 0.18f + sinf(t * 1.05f) * (wh * 0.10f) + cosf(t * 1.75f) * (wh * 0.025f);
-    float n3_x = ww * 0.82f + sinf(t * 0.58f) * (ww * 0.13f) + cosf(t * 1.20f) * (ww * 0.035f);
-    float n3_y = wh * 0.28f + cosf(t * 0.72f) * (wh * 0.14f) + sinf(t * 1.50f) * (wh * 0.025f);
-    float n4_x = ww * 0.35f + cosf(t * 0.90f) * (ww * 0.18f) + sinf(t * 1.65f) * (ww * 0.035f);
-    float n4_y = wh * 0.56f + sinf(t * 0.75f) * (wh * 0.15f) + cosf(t * 1.30f) * (wh * 0.025f);
-    float n5_x = ww * 0.72f + sinf(t * 1.00f) * (ww * 0.15f) + cosf(t * 1.85f) * (ww * 0.035f);
-    float n5_y = wh * 0.62f + cosf(t * 0.62f) * (wh * 0.14f) + sinf(t * 1.40f) * (wh * 0.025f);
-
-    const float r1_sq = 300.0f * 300.0f, inv_r1 = 1.0f / 300.0f;
-    const float r2_sq = 310.0f * 310.0f, inv_r2 = 1.0f / 310.0f;
-    const float r3_sq = 280.0f * 280.0f, inv_r3 = 1.0f / 280.0f;
-    const float r4_sq = 270.0f * 270.0f, inv_r4 = 1.0f / 270.0f;
-    const float r5_sq = 260.0f * 260.0f, inv_r5 = 1.0f / 260.0f;
-    const float rm_sq = 230.0f * 230.0f, inv_rm = 1.0f / 230.0f;
-
-    AuraPaletteType pal = cfg ? cfg->palette : PALETTE_GEMINI;
-    bool disturbance = cfg ? cfg->cursor_disturbance : true;
-
-    for (int y = 0; y < GRID_H; y++) {
-        float py = ((float)y / (float)(GRID_H - 1)) * wh;
-        for (int x = 0; x < GRID_W; x++) {
-            float px = ((float)x / (float)(GRID_W - 1)) * ww;
-            float r, g, b;
-
-            if (pal == PALETTE_OBSIDIAN) {
-                r = 15.0f; g = 23.0f; b = 42.0f;
-            }
-            else if (pal == PALETTE_SUNSET) {
-                r = 255.0f; g = 241.0f; b = 242.0f;
-            }
-            else if (pal == PALETTE_CYBER) {
-                r = 240.0f; g = 253.0f; b = 250.0f;
-            }
-            else {
-                r = 242.0f; g = 245.0f; b = 251.0f;
-            }
-
-            float d1_sq = (px - n1_x) * (px - n1_x) + (py - n1_y) * (py - n1_y);
-            if (d1_sq < r1_sq) {
-                float w = 1.0f - sqrtf(d1_sq) * inv_r1;
-                w = w * w * (3.0f - 2.0f * w) * 0.80f;
-                if (pal == PALETTE_OBSIDIAN) { r += (30.0f - r) * w; g += (58.0f - g) * w; b += (138.0f - b) * w; }
-                else if (pal == PALETTE_SUNSET) { r += (244.0f - r) * w; g += (63.0f - g) * w; b += (94.0f - b) * w; }
-                else if (pal == PALETTE_CYBER) { r += (16.0f - r) * w; g += (185.0f - g) * w; b += (129.0f - b) * w; }
-                else { r += (66.0f - r) * w; g += (133.0f - g) * w; b += (244.0f - b) * w; }
-            }
-
-            float d2_sq = (px - n2_x) * (px - n2_x) + (py - n2_y) * (py - n2_y);
-            if (d2_sq < r2_sq) {
-                float w = 1.0f - sqrtf(d2_sq) * inv_r2;
-                w = w * w * (3.0f - 2.0f * w) * 0.82f;
-                if (pal == PALETTE_OBSIDIAN) { r += (88.0f - r) * w; g += (28.0f - g) * w; b += (135.0f - b) * w; }
-                else if (pal == PALETTE_SUNSET) { r += (249.0f - r) * w; g += (115.0f - g) * w; b += (22.0f - b) * w; }
-                else if (pal == PALETTE_CYBER) { r += (6.0f - r) * w; g += (182.0f - g) * w; b += (212.0f - b) * w; }
-                else { r += (155.0f - r) * w; g += (114.0f - g) * w; b += (207.0f - b) * w; }
-            }
-
-            float d3_sq = (px - n3_x) * (px - n3_x) + (py - n3_y) * (py - n3_y);
-            if (d3_sq < r3_sq) {
-                float w = 1.0f - sqrtf(d3_sq) * inv_r3;
-                w = w * w * (3.0f - 2.0f * w) * 0.76f;
-                if (pal == PALETTE_OBSIDIAN) { r += (190.0f - r) * w; g += (24.0f - g) * w; b += (93.0f - b) * w; }
-                else if (pal == PALETTE_SUNSET) { r += (234.0f - r) * w; g += (179.0f - g) * w; b += (8.0f - b) * w; }
-                else if (pal == PALETTE_CYBER) { r += (59.0f - r) * w; g += (130.0f - g) * w; b += (246.0f - b) * w; }
-                else { r += (236.0f - r) * w; g += (72.0f - g) * w; b += (153.0f - b) * w; }
-            }
-
-            float d4_sq = (px - n4_x) * (px - n4_x) + (py - n4_y) * (py - n4_y);
-            if (d4_sq < r4_sq) {
-                float w = 1.0f - sqrtf(d4_sq) * inv_r4;
-                w = w * w * (3.0f - 2.0f * w) * 0.70f;
-                if (pal == PALETTE_OBSIDIAN) { r += (217.0f - r) * w; g += (119.0f - g) * w; b += (6.0f - b) * w; }
-                else if (pal == PALETTE_SUNSET) { r += (168.0f - r) * w; g += (85.0f - g) * w; b += (247.0f - b) * w; }
-                else if (pal == PALETTE_CYBER) { r += (99.0f - r) * w; g += (102.0f - g) * w; b += (241.0f - b) * w; }
-                else { r += (251.0f - r) * w; g += (146.0f - g) * w; b += (60.0f - b) * w; }
-            }
-
-            float d5_sq = (px - n5_x) * (px - n5_x) + (py - n5_y) * (py - n5_y);
-            if (d5_sq < r5_sq) {
-                float w = 1.0f - sqrtf(d5_sq) * inv_r5;
-                w = w * w * (3.0f - 2.0f * w) * 0.65f;
-                if (pal == PALETTE_OBSIDIAN) { r += (6.0f - r) * w; g += (95.0f - g) * w; b += (70.0f - b) * w; }
-                else if (pal == PALETTE_SUNSET) { r += (236.0f - r) * w; g += (72.0f - g) * w; b += (153.0f - b) * w; }
-                else if (pal == PALETTE_CYBER) { r += (52.0f - r) * w; g += (211.0f - g) * w; b += (153.0f - b) * w; }
-                else { r += (182.0f - r) * w; g += (212.0f - g) * w; }
-            }
-
-            if (disturbance) {
-                float dm_sq = (px - mx) * (px - mx) + (py - my) * (py - my);
-                if (dm_sq < rm_sq) {
-                    float w = 1.0f - sqrtf(dm_sq) * inv_rm;
-                    w = w * w * (3.0f - 2.0f * w) * 0.55f;
-                    if (pal == PALETTE_OBSIDIAN) { r += (51.0f - r) * w; g += (65.0f - g) * w; b += (85.0f - b) * w; }
-                    else { r += (147.0f - r) * w; g += (197.0f - g) * w; b += (253.0f - b) * w; }
-                }
-            }
-
-            plat->grid_r[y][x] = rife_clampf(r, 0.0f, 255.0f);
-            plat->grid_g[y][x] = rife_clampf(g, 0.0f, 255.0f);
-            plat->grid_b[y][x] = rife_clampf(b, 0.0f, 255.0f);
-        }
-    }
-
-    int width = (plat->win_width > 7680) ? 7680 : plat->win_width;
-    int height = plat->win_height;
-    float inv_h = (height > 1) ? (1.0f / (float)(height - 1)) : 0.0f;
-    float gh_scale = (float)(GRID_H - 1);
-
-    float scan_r[GRID_W];
-    float scan_g[GRID_W];
-    float scan_b[GRID_W];
-
-    for (int y = 0; y < height; y++) {
-        float gy = (float)y * inv_h * gh_scale;
-        int y0 = (int)gy;
-        int y1 = (y0 < GRID_H - 1) ? y0 + 1 : y0;
-        float ty = gy - (float)y0;
-
-        const float* r0_row = plat->grid_r[y0];
-        const float* r1_row = plat->grid_r[y1];
-        const float* g0_row = plat->grid_g[y0];
-        const float* g1_row = plat->grid_g[y1];
-        const float* b0_row = plat->grid_b[y0];
-        const float* b1_row = plat->grid_b[y1];
-
-        for (int gx = 0; gx < GRID_W; gx++) {
-            scan_r[gx] = r0_row[gx] + (r1_row[gx] - r0_row[gx]) * ty;
-            scan_g[gx] = g0_row[gx] + (g1_row[gx] - g0_row[gx]) * ty;
-            scan_b[gx] = b0_row[gx] + (b1_row[gx] - b0_row[gx]) * ty;
-        }
-
-        uint32_t* line = &plat->pixels[y * plat->win_width];
-        for (int x = 0; x < width; x++) {
-            int x0 = plat->hlook[x].x0;
-            int x1 = plat->hlook[x].x1;
-            float tx = plat->hlook[x].tx;
-
-            uint32_t ir = (uint32_t)(scan_r[x0] + (scan_r[x1] - scan_r[x0]) * tx);
-            uint32_t ig = (uint32_t)(scan_g[x0] + (scan_g[x1] - scan_g[x0]) * tx);
-            uint32_t ib = (uint32_t)(scan_b[x0] + (scan_b[x1] - scan_b[x0]) * tx);
-            line[x] = (ir << 16) | (ig << 8) | ib;
-        }
-    }
+static inline float rife_lerpf(float a, float b, float t) {
+    return a + (b - a) * t;
 }
 
-void rife_draw_subpixel_liquid_glass(Win32Platform* plat, float gx, float gy, float gw, float gh, float radius, float glass_alpha, bool highlight, bool specular_rim, uint32_t tint_rgb) {
-    if (!plat || !plat->pixels) return;
-    int x0 = (int)floorf(gx);
-    int y0 = (int)floorf(gy);
-    int x1 = (int)ceilf(gx + gw);
-    int y1 = (int)ceilf(gy + gh);
+// -------------------------------------------------------------
+// 底层亚像素连续超椭圆距离场 (Squircle Box-SDF) 光栅化
+// -------------------------------------------------------------
+static void rife_blend_round_rect_pixels(AppContext* app, float rx, float ry, float rw, float rh, float radius, uint32_t color, uint32_t border_color) {
+    if (!app || !app->pixels || rw <= 0.0f || rh <= 0.0f) return;
+    int x0 = (int)floorf(rx - 1.5f);
+    int y0 = (int)floorf(ry - 1.5f);
+    int x1 = (int)ceilf(rx + rw + 1.5f);
+    int y1 = (int)ceilf(ry + rh + 1.5f);
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
-    if (x1 > plat->win_width) x1 = plat->win_width;
-    if (y1 > plat->win_height) y1 = plat->win_height;
-
-    float alpha = highlight ? (glass_alpha + 0.08f) : glass_alpha;
-    alpha = rife_clampf(alpha, 0.0f, 0.96f);
-    int width = plat->win_width;
-    float tr = (float)((tint_rgb >> 16) & 0xFF);
-    float tg = (float)((tint_rgb >> 8) & 0xFF);
-    float tb = (float)(tint_rgb & 0xFF);
-
-    float half_w = gw * 0.5f;
-    float half_h = gh * 0.5f;
-    float center_x = gx + half_w;
-    float center_y = gy + half_h;
-    float r_clamped = radius;
-    if (r_clamped > half_w) r_clamped = half_w;
-    if (r_clamped > half_h) r_clamped = half_h;
-    float inner_w = half_w - r_clamped;
-    float inner_h = half_h - r_clamped;
-
-    for (int y = y0; y < y1; y++) {
-        float py = (float)y + 0.5f;
-        uint32_t* line = &plat->pixels[y * width];
-        float qy = fabsf(py - center_y) - inner_h;
-        float vert = (py - gy) / gh;
-        float specular = (specular_rim && py - gy < 3.2f) ? (1.0f - (py - gy) * 0.28f) * 42.0f : 0.0f;
-        float blend_alpha = alpha * (0.85f - vert * 0.15f);
-
-        for (int x = x0; x < x1; x++) {
-            float px = (float)x + 0.5f;
-            float qx = fabsf(px - center_x) - inner_w;
-            float dist;
-
-            if (qx <= 0.0f && qy <= 0.0f) {
-                float in_val = (qx > qy) ? qx : qy;
-                dist = in_val - r_clamped;
-            }
-            else if (qx > 0.0f && qy <= 0.0f) {
-                dist = qx - r_clamped;
-            }
-            else if (qx <= 0.0f && qy > 0.0f) {
-                dist = qy - r_clamped;
-            }
-            else {
-                dist = sqrtf(qx * qx + qy * qy) - r_clamped;
-            }
-
-            if (dist > 1.0f) continue;
-
-            uint32_t orig = line[x];
-            float ob = (float)(orig & 0xFF);
-            float og = (float)((orig >> 8) & 0xFF);
-            float or_ = (float)((orig >> 16) & 0xFF);
-
-            float r = rife_lerpf(or_, tr, blend_alpha) + specular;
-            float g = rife_lerpf(og, tg, blend_alpha) + specular;
-            float b = rife_lerpf(ob, tb, blend_alpha) + specular;
-
-            if (dist <= -1.6f) {
-                line[x] = ((uint32_t)rife_clampf(r, 0.0f, 255.0f) << 16) |
-                    ((uint32_t)rife_clampf(g, 0.0f, 255.0f) << 8) |
-                    (uint32_t)rife_clampf(b, 0.0f, 255.0f);
-                continue;
-            }
-
-            if (specular_rim) {
-                float stroke_factor = rife_clampf(1.0f - fabsf(dist + 0.6f), 0.0f, 1.0f);
-                if (stroke_factor > 0.0f) {
-                    float rim = (vert < 0.22f) ? 1.25f : ((vert < 0.55f) ? 0.70f : 0.35f);
-                    float s = stroke_factor * rim;
-                    r = rife_lerpf(r, 255.0f, s * 1.05f);
-                    g = rife_lerpf(g, 255.0f, s);
-                    b = rife_lerpf(b, 255.0f, s * 0.95f);
-                }
-            }
-
-            float coverage = rife_clampf(0.5f - dist, 0.0f, 1.0f);
-            uint32_t final_r = (uint32_t)rife_clampf(rife_lerpf(or_, r, coverage), 0.0f, 255.0f);
-            uint32_t final_g = (uint32_t)rife_clampf(rife_lerpf(og, g, coverage), 0.0f, 255.0f);
-            uint32_t final_b = (uint32_t)rife_clampf(rife_lerpf(ob, b, coverage), 0.0f, 255.0f);
-            line[x] = (final_r << 16) | (final_g << 8) | final_b;
-        }
-    }
-}
-
-static void rife_blend_circle_pixels(Win32Platform* plat, float cx, float cy, float radius, uint32_t color, uint32_t border_color) {
-    if (!plat || !plat->pixels || radius <= 0.0f) return;
-    int x0 = (int)floorf(cx - radius - 1.5f);
-    int y0 = (int)floorf(cy - radius - 1.5f);
-    int x1 = (int)ceilf(cx + radius + 1.5f);
-    int y1 = (int)ceilf(cy + radius + 1.5f);
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > plat->win_width) x1 = plat->win_width;
-    if (y1 > plat->win_height) y1 = plat->win_height;
+    if (x1 > app->win_width) x1 = app->win_width;
+    if (y1 > app->win_height) y1 = app->win_height;
 
     RECT clip_rc;
-    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
-        if (x0 < clip_rc.left) x0 = clip_rc.left;
-        if (y0 < clip_rc.top) y0 = clip_rc.top;
-        if (x1 > clip_rc.right) x1 = clip_rc.right;
-        if (y1 > clip_rc.bottom) y1 = clip_rc.bottom;
-    }
-    if (x0 >= x1 || y0 >= y1) return;
-
-    float fr = (float)((color >> 24) & 0xFF);
-    float fg = (float)((color >> 16) & 0xFF);
-    float fb = (float)((color >> 8) & 0xFF);
-    float fa = (float)(color & 0xFF) / 255.0f;
-
-    float br = (float)((border_color >> 24) & 0xFF);
-    float bg = (float)((border_color >> 16) & 0xFF);
-    float bb = (float)((border_color >> 8) & 0xFF);
-    float ba = (float)(border_color & 0xFF) / 255.0f;
-
-    int width = plat->win_width;
-    float r_sq_max = (radius + 1.5f) * (radius + 1.5f);
-
-    for (int y = y0; y < y1; y++) {
-        float py = (float)y + 0.5f;
-        uint32_t* line = &plat->pixels[y * width];
-        for (int x = x0; x < x1; x++) {
-            float px = (float)x + 0.5f;
-            float d_sq = (px - cx) * (px - cx) + (py - cy) * (py - cy);
-            if (d_sq > r_sq_max) continue;
-
-            float d = sqrtf(d_sq) - radius;
-            float cov = rife_clampf(0.5f - d, 0.0f, 1.0f);
-            if (cov <= 0.0f) continue;
-
-            uint32_t orig = line[x];
-            float ob = (float)(orig & 0xFF);
-            float og = (float)((orig >> 8) & 0xFF);
-            float or_ = (float)((orig >> 16) & 0xFF);
-
-            float cur_r = fr;
-            float cur_g = fg;
-            float cur_b = fb;
-            float cur_a = fa;
-
-            if (ba > 0.0f) {
-                float stroke_factor = rife_clampf(1.0f - fabsf(d + 0.5f), 0.0f, 1.0f);
-                if (stroke_factor > 0.0f) {
-                    cur_r = rife_lerpf(cur_r, br, stroke_factor);
-                    cur_g = rife_lerpf(cur_g, bg, stroke_factor);
-                    cur_b = rife_lerpf(cur_b, bb, stroke_factor);
-                    cur_a = rife_lerpf(cur_a, ba, stroke_factor);
-                }
-            }
-
-            float final_a = cur_a * cov;
-            float inv_a = 1.0f - final_a;
-            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + cur_r * final_a, 0.0f, 255.0f);
-            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + cur_g * final_a, 0.0f, 255.0f);
-            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + cur_b * final_a, 0.0f, 255.0f);
-            line[x] = (nr << 16) | (ng << 8) | nb;
-        }
-    }
-}
-
-void rife_draw_subpixel_circle(Win32Platform* plat, float cx, float cy, float radius, uint32_t fill_color, uint32_t border_color) {
-    uint32_t fc = ((fill_color & 0xFFFFFF) << 8) | 0xFF;
-    uint32_t bc = ((border_color & 0xFFFFFF) << 8) | 0xFF;
-    rife_blend_circle_pixels(plat, cx, cy, radius, fc, bc);
-}
-
-static void rife_blend_line_pixels(Win32Platform* plat, float x1, float y1, float x2, float y2, float thickness, uint32_t color) {
-    if (!plat || !plat->pixels || thickness <= 0.0f) return;
-    float half_thick = thickness * 0.5f;
-    float min_x = (x1 < x2 ? x1 : x2) - half_thick - 1.5f;
-    float min_y = (y1 < y2 ? y1 : y2) - half_thick - 1.5f;
-    float max_x = (x1 > x2 ? x1 : x2) + half_thick + 1.5f;
-    float max_y = (y1 > y2 ? y1 : y2) + half_thick + 1.5f;
-
-    int x0 = (int)floorf(min_x);
-    int y0 = (int)floorf(min_y);
-    int x1_i = (int)ceilf(max_x);
-    int y1_i = (int)ceilf(max_y);
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1_i > plat->win_width) x1_i = plat->win_width;
-    if (y1_i > plat->win_height) y1_i = plat->win_height;
-
-    RECT clip_rc;
-    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
-        if (x0 < clip_rc.left) x0 = clip_rc.left;
-        if (y0 < clip_rc.top) y0 = clip_rc.top;
-        if (x1_i > clip_rc.right) x1_i = clip_rc.right;
-        if (y1_i > clip_rc.bottom) y1_i = clip_rc.bottom;
-    }
-    if (x0 >= x1_i || y0 >= y1_i) return;
-
-    float lr = (float)((color >> 24) & 0xFF);
-    float lg = (float)((color >> 16) & 0xFF);
-    float lb = (float)((color >> 8) & 0xFF);
-    float la = (float)(color & 0xFF) / 255.0f;
-    if (la <= 0.0f) return;
-
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    float len_sq = dx * dx + dy * dy;
-    int width = plat->win_width;
-
-    for (int y = y0; y < y1_i; y++) {
-        float py = (float)y + 0.5f;
-        uint32_t* line = &plat->pixels[y * width];
-        for (int x = x0; x < x1_i; x++) {
-            float px = (float)x + 0.5f;
-            float t = 0.0f;
-            if (len_sq > 0.0001f) {
-                t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-                if (t < 0.0f) t = 0.0f;
-                else if (t > 1.0f) t = 1.0f;
-            }
-            float qx = x1 + t * dx;
-            float qy = y1 + t * dy;
-            float dist = sqrtf((px - qx) * (px - qx) + (py - qy) * (py - qy)) - half_thick;
-            float cov = rife_clampf(0.5f - dist, 0.0f, 1.0f);
-            if (cov <= 0.0f) continue;
-
-            uint32_t orig = line[x];
-            float ob = (float)(orig & 0xFF);
-            float og = (float)((orig >> 8) & 0xFF);
-            float or_ = (float)((orig >> 16) & 0xFF);
-
-            float final_a = la * cov;
-            float inv_a = 1.0f - final_a;
-            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + lr * final_a, 0.0f, 255.0f);
-            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + lg * final_a, 0.0f, 255.0f);
-            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + lb * final_a, 0.0f, 255.0f);
-            line[x] = (nr << 16) | (ng << 8) | nb;
-        }
-    }
-}
-
-static void rife_blend_arc_sector_pixels(Win32Platform* plat, float cx, float cy, float r_inner, float r_outer, float start_deg, float end_deg, uint32_t color, uint32_t border_color) {
-    if (!plat || !plat->pixels || r_outer <= 0.0f || r_outer <= r_inner) return;
-
-    int x0 = (int)floorf(cx - r_outer - 1.5f);
-    int y0 = (int)floorf(cy - r_outer - 1.5f);
-    int x1 = (int)ceilf(cx + r_outer + 1.5f);
-    int y1 = (int)ceilf(cy + r_outer + 1.5f);
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > plat->win_width) x1 = plat->win_width;
-    if (y1 > plat->win_height) y1 = plat->win_height;
-
-    RECT clip_rc;
-    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
-        if (x0 < clip_rc.left) x0 = clip_rc.left;
-        if (y0 < clip_rc.top) y0 = clip_rc.top;
-        if (x1 > clip_rc.right) x1 = clip_rc.right;
-        if (y1 > clip_rc.bottom) y1 = clip_rc.bottom;
-    }
-    if (x0 >= x1 || y0 >= y1) return;
-
-    float fr = (float)((color >> 24) & 0xFF);
-    float fg = (float)((color >> 16) & 0xFF);
-    float fb = (float)((color >> 8) & 0xFF);
-    float fa = (float)(color & 0xFF) / 255.0f;
-
-    float br = (float)((border_color >> 24) & 0xFF);
-    float bg = (float)((border_color >> 16) & 0xFF);
-    float bb = (float)((border_color >> 8) & 0xFF);
-    float ba = (float)(border_color & 0xFF) / 255.0f;
-
-    if (fa <= 0.0f && ba <= 0.0f) return;
-
-    float span = end_deg - start_deg;
-    bool is_full_circle = (span >= 359.9f);
-    float s = fmodf(start_deg, 360.0f);
-    if (s < 0.0f) s += 360.0f;
-    float e = fmodf(end_deg, 360.0f);
-    if (e < 0.0f) e += 360.0f;
-
-    int width = plat->win_width;
-    float r_in_sq = (r_inner > 1.0f) ? (r_inner - 1.5f) * (r_inner - 1.5f) : 0.0f;
-    float r_out_sq = (r_outer + 1.5f) * (r_outer + 1.5f);
-    const float rad2deg = 57.295779513f;
-    const float deg2rad = 0.0174532925f;
-
-    for (int y = y0; y < y1; y++) {
-        float py = (float)y + 0.5f;
-        float dy = py - cy;
-        uint32_t* line = &plat->pixels[y * width];
-        for (int x = x0; x < x1; x++) {
-            float px = (float)x + 0.5f;
-            float dx = px - cx;
-            float d_sq = dx * dx + dy * dy;
-            if (d_sq < r_in_sq || d_sq > r_out_sq) continue;
-
-            float r = sqrtf(d_sq);
-            if (r < 0.001f) continue;
-
-            float cov_in = (r_inner > 0.0f) ? rife_clampf(r - (r_inner - 0.5f), 0.0f, 1.0f) : 1.0f;
-            float cov_out = rife_clampf((r_outer + 0.5f) - r, 0.0f, 1.0f);
-            float cov_r = cov_in * cov_out;
-            if (cov_r <= 0.0f) continue;
-
-            float angle = atan2f(dx, -dy) * rad2deg;
-            if (angle < 0.0f) angle += 360.0f;
-
-            float cov_ang = 1.0f;
-            bool inside_ang = false;
-            if (is_full_circle) {
-                inside_ang = true;
-            }
-            else if (s <= e) {
-                if (angle >= s - 1.0f && angle <= e + 1.0f) {
-                    inside_ang = true;
-                    float d_s = (angle - s) * deg2rad * r;
-                    float d_e = (e - angle) * deg2rad * r;
-                    float d_min = (d_s < d_e) ? d_s : d_e;
-                    cov_ang = rife_clampf(d_min + 0.5f, 0.0f, 1.0f);
-                }
-            }
-            else {
-                if (angle >= s - 1.0f || angle <= e + 1.0f) {
-                    inside_ang = true;
-                    float d_s = (angle >= s - 1.0f) ? (angle - s) : (angle + 360.0f - s);
-                    d_s = d_s * deg2rad * r;
-                    float d_e = (angle <= e + 1.0f) ? (e - angle) : (e + 360.0f - angle);
-                    d_e = d_e * deg2rad * r;
-                    float d_min = (d_s < d_e) ? d_s : d_e;
-                    cov_ang = rife_clampf(d_min + 0.5f, 0.0f, 1.0f);
-                }
-            }
-
-            if (!inside_ang || cov_ang <= 0.0f) continue;
-
-            float cov = cov_r * cov_ang;
-            uint32_t orig = line[x];
-            float ob = (float)(orig & 0xFF);
-            float og = (float)((orig >> 8) & 0xFF);
-            float or_ = (float)((orig >> 16) & 0xFF);
-
-            float cur_r = fr, cur_g = fg, cur_b = fb, cur_a = fa;
-            if (ba > 0.0f) {
-                float edge_dist = (r_outer - r < r - r_inner) ? (r_outer - r) : (r - r_inner);
-                float stroke = rife_clampf(1.0f - edge_dist, 0.0f, 1.0f);
-                if (stroke > 0.0f) {
-                    cur_r = rife_lerpf(cur_r, br, stroke);
-                    cur_g = rife_lerpf(cur_g, bg, stroke);
-                    cur_b = rife_lerpf(cur_b, bb, stroke);
-                    cur_a = rife_lerpf(cur_a, ba, stroke);
-                }
-            }
-
-            float final_a = cur_a * cov;
-            float inv_a = 1.0f - final_a;
-            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + cur_r * final_a, 0.0f, 255.0f);
-            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + cur_g * final_a, 0.0f, 255.0f);
-            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + cur_b * final_a, 0.0f, 255.0f);
-            line[x] = (nr << 16) | (ng << 8) | nb;
-        }
-    }
-}
-
-static void rife_blend_round_rect_pixels(Win32Platform* plat, float rx, float ry, float rw, float rh, float radius, uint32_t color, uint32_t border_color) {
-    if (!plat || !plat->pixels || rw <= 0.0f || rh <= 0.0f) return;
-    int x0 = (int)floorf(rx);
-    int y0 = (int)floorf(ry);
-    int x1 = (int)ceilf(rx + rw);
-    int y1 = (int)ceilf(ry + rh);
-    if (x0 < 0) x0 = 0;
-    if (y0 < 0) y0 = 0;
-    if (x1 > plat->win_width) x1 = plat->win_width;
-    if (y1 > plat->win_height) y1 = plat->win_height;
-
-    RECT clip_rc;
-    if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+    if (GetClipBox(app->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
         if (x0 < clip_rc.left) x0 = clip_rc.left;
         if (y0 < clip_rc.top) y0 = clip_rc.top;
         if (x1 > clip_rc.right) x1 = clip_rc.right;
@@ -909,25 +215,23 @@ static void rife_blend_round_rect_pixels(Win32Platform* plat, float rx, float ry
 
     float half_w = rw * 0.5f;
     float half_h = rh * 0.5f;
-    float center_x = rx + half_w;
-    float center_y = ry + half_h;
+    float cx = rx + half_w;
+    float cy = ry + half_h;
     float r_clamped = radius;
     if (r_clamped > half_w) r_clamped = half_w;
     if (r_clamped > half_h) r_clamped = half_h;
     float inner_w = half_w - r_clamped;
     float inner_h = half_h - r_clamped;
-    int width = plat->win_width;
+    int width = app->win_width;
 
     for (int y = y0; y < y1; y++) {
         float py = (float)y + 0.5f;
-        uint32_t* line = &plat->pixels[y * width];
-        float qy = fabsf(py - center_y) - inner_h;
-
+        float qy = fabsf(py - cy) - inner_h;
+        uint32_t* line = &app->pixels[y * width];
         for (int x = x0; x < x1; x++) {
             float px = (float)x + 0.5f;
-            float qx = fabsf(px - center_x) - inner_w;
+            float qx = fabsf(px - cx) - inner_w;
             float dist;
-
             if (qx <= 0.0f && qy <= 0.0f) {
                 float in_val = (qx > qy) ? qx : qy;
                 dist = in_val - r_clamped;
@@ -938,832 +242,344 @@ static void rife_blend_round_rect_pixels(Win32Platform* plat, float rx, float ry
             } else {
                 dist = sqrtf(qx * qx + qy * qy) - r_clamped;
             }
+            if (dist > 1.0f) continue;
 
-            if (dist > 0.5f) continue;
-            if (fa <= 0.001f && dist <= -1.5f) continue;
-            if (dist <= -1.5f && fa >= 0.999f) {
-                line[x] = ((uint32_t)fr << 16) | ((uint32_t)fg << 8) | (uint32_t)fb;
-                continue;
+            if (dist <= -1.5f && ba <= 0.001f) {
+                if (fa >= 0.999f) {
+                    line[x] = ((uint32_t)fr << 16) | ((uint32_t)fg << 8) | (uint32_t)fb;
+                    continue;
+                }
             }
 
-            float cov = rife_clampf(0.5f - dist, 0.0f, 1.0f);
             uint32_t orig = line[x];
             float ob = (float)(orig & 0xFF);
             float og = (float)((orig >> 8) & 0xFF);
             float or_ = (float)((orig >> 16) & 0xFF);
 
-            float r = fr, g = fg, b = fb, a = fa;
-            if (ba > 0.0f) {
-                float stroke = rife_clampf(1.0f - fabsf(dist + 0.5f), 0.0f, 1.0f);
-                r = rife_lerpf(r, br, stroke);
-                g = rife_lerpf(g, bg, stroke);
-                b = rife_lerpf(b, bb, stroke);
-                a = rife_lerpf(a, ba, stroke);
-            }
-            float eff_a = a * cov;
-            float inv_a = 1.0f - eff_a;
+            float fill_cov = rife_clampf(0.5f - dist, 0.0f, 1.0f);
+            float eff_fa = fa * fill_cov;
+            float cur_r = rife_lerpf(or_, fr, eff_fa);
+            float cur_g = rife_lerpf(og, fg, eff_fa);
+            float cur_b = rife_lerpf(ob, fb, eff_fa);
 
-            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + r * eff_a, 0.0f, 255.0f);
-            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + g * eff_a, 0.0f, 255.0f);
-            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + b * eff_a, 0.0f, 255.0f);
-            line[x] = (nr << 16) | (ng << 8) | nb;
+            if (ba > 0.001f) {
+                float border_dist = fabsf(dist + 0.5f) - 0.5f;
+                float border_cov = rife_clampf(0.5f - border_dist, 0.0f, 1.0f);
+                float eff_ba = ba * border_cov;
+                cur_r = rife_lerpf(cur_r, br, eff_ba);
+                cur_g = rife_lerpf(cur_g, bg, eff_ba);
+                cur_b = rife_lerpf(cur_b, bb, eff_ba);
+            }
+
+            uint32_t final_r = (uint32_t)rife_clampf(cur_r, 0.0f, 255.0f);
+            uint32_t final_g = (uint32_t)rife_clampf(cur_g, 0.0f, 255.0f);
+            uint32_t final_b = (uint32_t)rife_clampf(cur_b, 0.0f, 255.0f);
+            line[x] = (final_r << 16) | (final_g << 8) | final_b;
         }
     }
 }
 
-void rife_draw_procedural_icon_direct(HDC hdc, float x, float y, float size, uint32_t col_top, uint32_t col_bot, const char* glyph, HICON custom_icon, bool force_native) {
-    if (force_native && custom_icon) {
-        DrawIconEx(hdc, (int)(x + (size - 32.0f) * 0.5f), (int)(y + (size - 32.0f) * 0.5f), custom_icon, 32, 32, 0, NULL, DI_NORMAL);
-        return;
+// -------------------------------------------------------------
+// 环形扇面、圆与线段亚像素混合
+// -------------------------------------------------------------
+static void rife_blend_circle_pixels(AppContext* app, float cx, float cy, float radius, uint32_t color, uint32_t border_color) {
+    if (!app || !app->pixels || radius <= 0.0f) return;
+    int x0 = (int)floorf(cx - radius - 1.5f);
+    int y0 = (int)floorf(cy - radius - 1.5f);
+    int x1 = (int)ceilf(cx + radius + 1.5f);
+    int y1 = (int)ceilf(cy + radius + 1.5f);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > app->win_width) x1 = app->win_width;
+    if (y1 > app->win_height) y1 = app->win_height;
+
+    RECT clip_rc;
+    if (GetClipBox(app->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+        if (x0 < clip_rc.left) x0 = clip_rc.left;
+        if (y0 < clip_rc.top) y0 = clip_rc.top;
+        if (x1 > clip_rc.right) x1 = clip_rc.right;
+        if (y1 > clip_rc.bottom) y1 = clip_rc.bottom;
     }
+    if (x0 >= x1 || y0 >= y1) return;
 
-    int r = (int)(size * 0.24f);
-    SetDCPenColor(hdc, RGB(255, 255, 255));
-    SetDCBrushColor(hdc, RGB((col_bot >> 24) & 0xFF, (col_bot >> 16) & 0xFF, (col_bot >> 8) & 0xFF));
-    RoundRect(hdc, (int)x, (int)y, (int)(x + size), (int)(y + size), r, r);
+    float fr = (float)((color >> 24) & 0xFF);
+    float fg = (float)((color >> 16) & 0xFF);
+    float fb = (float)((color >> 8) & 0xFF);
+    float fa = (float)(color & 0xFF) / 255.0f;
 
-    SetDCPenColor(hdc, RGB((col_top >> 24) & 0xFF, (col_top >> 16) & 0xFF, (col_top >> 8) & 0xFF));
-    SetDCBrushColor(hdc, RGB((col_top >> 24) & 0xFF, (col_top >> 16) & 0xFF, (col_top >> 8) & 0xFF));
-    RoundRect(hdc, (int)(x + 1.0f), (int)(y + 1.0f), (int)(x + size - 1.0f), (int)(y + size * 0.48f), r - 2, r - 2);
+    float br = (float)((border_color >> 24) & 0xFF);
+    float bg = (float)((border_color >> 16) & 0xFF);
+    float bb = (float)((border_color >> 8) & 0xFF);
+    float ba = (float)(border_color & 0xFF) / 255.0f;
 
-    // 顶部 1px 晶莹高光线 (Pebble Sheen)
-    SetDCPenColor(hdc, RGB(255, 255, 255));
-    MoveToEx(hdc, (int)(x + (float)r * 0.7f), (int)(y + 1.0f), NULL);
-    LineTo(hdc, (int)(x + size - (float)r * 0.7f), (int)(y + 1.0f));
+    int width = app->win_width;
+    float r_sq_max = (radius + 1.5f) * (radius + 1.5f);
 
-    if (custom_icon) {
-        DrawIconEx(hdc, (int)(x + (size - 24.0f) * 0.5f), (int)(y + (size - 24.0f) * 0.5f), custom_icon, 24, 24, 0, NULL, DI_NORMAL);
-    }
-    else if (glyph && glyph[0]) {
-        SetTextColor(hdc, RGB(255, 255, 255));
-        SetBkMode(hdc, TRANSPARENT);
-        wchar_t wglyph[16] = { 0 };
-        MultiByteToWideChar(CP_UTF8, 0, glyph, -1, wglyph, 16);
-        RECT rc = { (int)x, (int)y, (int)(x + size), (int)(y + size) };
-        DrawTextW(hdc, wglyph, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    for (int y = y0; y < y1; y++) {
+        float py = (float)y + 0.5f;
+        uint32_t* line = &app->pixels[y * width];
+        for (int x = x0; x < x1; x++) {
+            float px = (float)x + 0.5f;
+            float d_sq = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+            if (d_sq > r_sq_max) continue;
+
+            float d = sqrtf(d_sq) - radius;
+            float cov = rife_clampf(0.5f - d, 0.0f, 1.0f);
+            if (cov <= 0.0f) continue;
+
+            uint32_t orig = line[x];
+            float ob = (float)(orig & 0xFF);
+            float og = (float)((orig >> 8) & 0xFF);
+            float or_ = (float)((orig >> 16) & 0xFF);
+
+            float eff_fa = fa * cov;
+            float cur_r = rife_lerpf(or_, fr, eff_fa);
+            float cur_g = rife_lerpf(og, fg, eff_fa);
+            float cur_b = rife_lerpf(ob, fb, eff_fa);
+
+            if (ba > 0.001f) {
+                float border_dist = fabsf(d + 0.5f) - 0.5f;
+                float border_cov = rife_clampf(0.5f - border_dist, 0.0f, 1.0f);
+                float eff_ba = ba * border_cov;
+                cur_r = rife_lerpf(cur_r, br, eff_ba);
+                cur_g = rife_lerpf(cur_g, bg, eff_ba);
+                cur_b = rife_lerpf(cur_b, bb, eff_ba);
+            }
+
+            line[x] = ((uint32_t)rife_clampf(cur_r, 0.0f, 255.0f) << 16) |
+                      ((uint32_t)rife_clampf(cur_g, 0.0f, 255.0f) << 8)  |
+                       (uint32_t)rife_clampf(cur_b, 0.0f, 255.0f);
+        }
     }
 }
 
-static void rife_draw_resize_arrow_hint(HDC hdc, float mx, float my, int dir) {
-    if (dir <= 0) return;
-    float bx = mx + 12.0f;
-    float by = my + 12.0f;
-    float bw = 24.0f;
-    float bh = 24.0f;
+static void rife_draw_line_capsule_pixels(AppContext* app, float x1, float y1, float x2, float y2, float thickness, uint32_t color) {
+    if (!app || !app->pixels || thickness <= 0.0f) return;
+    float radius = thickness * 0.5f;
+    float min_x = (x1 < x2 ? x1 : x2) - radius - 1.5f;
+    float max_x = (x1 > x2 ? x1 : x2) + radius + 1.5f;
+    float min_y = (y1 < y2 ? y1 : y2) - radius - 1.5f;
+    float max_y = (y1 > y2 ? y1 : y2) + radius + 1.5f;
 
-    SetDCPenColor(hdc, RGB(226, 232, 240));
-    SetDCBrushColor(hdc, RGB(15, 23, 42));
-    RoundRect(hdc, (int)bx, (int)by, (int)(bx + bw), (int)(by + bh), 8, 8);
+    int x0 = (int)floorf(min_x);
+    int y0 = (int)floorf(min_y);
+    int ix1 = (int)ceilf(max_x);
+    int iy1 = (int)ceilf(max_y);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (ix1 > app->win_width) ix1 = app->win_width;
+    if (iy1 > app->win_height) iy1 = app->win_height;
 
-    HPEN pen = (HPEN)GetStockObject(DC_PEN);
-    SetDCPenColor(hdc, RGB(56, 189, 248));
-    HPEN old_pen = (HPEN)SelectObject(hdc, pen);
-
-    float cx = bx + 12.0f;
-    float cy = by + 12.0f;
-
-    if (((dir & 1) && (dir & 4)) || ((dir & 2) && (dir & 8))) {
-        MoveToEx(hdc, (int)(cx - 5), (int)(cy - 5), NULL); LineTo(hdc, (int)(cx + 5), (int)(cy + 5));
-        MoveToEx(hdc, (int)(cx - 5), (int)(cy - 2), NULL); LineTo(hdc, (int)(cx - 5), (int)(cy - 5)); LineTo(hdc, (int)(cx - 2), (int)(cy - 5));
-        MoveToEx(hdc, (int)(cx + 5), (int)(cy + 2), NULL); LineTo(hdc, (int)(cx + 5), (int)(cy + 5)); LineTo(hdc, (int)(cx + 2), (int)(cy + 5));
+    RECT clip_rc;
+    if (GetClipBox(app->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+        if (x0 < clip_rc.left) x0 = clip_rc.left;
+        if (y0 < clip_rc.top) y0 = clip_rc.top;
+        if (ix1 > clip_rc.right) ix1 = clip_rc.right;
+        if (iy1 > clip_rc.bottom) iy1 = clip_rc.bottom;
     }
-    else if (((dir & 2) && (dir & 4)) || ((dir & 1) && (dir & 8))) {
-        MoveToEx(hdc, (int)(cx + 5), (int)(cy - 5), NULL); LineTo(hdc, (int)(cx - 5), (int)(cy + 5));
-        MoveToEx(hdc, (int)(cx + 5), (int)(cy - 2), NULL); LineTo(hdc, (int)(cx + 5), (int)(cy - 5)); LineTo(hdc, (int)(cx + 2), (int)(cy - 5));
-        MoveToEx(hdc, (int)(cx - 5), (int)(cy + 2), NULL); LineTo(hdc, (int)(cx - 5), (int)(cy + 5)); LineTo(hdc, (int)(cx - 2), (int)(cy + 5));
-    }
-    else if (dir & 3) {
-        MoveToEx(hdc, (int)(cx - 6), (int)cy, NULL); LineTo(hdc, (int)(cx + 6), (int)cy);
-        MoveToEx(hdc, (int)(cx - 3), (int)(cy - 3), NULL); LineTo(hdc, (int)(cx - 6), (int)cy); LineTo(hdc, (int)(cx - 3), (int)(cy + 3));
-        MoveToEx(hdc, (int)(cx + 3), (int)(cy - 3), NULL); LineTo(hdc, (int)(cx + 6), (int)cy); LineTo(hdc, (int)(cx + 3), (int)(cy + 3));
-    }
-    else if (dir & 12) {
-        MoveToEx(hdc, (int)cx, (int)(cy - 6), NULL); LineTo(hdc, (int)cx, (int)(cy + 6));
-        MoveToEx(hdc, (int)(cx - 3), (int)(cy - 3), NULL); LineTo(hdc, (int)cx, (int)(cy - 6)); LineTo(hdc, (int)(cx + 3), (int)(cy - 3));
-        MoveToEx(hdc, (int)(cx - 3), (int)(cy + 3), NULL); LineTo(hdc, (int)cx, (int)(cy + 6)); LineTo(hdc, (int)(cx + 3), (int)(cy + 3));
-    }
+    if (x0 >= ix1 || y0 >= iy1) return;
 
-    SelectObject(hdc, old_pen);
-}
+    float fr = (float)((color >> 24) & 0xFF);
+    float fg = (float)((color >> 16) & 0xFF);
+    float fb = (float)((color >> 8) & 0xFF);
+    float fa = (float)(color & 0xFF) / 255.0f;
 
-void rife_render_flush(RifeCore* core) {
-    Win32Platform* plat = (Win32Platform*)core->platform_data;
-    if (!plat || !plat->hdc_mem || !plat->pixels) return;
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float l2 = dx * dx + dy * dy;
+    int width = app->win_width;
 
-    RifeSystemConfig* cfg = rife_get_system_config();
-
-    if (cfg->font_scale != plat->current_font_scale) {
-        update_system_fonts(plat, cfg->font_scale);
-    }
-
-    bool specular_rim = cfg->specular_rim;
-    float glass_alpha = cfg->glass_alpha;
-    bool force_native_ico = (cfg->icon_style == ICON_STYLE_NATIVE_ICO);
-    bool is_zh = (cfg->language == LANG_ZH_CN);
-    bool is_obsidian = (cfg->palette == PALETTE_OBSIDIAN);
-
-    apply_desktop_mode(plat, cfg->desktop_mode);
-
-    HDC hdc_win = GetDC(plat->hwnd);
-    rife_render_gemini_light_field(core, plat, cfg);
-
-    float ww = (float)plat->win_width;
-    float wh = (float)plat->win_height;
-    float mx = core->input.mouse_x;
-    float my = core->input.mouse_y;
-
-    if (plat->snap_preview) {
-        rife_draw_subpixel_liquid_glass(plat, 8.0f, 8.0f, ww - 16.0f, wh - 16.0f, 16.0f, 0.40f, true, true, 0xFFFFFF);
-    }
-
-    int bg_count = 0;
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        if (plat->windows[i].inst && !plat->windows[i].is_open && plat->windows[i].is_minimized) {
-            bg_count++;
-        }
-    }
-
-    float tasks_w = (bg_count > 0) ? ((float)bg_count * 38.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
-    if (bg_count >= 2) tasks_w += 32.0f;
-    float needed_w = 110.0f + tasks_w + 24.0f;
-    float exp_w = ww * 0.36f;
-    if (exp_w < needed_w) exp_w = needed_w;
-    if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
-
-    float col_size = 22.0f;
-    float col_h = 22.0f;
-    float orig_x = (ww - col_size) * 0.5f;
-    float orig_y = 10.0f;
-
-    float exp_h = 42.0f; // 始终维持经典 42px 高度，回归优雅的横向流体云布局
-
-    float cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
-    float cloud_h = rife_lerpf(col_h, exp_h, plat->cloud_anim);
-    float cloud_x = (ww - cloud_w) * 0.5f;
-    float cloud_y = 10.0f;
-    float cloud_r = (plat->cloud_anim > 0.15f) ? 14.0f : (cloud_h * 0.5f);
-    bool cloud_hvr = (mx >= cloud_x && mx <= cloud_x + cloud_w && my >= cloud_y && my <= cloud_y + cloud_h);
-
-    // 1. ColorOS 风格流体云：未展开抽屉时在顶部常驻
-    if (plat->drawer_anim < 0.99f) {
-        float c_alpha = 0.82f;
-        if (is_obsidian || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) c_alpha = 0.92f;
-        else if (cfg->cloud_color == CLOUD_COLOR_AZURE) c_alpha = 0.88f;
-
-        // 根据光场流体色彩设置联动流体云材质底色 (Paletted Glass Substrate)
-        uint32_t cloud_tint = 0xFFFFFF;
-        if (is_obsidian || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN) {
-            cloud_tint = 0x161122; // 深度曜石暗晶黑紫 (Deep Smoked Obsidian Dark Glass)
-        }
-        else if (cfg->palette == PALETTE_SUNSET || cfg->cloud_color == CLOUD_COLOR_VIOLET) {
-            cloud_tint = 0xFFEADB; // 日落暖橙金
-        }
-        else if (cfg->palette == PALETTE_CYBER || cfg->cloud_color == CLOUD_COLOR_AZURE) {
-            cloud_tint = 0xD9EFFF; // 极客霓虹冰蓝
-        }
-        else {
-            cloud_tint = 0xDEFAF8; // 双子星极光晶白青
-        }
-        rife_draw_subpixel_liquid_glass(plat, cloud_x, cloud_y, cloud_w, cloud_h, cloud_r, c_alpha, cloud_hvr || plat->cloud_expanded, specular_rim, cloud_tint);
-
-        // 仿生非对称呼吸灯 (与光场色彩预设同步联动)
-        if (plat->cloud_anim < 0.25f) {
-            float cx = cloud_x + cloud_w * 0.5f;
-            float cy = cloud_y + cloud_h * 0.5f;
-            float norm_breath = (expf(sinf(plat->breath_t)) - 0.367879f) / 2.350402f;
-            float m_dist = sqrtf((mx - cx) * (mx - cx) + (my - cy) * (my - cy));
-            float sense_boost = (m_dist < 80.0f) ? (1.0f - m_dist / 80.0f) * 0.16f : 0.0f;
-            float breath = rife_clampf(norm_breath + sense_boost, 0.0f, 1.0f);
-
-            uint32_t fill_col, border_col;
-            float target_r, target_g, target_b;
-
-            BreathColorType bc = cfg->breath_color;
-            if (cfg->palette == PALETTE_OBSIDIAN) bc = BREATH_COLOR_VIOLET;
-            else if (cfg->palette == PALETTE_SUNSET) bc = BREATH_COLOR_AMBER;
-            else if (cfg->palette == PALETTE_CYBER) bc = BREATH_COLOR_AZURE;
-            else if (cfg->palette == PALETTE_GEMINI && cfg->breath_color == BREATH_COLOR_EMERALD) bc = BREATH_COLOR_CYAN;
-
-            switch (bc) {
-            case BREATH_COLOR_CYAN:
-                fill_col = 0x06B6D4; border_col = 0x67E8F9;
-                target_r = 6.0f; target_g = 182.0f; target_b = 212.0f; break;
-            case BREATH_COLOR_AZURE:
-                fill_col = 0x3B82F6; border_col = 0x93C5FD;
-                target_r = 59.0f; target_g = 130.0f; target_b = 246.0f; break;
-            case BREATH_COLOR_AMBER:
-                fill_col = 0xF59E0B; border_col = 0xFDE68A;
-                target_r = 245.0f; target_g = 158.0f; target_b = 11.0f; break;
-            case BREATH_COLOR_VIOLET:
-                fill_col = 0xA855F7; border_col = 0xE9D5FF;
-                target_r = 168.0f; target_g = 85.0f; target_b = 247.0f; break;
-            case BREATH_COLOR_EMERALD:
-            default:
-                fill_col = 0x22C55E; border_col = 0x86EFAC;
-                target_r = 34.0f; target_g = 245.0f; target_b = 142.0f; break;
-            }
-
-            float halo_r = 12.0f;
-            int h_x0 = (int)(cx - halo_r); if (h_x0 < 0) h_x0 = 0;
-            int h_x1 = (int)(cx + halo_r + 1.0f); if (h_x1 > plat->win_width) h_x1 = plat->win_width;
-            int h_y0 = (int)(cy - halo_r); if (h_y0 < 0) h_y0 = 0;
-            int h_y1 = (int)(cy + halo_r + 1.0f); if (h_y1 > plat->win_height) h_y1 = plat->win_height;
-
-            float glow_intensity = 0.18f + 0.72f * breath;
-            float inv_halo_sq = 1.0f / (halo_r * halo_r);
-            for (int gy = h_y0; gy < h_y1; gy++) {
-                uint32_t* line = &plat->pixels[gy * plat->win_width];
-                float py = (float)gy + 0.5f;
-                float dy = py - cy;
-                float dy_sq = dy * dy;
-                for (int gx = h_x0; gx < h_x1; gx++) {
-                    float px = (float)gx + 0.5f;
-                    float dx = px - cx;
-                    float d_sq = dx * dx + dy_sq;
-                    if (d_sq < halo_r * halo_r) {
-                        float factor = expf(-3.2f * d_sq * inv_halo_sq) * glow_intensity;
-                        uint32_t pix = line[gx];
-                        float b = (float)(pix & 0xFF);
-                        float g = (float)((pix >> 8) & 0xFF);
-                        float r = (float)((pix >> 16) & 0xFF);
-
-                        r += (target_r - r) * factor * 0.40f;
-                        g += (target_g - g) * factor * 0.88f;
-                        b += (target_b - b) * factor * 0.45f;
-
-                        line[gx] = ((uint32_t)rife_clampf(r, 0, 255) << 16) |
-                            ((uint32_t)rife_clampf(g, 0, 255) << 8) |
-                            (uint32_t)rife_clampf(b, 0, 255);
-                    }
-                }
-            }
-
-            float core_r = 3.4f + 6.2f * breath;
-            rife_draw_subpixel_circle(plat, cx, cy, core_r, fill_col, border_col);
-            if (breath > 0.28f) {
-                float white_r = (breath - 0.28f) * 2.5f;
-                rife_draw_subpixel_circle(plat, cx, cy - 0.4f, white_r, 0xFFFFFF, 0xFFFFFF);
-            }
-
-            // 微球吞噬光子扩散波 (Photonic Absorption Ripple Ring)
-            if (plat->absorption_ripple_t > 0.01f) {
-                float rip_progress = 1.0f - plat->absorption_ripple_t;
-                float ring_r = 9.0f + rip_progress * 26.0f;
-                float ring_w = 2.4f;
-                float rip_alpha = plat->absorption_ripple_t * 0.75f;
-                int rx0 = (int)floorf(cx - ring_r - ring_w - 1.0f);
-                int ry0 = (int)floorf(cy - ring_r - ring_w - 1.0f);
-                int rx1 = (int)ceilf(cx + ring_r + ring_w + 1.0f);
-                int ry1 = (int)ceilf(cy + ring_r + ring_w + 1.0f);
-                if (rx0 < 0) rx0 = 0;
-                if (ry0 < 0) ry0 = 0;
-                if (rx1 > plat->win_width) rx1 = plat->win_width;
-                if (ry1 > plat->win_height) ry1 = plat->win_height;
-                for (int ry = ry0; ry < ry1; ry++) {
-                    float py = (float)ry + 0.5f;
-                    float dy = py - cy;
-                    uint32_t* rline = &plat->pixels[ry * plat->win_width];
-                    for (int rx = rx0; rx < rx1; rx++) {
-                        float px = (float)rx + 0.5f;
-                        float dx = px - cx;
-                        float dist = sqrtf(dx * dx + dy * dy);
-                        float delta = fabsf(dist - ring_r);
-                        if (delta < ring_w) {
-                            float factor = (1.0f - delta / ring_w) * rip_alpha;
-                            uint32_t pix = rline[rx];
-                            float b = (float)(pix & 0xFF);
-                            float g = (float)((pix >> 8) & 0xFF);
-                            float r = (float)((pix >> 16) & 0xFF);
-                            r += (target_r - r) * factor;
-                            g += (target_g - g) * factor;
-                            b += (target_b - b) * factor;
-                            rline[rx] = ((uint32_t)rife_clampf(r, 0.0f, 255.0f) << 16) |
-                                        ((uint32_t)rife_clampf(g, 0.0f, 255.0f) << 8) |
-                                        (uint32_t)rife_clampf(b, 0.0f, 255.0f);
-                        }
-                    }
-                }
-            }
-        }
-
-        if (plat->cloud_anim > 0.35f) {
-            // 左侧：三色控制圆钮 (关闭/最小化/全屏，与之前经典流体云一致)
-            float ly = cloud_y + cloud_h * 0.5f;
-            rife_draw_subpixel_circle(plat, cloud_x + 24.0f, ly, 5.5f, 0xFF5F56, 0xE0443E);
-            rife_draw_subpixel_circle(plat, cloud_x + 44.0f, ly, 5.5f, 0xFFBD2E, 0xDEA123);
-            rife_draw_subpixel_circle(plat, cloud_x + 64.0f, ly, 5.5f, 0x27C93F, 0x1AAB29);
-
-            // 右侧：从右往左排列后台任务胶囊底板
-            if (bg_count > 0) {
-                float cur_right = cloud_x + cloud_w - 10.0f;
-                for (size_t i = 0; i < g_installed_app_count; i++) {
-                    ActiveWindow* win = &plat->windows[i];
-                    if (!win->inst || win->is_open || !win->is_minimized) continue;
-
-                    float task_w = 38.0f;
-                    float task_h = 28.0f;
-                    float task_x = cur_right - task_w;
-                    float task_y = cloud_y + (cloud_h - task_h) * 0.5f;
-                    bool is_task_hvr = (mx >= task_x && mx <= task_x + task_w && my >= task_y && my <= task_y + task_h);
-
-                    rife_draw_subpixel_liquid_glass(plat, task_x, task_y, task_w, task_h, 8.0f,
-                        is_obsidian ? 0.90f : 0.85f, is_task_hvr, specular_rim, is_obsidian ? 0x221836 : 0xF8FAFC);
-
-                    cur_right -= (task_w + 6.0f);
-                }
-
-                if (bg_count >= 2) {
-                    float clr_w = 26.0f;
-                    float clr_h = 28.0f;
-                    float clr_x = cur_right - clr_w;
-                    float clr_y = cloud_y + (cloud_h - clr_h) * 0.5f;
-                    bool is_clr_hvr = (mx >= clr_x && mx <= clr_x + clr_w && my >= clr_y && my <= clr_y + clr_h);
-                    rife_draw_subpixel_liquid_glass(plat, clr_x, clr_y, clr_w, clr_h, 8.0f,
-                        is_obsidian ? 0.88f : 0.82f, is_clr_hvr, specular_rim, is_obsidian ? 0x2a1b38 : 0xEFF6FF);
-                }
-            }
-        }
-    }
-
-    // 2. 应用抽屉：从顶部流体云向下展开 (~1/3 屏幕面积)
-    if (plat->drawer_anim > 0.01f) {
-        float dw_w = ww * 0.60f;
-        if (dw_w < 360.0f) dw_w = 360.0f;
-        float dw_h = wh * 0.56f;
-        if (dw_h < 240.0f) dw_h = 240.0f;
-        float target_dw_x = (ww - dw_w) * 0.5f;
-        float target_dw_y = (wh - dw_h) * 0.44f;
-
-        float ease = rife_smootherstep(plat->drawer_anim);
-
-        float cur_dw_x = rife_lerpf(orig_x, target_dw_x, ease);
-        float cur_dw_y = rife_lerpf(orig_y, target_dw_y, ease);
-        float cur_dw_w = rife_lerpf(col_size, dw_w, ease);
-        float cur_dw_h = rife_lerpf(col_size, dw_h, ease);
-        float cur_dw_r = rife_lerpf(col_size * 0.5f, 22.0f, ease);
-
-        rife_draw_subpixel_liquid_glass(plat, cur_dw_x, cur_dw_y, cur_dw_w, cur_dw_h, cur_dw_r, is_obsidian ? 0.94f : 0.90f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
-    }
-
-    // 3. 应用窗口：从顶部流体云双向缩放展开/缩回 (活动窗口后绘制置顶)
-    for (int pass = 0; pass < 2; pass++) {
-        for (size_t i = 0; i < g_installed_app_count; i++) {
-            bool is_active = ((int)i == plat->active_win_idx);
-            if ((pass == 0 && is_active) || (pass == 1 && !is_active)) continue;
-
-            ActiveWindow* win = &plat->windows[i];
-            if (!win->inst || win->anim < 0.01f) continue;
-            // 桌面实时预览态：暂停绘制桌面已开窗口底板 (Aero Peek 体验，避免与预览窗口重叠穿透)
-            if (plat->preview_win_idx >= 0) continue;
-
-            float target_x = win->is_maximized ? 0.0f : win->x;
-            float target_y = win->is_maximized ? 0.0f : win->y;
-            float target_w = win->is_maximized ? ww : win->w;
-            float target_h = win->is_maximized ? wh : win->h;
-            float target_r = win->is_maximized ? 0.0f : 22.0f;
-
-            float cur_x, cur_y, cur_w, cur_h, cur_r;
-            if (win->anim >= 0.999f) {
-                cur_x = target_x;
-                cur_y = target_y;
-                cur_w = target_w;
-                cur_h = target_h;
-                cur_r = target_r;
+    for (int y = y0; y < iy1; y++) {
+        float py = (float)y + 0.5f;
+        uint32_t* line = &app->pixels[y * width];
+        for (int x = x0; x < ix1; x++) {
+            float px = (float)x + 0.5f;
+            float dist;
+            if (l2 == 0.0f) {
+                dist = sqrtf((px - x1) * (px - x1) + (py - y1) * (py - y1)) - radius;
             } else {
-                float ease = rife_smootherstep(win->anim);
-                cur_x = floorf(rife_lerpf(orig_x, target_x, ease));
-                cur_y = floorf(rife_lerpf(orig_y, target_y, ease));
-                cur_w = floorf(rife_lerpf(col_size, target_w, ease));
-                cur_h = floorf(rife_lerpf(col_size, target_h, ease));
-                cur_r = rife_lerpf(col_size * 0.5f, target_r, ease);
+                float t = ((px - x1) * dx + (py - y1) * dy) / l2;
+                t = rife_clampf(t, 0.0f, 1.0f);
+                float proj_x = x1 + t * dx;
+                float proj_y = y1 + t * dy;
+                dist = sqrtf((px - proj_x) * (px - proj_x) + (py - proj_y) * (py - proj_y)) - radius;
             }
+            if (dist > 1.0f) continue;
+            float cov = rife_clampf(0.5f - dist, 0.0f, 1.0f);
+            if (cov <= 0.0f) continue;
 
-            rife_draw_subpixel_liquid_glass(plat, cur_x, cur_y, cur_w, cur_h, cur_r, is_obsidian ? 0.96f : 0.94f, false, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
+            uint32_t orig = line[x];
+            float ob = (float)(orig & 0xFF);
+            float og = (float)((orig >> 8) & 0xFF);
+            float or_ = (float)((orig >> 16) & 0xFF);
+
+            float eff_a = fa * cov;
+            line[x] = ((uint32_t)rife_clampf(rife_lerpf(or_, fr, eff_a), 0.0f, 255.0f) << 16) |
+                      ((uint32_t)rife_clampf(rife_lerpf(og, fg, eff_a), 0.0f, 255.0f) << 8)  |
+                       (uint32_t)rife_clampf(rife_lerpf(ob, fb, eff_a), 0.0f, 255.0f);
         }
     }
+}
 
-    // 3.5 桌面实时预览窗口底板 (当鼠标悬停在流体云后台任务胶囊时在桌面呈现)
-    if (plat->preview_win_idx >= 0 && plat->preview_win_idx < (int)g_installed_app_count) {
-        ActiveWindow* pwin = &plat->windows[plat->preview_win_idx];
-        if (pwin->inst && !pwin->is_open) {
-            float pw = (pwin->w > 100.0f) ? pwin->w : (ww * 0.7f);
-            float ph = (pwin->h > 100.0f) ? pwin->h : (wh * 0.7f);
-            float px = pwin->is_maximized ? 0.0f : (pwin->x > 0.0f ? pwin->x : (ww - pw) * 0.5f);
-            float py = pwin->is_maximized ? 56.0f : pwin->y;
-            if (py < 56.0f) py = 56.0f; // 保护顶部流体云，防止重叠
-            if (pwin->is_maximized) ph = wh - 56.0f;
-            float pr = pwin->is_maximized ? 0.0f : 22.0f;
+static void rife_blend_arc_sector_pixels(AppContext* app, float cx, float cy, float r_in, float r_out, float ang_start, float ang_end, uint32_t color, uint32_t border_color) {
+    if (!app || !app->pixels || r_out <= r_in || r_in < 0.0f) return;
+    int x0 = (int)floorf(cx - r_out - 1.5f);
+    int y0 = (int)floorf(cy - r_out - 1.5f);
+    int x1 = (int)ceilf(cx + r_out + 1.5f);
+    int y1 = (int)ceilf(cy + r_out + 1.5f);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > app->win_width) x1 = app->win_width;
+    if (y1 > app->win_height) y1 = app->win_height;
 
-            rife_draw_subpixel_liquid_glass(plat, px, py, pw, ph, pr, is_obsidian ? 0.95f : 0.92f, true, true, is_obsidian ? 0x161122 : 0xFFFFFF);
-        }
+    RECT clip_rc;
+    if (GetClipBox(app->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
+        if (x0 < clip_rc.left) x0 = clip_rc.left;
+        if (y0 < clip_rc.top) y0 = clip_rc.top;
+        if (x1 > clip_rc.right) x1 = clip_rc.right;
+        if (y1 > clip_rc.bottom) y1 = clip_rc.bottom;
     }
+    if (x0 >= x1 || y0 >= y1) return;
 
-    // 4. 桌面快捷方式
-    for (size_t i = 0; i < plat->shortcut_count; i++) {
-        DesktopShortcut* sc = &plat->shortcuts[i];
-        bool hvr = (mx >= sc->x && mx <= sc->x + 76.0f && my >= sc->y && my <= sc->y + 80.0f);
-        rife_draw_subpixel_liquid_glass(plat, sc->x, sc->y, 76.0f, 80.0f, 16.0f, is_obsidian ? 0.88f : glass_alpha, hvr, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
-    }
+    float fr = (float)((color >> 24) & 0xFF);
+    float fg = (float)((color >> 16) & 0xFF);
+    float fb = (float)((color >> 8) & 0xFF);
+    float fa = (float)(color & 0xFF) / 255.0f;
 
-    // 5. 底部纤细修长 Dock 栏 (固定 44px 高度)
-    float dock_w = ww * (2.0f / 3.0f);
-    if (dock_w < 280.0f) dock_w = 280.0f;
-    float dock_x = (cfg->dock_align == DOCK_ALIGN_RIGHT) ? (ww - dock_w - 24.0f) : ((ww - dock_w) * 0.5f);
-    float resting_y = wh - 52.0f;
-    float active_y = wh - 58.0f;
-    float dock_y = rife_lerpf(resting_y, active_y, plat->dock_anim);
-    bool dock_hvr = (mx >= dock_x && mx <= dock_x + dock_w && my >= dock_y && my <= dock_y + 44.0f);
+    float br = (float)((border_color >> 24) & 0xFF);
+    float bg = (float)((border_color >> 16) & 0xFF);
+    float bb = (float)((border_color >> 8) & 0xFF);
+    float ba = (float)(border_color & 0xFF) / 255.0f;
 
-    rife_draw_subpixel_liquid_glass(plat, dock_x, dock_y, dock_w, 44.0f, 16.0f, is_obsidian ? 0.90f : glass_alpha, dock_hvr, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
+    float span = ang_end - ang_start;
+    while (span < 0.0f) span += 360.0f;
+    bool is_full = (span >= 359.9f);
+    int width = app->win_width;
 
-    GdiFlush();
-    SetBkMode(plat->hdc_mem, TRANSPARENT);
-    SelectObject(plat->hdc_mem, GetStockObject(DC_PEN));
-    SelectObject(plat->hdc_mem, GetStockObject(DC_BRUSH));
+    for (int y = y0; y < y1; y++) {
+        float py = (float)y + 0.5f;
+        float dy = py - cy;
+        uint32_t* line = &app->pixels[y * width];
+        for (int x = x0; x < x1; x++) {
+            float px = (float)x + 0.5f;
+            float dx = px - cx;
+            float r = sqrtf(dx * dx + dy * dy);
 
-    // 6. 右下角水印
-    SelectObject(plat->hdc_mem, plat->hfont_caption);
-    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(167, 139, 250) : RGB(148, 163, 184));
-    rife_draw_text_u8(plat->hdc_mem, (int)(ww - 88.0f), (int)(wh - 14.0f), "Made by Renly");
+            float d_radial = (r < r_in) ? (r_in - r) : ((r > r_out) ? (r - r_out) : 0.0f);
+            if (d_radial > 1.0f) continue;
 
-    // 7.0 流体云后台任务内容渲染 (GDI 文字与图标)
-    if (plat->drawer_anim < 0.99f) {
-        if (plat->cloud_anim > 0.35f) {
-            // 展开流体云模式：纯净流体玻璃与纯图符胶囊 (零冗余文字)
-            // 右侧：从右往左依次挂载后台任务紧凑图符胶囊
-            if (bg_count > 0) {
-                float cur_right = cloud_x + cloud_w - 10.0f;
-                for (size_t i = 0; i < g_installed_app_count; i++) {
-                    ActiveWindow* win = &plat->windows[i];
-                    if (!win->inst || win->is_open || !win->is_minimized) continue;
+            float cov_radial = (r < r_in) ? rife_clampf(0.5f - d_radial, 0.0f, 1.0f) :
+                              ((r > r_out) ? rife_clampf(0.5f - d_radial, 0.0f, 1.0f) : 1.0f);
 
-                    float task_w = 38.0f;
-                    float task_h = 28.0f;
-                    float task_x = cur_right - task_w;
-                    float task_y = cloud_y + (cloud_h - task_h) * 0.5f;
+            float cov_ang = 1.0f;
+            if (!is_full) {
+                float a = atan2f(dx, -dy) * (180.0f / 3.1415926535f);
+                if (a < 0.0f) a += 360.0f;
+                float rel_a = a - ang_start;
+                while (rel_a < 0.0f) rel_a += 360.0f;
+                while (rel_a >= 360.0f) rel_a -= 360.0f;
 
-                    // 应用原生图符 (20x20，例如 Rt / Rc)
-                    rife_draw_procedural_icon_direct(plat->hdc_mem, task_x + 3.0f, task_y + 4.0f, 20.0f,
-                        win->plugin->color_top, win->plugin->color_bot, win->plugin->glyph, NULL, false);
-
-                    // 关闭图符 × (悬停红显，纯符无字)
-                    bool close_hvr = (mx >= task_x + task_w - 14.0f && mx <= task_x + task_w &&
-                                      my >= task_y && my <= task_y + task_h);
-                    SelectObject(plat->hdc_mem, plat->hfont_sm);
-                    SetTextColor(plat->hdc_mem, close_hvr ? RGB(239, 68, 68) : (is_obsidian ? RGB(156, 163, 175) : RGB(148, 163, 184)));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(task_x + task_w - 12.0f), (int)(task_y + 6.0f), "×");
-
-                    cur_right -= (task_w + 6.0f);
-                }
-
-                if (bg_count >= 2) {
-                    float clr_w = 26.0f;
-                    float clr_h = 28.0f;
-                    float clr_x = cur_right - clr_w;
-                    float clr_y = cloud_y + (cloud_h - clr_h) * 0.5f;
-                    bool is_clr_hvr = (mx >= clr_x && mx <= clr_x + clr_w && my >= clr_y && my <= clr_y + clr_h);
-                    
-                    // 绘制纯净无字几何清理图符 (Clear All Procedural Icon)
-                    HPEN hpen = CreatePen(PS_SOLID, 2, is_clr_hvr ? RGB(239, 68, 68) : (is_obsidian ? RGB(167, 139, 250) : RGB(99, 102, 241)));
-                    HPEN old_pen = (HPEN)SelectObject(plat->hdc_mem, hpen);
-                    int cx = (int)(clr_x + clr_w * 0.5f);
-                    int cy = (int)(clr_y + clr_h * 0.5f);
-                    MoveToEx(plat->hdc_mem, cx - 4, cy - 4, NULL);
-                    LineTo(plat->hdc_mem, cx + 5, cy + 5);
-                    MoveToEx(plat->hdc_mem, cx + 4, cy - 4, NULL);
-                    LineTo(plat->hdc_mem, cx - 5, cy + 5);
-                    SelectObject(plat->hdc_mem, old_pen);
-                    DeleteObject(hpen);
+                if (rel_a > span) {
+                    float diff_edge = fminf(rel_a - span, 360.0f - rel_a);
+                    float d_arc = r * (diff_edge * (3.1415926535f / 180.0f));
+                    cov_ang = rife_clampf(0.5f - d_arc, 0.0f, 1.0f);
+                    if (cov_ang <= 0.0f) continue;
                 }
             }
-        }
-    }
 
-    // 7. 桌面快捷方式文字
-    SelectObject(plat->hdc_mem, plat->hfont_sm);
-    for (size_t i = 0; i < plat->shortcut_count; i++) {
-        DesktopShortcut* sc = &plat->shortcuts[i];
-        rife_draw_procedural_icon_direct(plat->hdc_mem, sc->x + 20.0f, sc->y + 12.0f, 36.0f,
-            sc->color_top, sc->color_bot, "D", sc->custom_icon, force_native_ico);
+            float final_cov = cov_radial * cov_ang;
+            if (final_cov <= 0.0f) continue;
 
-        char disp[16];
-        snprintf(disp, sizeof(disp), "%s", sc->name);
-        if (strlen(sc->name) > 8) {
-            disp[7] = '.'; disp[8] = '.'; disp[9] = '.'; disp[10] = '\0';
-        }
-        SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
-        rife_draw_text_u8(plat->hdc_mem, (int)(sc->x + 10.0f), (int)(sc->y + 54.0f), disp);
-    }
+            uint32_t orig = line[x];
+            float ob = (float)(orig & 0xFF);
+            float og = (float)((orig >> 8) & 0xFF);
+            float or_ = (float)((orig >> 16) & 0xFF);
 
-    // 8. 抽屉内容渲染 (自顶部流体云展开时错落倾泻下落)
-    if (plat->drawer_anim > 0.05f) {
-        float dw_w = ww * 0.60f;
-        if (dw_w < 360.0f) dw_w = 360.0f;
-        float dw_h = wh * 0.56f;
-        if (dw_h < 240.0f) dw_h = 240.0f;
-        float cur_dw_x = (ww - dw_w) * 0.5f;
-        float cur_dw_y = (wh - dw_h) * 0.44f;
+            float eff_fa = fa * final_cov;
+            float cur_r = rife_lerpf(or_, fr, eff_fa);
+            float cur_g = rife_lerpf(og, fg, eff_fa);
+            float cur_b = rife_lerpf(ob, fb, eff_fa);
 
-        float orig_cx = orig_x + col_size * 0.5f;
-        float orig_cy = orig_y + col_size * 0.5f;
-
-        if (plat->drawer_anim > 0.18f) {
-            float title_t = rife_clampf((plat->drawer_anim - 0.18f) / 0.82f, 0.0f, 1.0f);
-            float title_ease = rife_smootherstep(title_t);
-            float title_x = rife_lerpf(orig_cx - 40.0f, cur_dw_x + 24.0f, title_ease);
-            float title_y = rife_lerpf(orig_cy, cur_dw_y + 18.0f, title_ease);
-            SelectObject(plat->hdc_mem, plat->hfont_title);
-            SetTextColor(plat->hdc_mem, is_obsidian ? RGB(248, 250, 252) : RGB(15, 23, 42));
-            rife_draw_text_u8(plat->hdc_mem, (int)title_x, (int)title_y, is_zh ? "应用程序抽屉" : "Applications");
-        }
-
-        int cols = 3;
-        float card_w = 110.0f;
-        float card_h = 76.0f;
-        float gap_x = (dw_w - 48.0f - (float)cols * card_w) / (float)(cols - 1);
-
-        for (size_t i = 0; i < g_installed_app_count; i++) {
-            const RifePluginApp* app = g_installed_apps[i];
-            int col = (int)(i % cols);
-            int row = (int)(i / cols);
-            float target_ax = cur_dw_x + 24.0f + (float)col * (card_w + gap_x);
-            float target_ay = cur_dw_y + 54.0f + (float)row * (card_h + 16.0f);
-
-            // 错落多相位级联：每行和每列微延迟
-            float phase_delay = (float)row * 0.08f + (float)col * 0.04f;
-            float raw_card_t = (plat->drawer_anim - phase_delay) / (1.0f - phase_delay);
-            float card_t = rife_clampf(raw_card_t, 0.0f, 1.0f);
-            float card_ease = rife_fluid_elastic_step(card_t);
-
-            if (card_ease <= 0.02f) continue;
-
-            // 喷泉扇形抛物线微弧度
-            float fountain_arc = sinf(3.14159265f * card_ease) * (1.0f - card_ease) * 18.0f;
-            float col_offset = ((float)col - 1.0f) * fountain_arc;
-
-            // 位置自微球中心向目标网格流展
-            float cur_card_w = rife_lerpf(14.0f, card_w, card_ease);
-            float cur_card_h = rife_lerpf(14.0f, card_h, card_ease);
-            float cur_ax = rife_lerpf(orig_cx - cur_card_w * 0.5f, target_ax, card_ease) + col_offset;
-            float cur_ay = rife_lerpf(orig_cy - cur_card_h * 0.5f, target_ay, card_ease);
-
-            // 卡片暗晶柔接触阴影 (Soft AO Shadow)
-            COLORREF shadow_col = is_obsidian ? RGB(10, 8, 18) : RGB(226, 232, 240);
-            SetDCPenColor(plat->hdc_mem, shadow_col);
-            SetDCBrushColor(plat->hdc_mem, shadow_col);
-            RoundRect(plat->hdc_mem, (int)cur_ax, (int)(cur_ay + 2.0f), (int)(cur_ax + cur_card_w), (int)(cur_ay + cur_card_h + 2.0f), (int)(14.0f * card_ease), (int)(14.0f * card_ease));
-
-            bool app_hvr = (mx >= cur_ax && mx <= cur_ax + cur_card_w && my >= cur_ay && my <= cur_ay + cur_card_h);
-            COLORREF border_col = is_obsidian ? RGB(68, 56, 92) : RGB(241, 245, 249);
-            COLORREF body_col = is_obsidian ? (app_hvr ? RGB(45, 38, 62) : RGB(28, 23, 40)) : (app_hvr ? RGB(255, 255, 255) : RGB(248, 250, 252));
-            SetDCPenColor(plat->hdc_mem, border_col);
-            SetDCBrushColor(plat->hdc_mem, body_col);
-            RoundRect(plat->hdc_mem, (int)cur_ax, (int)cur_ay, (int)(cur_ax + cur_card_w), (int)(cur_ay + cur_card_h), (int)(14.0f * card_ease), (int)(14.0f * card_ease));
-
-            // 图标与文字跟随卡片中心自然膨胀展现
-            float icon_scale = rife_clampf((card_t - 0.20f) / 0.80f, 0.0f, 1.0f);
-            if (icon_scale > 0.05f) {
-                float icon_sz = 32.0f * icon_scale;
-                float icon_x = cur_ax + (cur_card_w - icon_sz) * 0.5f;
-                float icon_y = cur_ay + 8.0f * icon_scale;
-                rife_draw_procedural_icon_direct(plat->hdc_mem, icon_x, icon_y, icon_sz,
-                    app->color_top, app->color_bot, app->glyph, NULL, false);
-
-                if (icon_scale > 0.45f) {
-                    SelectObject(plat->hdc_mem, plat->hfont_sm);
-                    SetTextColor(plat->hdc_mem, is_obsidian ? RGB(241, 245, 249) : RGB(15, 23, 42));
-                    rife_draw_text_u8(plat->hdc_mem, (int)(cur_ax + 14.0f), (int)(cur_ay + 48.0f), is_zh ? app->name_zh : app->name_en);
-                }
-            }
-        }
-    }
-
-    // 9. 底部纤细 Dock 内图标居中排布 (32px)
-    int dock_pinned_count = 0;
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        if (g_installed_apps[i]->pin_to_dock) dock_pinned_count++;
-    }
-    int total_dock_items = dock_pinned_count + 1;
-    float item_size = 32.0f;
-    float item_gap = 16.0f;
-    float total_items_w = (float)total_dock_items * item_size + (float)(total_dock_items - 1) * item_gap;
-    float items_start_x = dock_x + (dock_w - total_items_w) * 0.5f;
-
-    int dock_idx = 0;
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        const RifePluginApp* app = g_installed_apps[i];
-        if (!app->pin_to_dock) continue;
-
-        float btn_x = items_start_x + (float)dock_idx * (item_size + item_gap);
-        float btn_y = dock_y + 6.0f;
-        bool btn_hvr = (mx >= btn_x && mx <= btn_x + item_size && my >= btn_y - 3.0f && my <= btn_y + item_size + 3.0f);
-        float off_y = btn_hvr ? -3.0f : 0.0f;
-
-        rife_draw_procedural_icon_direct(plat->hdc_mem, btn_x, btn_y + off_y, item_size,
-            app->color_top, app->color_bot, app->glyph, NULL, false);
-
-        ActiveWindow* win_item = &plat->windows[i];
-        if (win_item->inst) {
-            if (win_item->is_open && win_item->anim > 0.5f) {
-                COLORREF ind_col = is_obsidian ? RGB(167, 139, 250) : RGB(99, 102, 241);
-                SetDCPenColor(plat->hdc_mem, ind_col);
-                SetDCBrushColor(plat->hdc_mem, ind_col);
-                RoundRect(plat->hdc_mem, (int)(btn_x + item_size * 0.5f - 6.0f), (int)(btn_y + item_size + 3.0f),
-                          (int)(btn_x + item_size * 0.5f + 6.0f), (int)(btn_y + item_size + 6.0f), 2, 2);
-            } else if (win_item->is_minimized) {
-                COLORREF ind_col = is_obsidian ? RGB(56, 189, 248) : RGB(14, 165, 233);
-                SetDCPenColor(plat->hdc_mem, ind_col);
-                SetDCBrushColor(plat->hdc_mem, ind_col);
-                RoundRect(plat->hdc_mem, (int)(btn_x + item_size * 0.5f - 2.0f), (int)(btn_y + item_size + 3.0f),
-                          (int)(btn_x + item_size * 0.5f + 3.0f), (int)(btn_y + item_size + 7.0f), 3, 3);
-            }
-        }
-        dock_idx++;
-    }
-
-    // 抽屉触发九宫格图标
-    float all_btn_x = items_start_x + (float)dock_pinned_count * (item_size + item_gap);
-    float all_btn_y = dock_y + 6.0f;
-    bool all_hvr = (mx >= all_btn_x && mx <= all_btn_x + item_size && my >= all_btn_y - 3.0f && my <= all_btn_y + item_size + 3.0f);
-    float all_off_y = all_hvr ? -3.0f : 0.0f;
-
-    rife_draw_subpixel_liquid_glass(plat, all_btn_x, all_btn_y + all_off_y, item_size, item_size, 10.0f, is_obsidian ? 0.88f : 0.82f, all_hvr || plat->drawer_open, specular_rim, is_obsidian ? 0x161122 : 0xFFFFFF);
-
-    float dot_ox = all_btn_x + 8.5f;
-    float dot_oy = all_btn_y + all_off_y + 8.5f;
-    for (int r = 0; r < 3; r++) {
-        for (int c = 0; c < 3; c++) {
-            COLORREF tile_col = (r == 1 && c == 1) ? RGB(168, 85, 247) : (is_obsidian ? RGB(226, 232, 240) : RGB(15, 23, 42));
-            SetDCPenColor(plat->hdc_mem, tile_col);
-            SetDCBrushColor(plat->hdc_mem, tile_col);
-            RoundRect(plat->hdc_mem, (int)(dot_ox + (float)c * 5.5f), (int)(dot_oy + (float)r * 5.5f),
-                (int)(dot_ox + (float)c * 5.5f + 3.0f), (int)(dot_oy + (float)r * 5.5f + 3.0f), 1, 1);
-        }
-    }
-
-    // 10. 活动应用窗口内容与三色控制灯 (自流体云膨胀与湮灭吞噬，活动窗口后绘制置顶)
-    for (int pass = 0; pass < 2; pass++) {
-        for (size_t i = 0; i < g_installed_app_count; i++) {
-            bool is_active = ((int)i == plat->active_win_idx);
-            if ((pass == 0 && is_active) || (pass == 1 && !is_active)) continue;
-
-            ActiveWindow* win = &plat->windows[i];
-            if (!win->inst || win->anim < 0.02f) continue;
-            // 桌面实时预览态：暂停绘制桌面已开窗口内容与标题 (Aero Peek 体验，避免与预览窗口重叠穿透)
-            if (plat->preview_win_idx >= 0) continue;
-
-            float target_x = win->is_maximized ? 0.0f : win->x;
-            float target_y = win->is_maximized ? 0.0f : win->y;
-            float target_w = win->is_maximized ? ww : win->w;
-            float target_h = win->is_maximized ? wh : win->h;
-
-            float cur_x, cur_y, cur_w, cur_h;
-            if (win->anim >= 0.999f) {
-                cur_x = target_x;
-                cur_y = target_y;
-                cur_w = target_w;
-                cur_h = target_h;
-            } else {
-                float ease = rife_smootherstep(win->anim);
-                cur_x = floorf(rife_lerpf(orig_x, target_x, ease));
-                cur_y = floorf(rife_lerpf(orig_y, target_y, ease));
-                cur_w = floorf(rife_lerpf(col_size, target_w, ease));
-                cur_h = floorf(rife_lerpf(col_size, target_h, ease));
+            if (ba > 0.001f) {
+                float b_cov = 0.0f;
+                float d_in = fabsf(r - r_in);
+                float d_out = fabsf(r - r_out);
+                float d_edge = fminf(d_in, d_out);
+                if (d_edge < 1.0f) b_cov = rife_clampf(1.0f - d_edge, 0.0f, 1.0f);
+                float eff_ba = ba * b_cov;
+                cur_r = rife_lerpf(cur_r, br, eff_ba);
+                cur_g = rife_lerpf(cur_g, bg, eff_ba);
+                cur_b = rife_lerpf(cur_b, bb, eff_ba);
             }
 
-            // 控制灯自微球中心向两翼平滑展开
-            float ease_lamp = (win->anim >= 0.999f) ? 1.0f : rife_smootherstep(win->anim);
-            float light_scale = rife_clampf(ease_lamp * 1.6f, 0.0f, 1.0f);
-            if (light_scale > 0.05f) {
-                float l_sz = 12.0f * light_scale;
-                float l_r = l_sz * 0.5f;
-                float l_y = cur_y + 14.0f * light_scale;
-                rife_draw_round_rect(core, cur_x + 16.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFF5F56FF, 0xE0443EFF);
-                rife_draw_round_rect(core, cur_x + 34.0f * light_scale, l_y, l_sz, l_sz, l_r, 0xFFBD2EFF, 0xDEA123FF);
-                rife_draw_round_rect(core, cur_x + 52.0f * light_scale, l_y, l_sz, l_sz, l_r, 0x27C93FFF, 0x1AAB29FF);
-            }
-
-            // 窗口标题：自流体云向右舒展
-            if (win->anim > 0.25f && cur_w > 160.0f) {
-                float title_alpha = rife_clampf((win->anim - 0.25f) / 0.75f, 0.0f, 1.0f);
-                float title_off = (1.0f - title_alpha) * 12.0f;
-                rife_draw_text_font(core, cur_x + 78.0f + title_off, cur_y + 10.0f, is_zh ? win->plugin->name_zh : win->plugin->name_en, is_obsidian ? 0xF8FAFCFF : 0x0F172AFF, 1);
-            }
-
-            // 插件界面内容：带动态流体裁剪框，自微球中心向四周铺展
-            if (win->plugin->render && cur_h > 46.0f && cur_w > 120.0f) {
-                float target_r = win->is_maximized ? 0.0f : 20.0f;
-                // 窗口专用安全圆角视口裁剪：严格限制在窗口底板边缘圆角以内，内缩 1px 保护反光边缘，杜绝直角溢出
-                rife_push_scissor_round(core, cur_x + 1.0f, cur_y + 36.0f, cur_w - 2.0f, cur_h - 37.0f, target_r);
-                // 展开动画过程中以目标基准尺寸稳定排版渲染，结合视口硬件裁切，根除每帧重新排版计算导致的抖动 (Anti-jitter)
-                float app_w = (win->anim >= 0.999f) ? (cur_w - 2.0f) : (target_w - 2.0f);
-                float app_h = (win->anim >= 0.999f) ? (cur_h - 37.0f) : (target_h - 37.0f);
-                win->plugin->render(win->inst, core, cur_x + 1.0f, cur_y + 36.0f, app_w, app_h);
-                rife_pop_scissor(core);
-            }
+            line[x] = ((uint32_t)rife_clampf(cur_r, 0.0f, 255.0f) << 16) |
+                      ((uint32_t)rife_clampf(cur_g, 0.0f, 255.0f) << 8)  |
+                       (uint32_t)rife_clampf(cur_b, 0.0f, 255.0f);
         }
     }
+}
 
-    // 10.5 桌面实时预览窗口内容渲染 (悬停后台程序胶囊时在桌面呈现)
-    if (plat->preview_win_idx >= 0 && plat->preview_win_idx < (int)g_installed_app_count) {
-        ActiveWindow* pwin = &plat->windows[plat->preview_win_idx];
-        if (pwin->inst && !pwin->is_open) {
-            float pw = (pwin->w > 100.0f) ? pwin->w : (ww * 0.7f);
-            float ph = (pwin->h > 100.0f) ? pwin->h : (wh * 0.7f);
-            float px = pwin->is_maximized ? 0.0f : (pwin->x > 0.0f ? pwin->x : (ww - pw) * 0.5f);
-            float py = pwin->is_maximized ? 56.0f : pwin->y;
-            if (py < 56.0f) py = 56.0f;
-            if (pwin->is_maximized) ph = wh - 56.0f;
-            float pr = pwin->is_maximized ? 0.0f : 20.0f;
-
-            // 1. 预览窗口整体高质感防穿透微透底板 (保护内部文字与表盘绝对清晰，防止穿透)
-            uint32_t pwin_bg = is_obsidian ? 0x161122F5 : 0xFFFFFFF5;
-            uint32_t pwin_bd = is_obsidian ? 0x382B54AA : 0xE2E8F0AA;
-            rife_draw_round_rect(core, px, py, pw, ph, pr, pwin_bg, pwin_bd);
-
-            // 2. 预览顶栏独立微光底板与 1px 细分割线
-            rife_draw_round_rect(core, px, py, pw, 36.0f, pr, is_obsidian ? 0x20183299 : 0xF8FAFCBB, 0x00000000);
-            rife_draw_rect(core, px + 1.0f, py + 35.0f, pw - 2.0f, 1.0f, is_obsidian ? 0x382B5488 : 0xE2E8F0AA);
-
-            // 控制灯 (预览态三色圆钮)
-            float l_sz = 12.0f;
-            float l_r = l_sz * 0.5f;
-            float l_y = py + 12.0f;
-            rife_draw_round_rect(core, px + 16.0f, l_y, l_sz, l_sz, l_r, 0xFF5F56FF, 0xE0443EFF);
-            rife_draw_round_rect(core, px + 34.0f, l_y, l_sz, l_sz, l_r, 0xFFBD2EFF, 0xDEA123FF);
-            rife_draw_round_rect(core, px + 52.0f, l_y, l_sz, l_sz, l_r, 0x27C93FFF, 0x1AAB29FF);
-
-            // 窗口标题与预览徽标 (高对比度晶莹紫调)
-            char ptitle[128];
-            snprintf(ptitle, sizeof(ptitle), "%s  ·  %s",
-                is_zh ? pwin->plugin->name_zh : pwin->plugin->name_en,
-                is_zh ? "桌面实时预览" : "Desktop Live Preview");
-            rife_draw_text_font(core, px + 78.0f, py + 10.0f, ptitle, is_obsidian ? 0xC4B5FDFF : 0x6366F1FF, 1);
-
-            // 插件真实界面内容渲染 (圆角视口硬件安全保护)
-            if (pwin->plugin->render && ph > 46.0f && pw > 120.0f) {
-                rife_push_scissor_round(core, px + 1.0f, py + 36.0f, pw - 2.0f, ph - 37.0f, pr);
-                pwin->plugin->render(pwin->inst, core, px + 1.0f, py + 36.0f, pw - 2.0f, ph - 37.0f);
-                rife_pop_scissor(core);
-            }
-        }
+// -------------------------------------------------------------
+// 提交与刷新渲染命令队列 (Flush Render Commands)
+// -------------------------------------------------------------
+static void rife_draw_text_u8(HDC hdc, int x, int y, const char* utf8) {
+    if (!utf8 || utf8[0] == '\0') return;
+    wchar_t wbuf[512];
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wbuf, 512);
+    if (wlen > 0) {
+        TextOutW(hdc, x, y, wbuf, wlen - 1);
     }
+}
 
-    // 11. 提交渲染命令
+static void app_flush_render_commands(AppContext* app, RifeCore* core) {
+    if (!app || !core) return;
     RenderCmd* curr = core->render_head;
     while (curr) {
         if (curr->type == CMD_TEXT) {
-            if (curr->font_id == 1) SelectObject(plat->hdc_mem, plat->hfont_title);
-            else if (curr->font_id == 2) SelectObject(plat->hdc_mem, plat->hfont_panel_title);
-            else if (curr->font_id == 3) SelectObject(plat->hdc_mem, plat->hfont_sm);
-            else if (curr->font_id == 4) SelectObject(plat->hdc_mem, plat->hfont_caption);
-            else if (curr->font_id == 5) SelectObject(plat->hdc_mem, plat->hfont_bold);
-            else if (curr->font_id == 6) SelectObject(plat->hdc_mem, plat->hfont_display);
-            else SelectObject(plat->hdc_mem, plat->hfont_body);
+            if (curr->font_id == 1) SelectObject(app->hdc_mem, app->hfont_title);
+            else if (curr->font_id == 2) SelectObject(app->hdc_mem, app->hfont_panel_title);
+            else if (curr->font_id == 3) SelectObject(app->hdc_mem, app->hfont_sm);
+            else if (curr->font_id == 4) SelectObject(app->hdc_mem, app->hfont_caption);
+            else if (curr->font_id == 5) SelectObject(app->hdc_mem, app->hfont_bold);
+            else if (curr->font_id == 6) SelectObject(app->hdc_mem, app->hfont_display);
+            else SelectObject(app->hdc_mem, app->hfont_body);
 
             uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
             uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
             uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
-            SetTextColor(plat->hdc_mem, RGB(r, g, b));
-            rife_draw_text_u8(plat->hdc_mem, (int)curr->x, (int)curr->y, curr->text);
+            SetTextColor(app->hdc_mem, RGB(r, g, b));
+            rife_draw_text_u8(app->hdc_mem, (int)curr->x, (int)curr->y, curr->text);
         }
         else if (curr->type == CMD_TEXT_RECT) {
-            if (curr->font_id == 1) SelectObject(plat->hdc_mem, plat->hfont_title);
-            else if (curr->font_id == 2) SelectObject(plat->hdc_mem, plat->hfont_panel_title);
-            else if (curr->font_id == 3) SelectObject(plat->hdc_mem, plat->hfont_sm);
-            else if (curr->font_id == 4) SelectObject(plat->hdc_mem, plat->hfont_caption);
-            else if (curr->font_id == 5) SelectObject(plat->hdc_mem, plat->hfont_bold);
-            else if (curr->font_id == 6) SelectObject(plat->hdc_mem, plat->hfont_display);
-            else SelectObject(plat->hdc_mem, plat->hfont_body);
+            if (curr->font_id == 1) SelectObject(app->hdc_mem, app->hfont_title);
+            else if (curr->font_id == 2) SelectObject(app->hdc_mem, app->hfont_panel_title);
+            else if (curr->font_id == 3) SelectObject(app->hdc_mem, app->hfont_sm);
+            else if (curr->font_id == 4) SelectObject(app->hdc_mem, app->hfont_caption);
+            else if (curr->font_id == 5) SelectObject(app->hdc_mem, app->hfont_bold);
+            else if (curr->font_id == 6) SelectObject(app->hdc_mem, app->hfont_display);
+            else SelectObject(app->hdc_mem, app->hfont_body);
 
             uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
             uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
             uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
-            SetTextColor(plat->hdc_mem, RGB(r, g, b));
+            SetTextColor(app->hdc_mem, RGB(r, g, b));
 
             wchar_t wbuf[256];
             int wlen = MultiByteToWideChar(CP_UTF8, 0, curr->text, -1, wbuf, 256);
             if (wlen > 0) {
                 RECT rc = { (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h) };
                 UINT flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
-                if (curr->border_color == 1) {
-                    flags = DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
-                } else if (curr->border_color == 2) {
-                    flags = DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
-                }
-                DrawTextW(plat->hdc_mem, wbuf, wlen - 1, &rc, flags);
+                if (curr->border_color == 1) flags = DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+                else if (curr->border_color == 2) flags = DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+                DrawTextW(app->hdc_mem, wbuf, wlen - 1, &rc, flags);
             }
         }
         else if (curr->type == CMD_ROUND_RECT) {
             uint8_t a = (uint8_t)(curr->color & 0xFF);
             uint8_t ba = (uint8_t)(curr->border_color & 0xFF);
-            if (a == 0 && ba == 0) {
-                // 完全透明，直接跳过
-            }
-            else {
-                // 统一采用亚像素 SDF 连续距离场抗锯齿渲染（彻底杜绝 Windows GDI RoundRect 狗牙与阶梯锯齿）
+            if (a > 0 || ba > 0) {
                 GdiFlush();
-                rife_blend_round_rect_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color, curr->border_color);
+                rife_blend_round_rect_pixels(app, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color, curr->border_color);
             }
         }
         else if (curr->type == CMD_CIRCLE) {
@@ -1771,14 +587,14 @@ void rife_render_flush(RifeCore* core) {
             uint8_t ba = (uint8_t)(curr->border_color & 0xFF);
             if (a > 0 || ba > 0) {
                 GdiFlush();
-                rife_blend_circle_pixels(plat, curr->x, curr->y, curr->radius, curr->color, curr->border_color);
+                rife_blend_circle_pixels(app, curr->x, curr->y, curr->radius, curr->color, curr->border_color);
             }
         }
         else if (curr->type == CMD_LINE) {
             uint8_t a = (uint8_t)(curr->color & 0xFF);
             if (a > 0) {
                 GdiFlush();
-                rife_blend_line_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color);
+                rife_draw_line_capsule_pixels(app, curr->x, curr->y, curr->w, curr->h, curr->radius, curr->color);
             }
         }
         else if (curr->type == CMD_ARC_SECTOR) {
@@ -1786,25 +602,19 @@ void rife_render_flush(RifeCore* core) {
             uint8_t ba = (uint8_t)(curr->border_color & 0xFF);
             if (a > 0 || ba > 0) {
                 GdiFlush();
-                rife_blend_arc_sector_pixels(plat, curr->x, curr->y, curr->w, curr->h, curr->angle_start, curr->angle_end, curr->color, curr->border_color);
+                rife_blend_arc_sector_pixels(app, curr->x, curr->y, curr->radius, curr->w, curr->angle_start, curr->angle_end, curr->color, curr->border_color);
             }
         }
         else if (curr->type == CMD_RECT) {
             uint8_t a = (uint8_t)(curr->color & 0xFF);
-            if (a == 0) {
-                // 完全透明，直接跳过
-            }
-            else if (a == 255) {
+            if (a == 255) {
                 uint8_t r = (uint8_t)((curr->color >> 24) & 0xFF);
                 uint8_t g = (uint8_t)((curr->color >> 16) & 0xFF);
                 uint8_t b = (uint8_t)((curr->color >> 8) & 0xFF);
-                SetDCPenColor(plat->hdc_mem, RGB(r, g, b));
-                SetDCBrushColor(plat->hdc_mem, RGB(r, g, b));
+                SetDCBrushColor(app->hdc_mem, RGB(r, g, b));
                 RECT rc = { (int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h) };
-                FillRect(plat->hdc_mem, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
-            }
-            else {
-                // 亚像素软件半透明 Alpha 混合
+                FillRect(app->hdc_mem, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
+            } else if (a > 0) {
                 GdiFlush();
                 int rx0 = (int)curr->x;
                 int ry0 = (int)curr->y;
@@ -1812,1227 +622,727 @@ void rife_render_flush(RifeCore* core) {
                 int ry1 = (int)(curr->y + curr->h);
                 if (rx0 < 0) rx0 = 0;
                 if (ry0 < 0) ry0 = 0;
-                if (rx1 > plat->win_width) rx1 = plat->win_width;
-                if (ry1 > plat->win_height) ry1 = plat->win_height;
-
-                RECT clip_rc;
-                if (GetClipBox(plat->hdc_mem, &clip_rc) != NULLREGION && clip_rc.right > clip_rc.left && clip_rc.bottom > clip_rc.top) {
-                    if (rx0 < clip_rc.left) rx0 = clip_rc.left;
-                    if (ry0 < clip_rc.top) ry0 = clip_rc.top;
-                    if (rx1 > clip_rc.right) rx1 = clip_rc.right;
-                    if (ry1 > clip_rc.bottom) ry1 = clip_rc.bottom;
-                }
-
+                if (rx1 > app->win_width) rx1 = app->win_width;
+                if (ry1 > app->win_height) ry1 = app->win_height;
                 if (rx0 < rx1 && ry0 < ry1) {
                     float fa = (float)a / 255.0f;
                     float inv_a = 1.0f - fa;
-                    float fr = (float)((curr->color >> 24) & 0xFF);
-                    float fg = (float)((curr->color >> 16) & 0xFF);
-                    float fb = (float)((curr->color >> 8) & 0xFF);
+                    float fr = (float)((curr->color >> 24) & 0xFF) * fa;
+                    float fg = (float)((curr->color >> 16) & 0xFF) * fa;
+                    float fb = (float)((curr->color >> 8) & 0xFF) * fa;
                     for (int y = ry0; y < ry1; y++) {
-                        uint32_t* line = &plat->pixels[y * plat->win_width];
+                        uint32_t* line = &app->pixels[y * app->win_width];
                         for (int x = rx0; x < rx1; x++) {
                             uint32_t orig = line[x];
-                            float ob = (float)(orig & 0xFF);
-                            float og = (float)((orig >> 8) & 0xFF);
-                            float or_ = (float)((orig >> 16) & 0xFF);
-                            uint32_t nr = (uint32_t)rife_clampf(or_ * inv_a + fr * fa, 0.0f, 255.0f);
-                            uint32_t ng = (uint32_t)rife_clampf(og * inv_a + fg * fa, 0.0f, 255.0f);
-                            uint32_t nb = (uint32_t)rife_clampf(ob * inv_a + fb * fa, 0.0f, 255.0f);
-                            line[x] = (nr << 16) | (ng << 8) | nb;
+                            float ob = (float)(orig & 0xFF) * inv_a + fb;
+                            float og = (float)((orig >> 8) & 0xFF) * inv_a + fg;
+                            float or_ = (float)((orig >> 16) & 0xFF) * inv_a + fr;
+                            line[x] = ((uint32_t)or_ << 16) | ((uint32_t)og << 8) | (uint32_t)ob;
                         }
                     }
                 }
             }
         }
         else if (curr->type == CMD_SCISSOR_PUSH) {
-            SaveDC(plat->hdc_mem);
-            HRGN rgn = NULL;
-            if (curr->radius > 0.5f) {
-                // 特殊圆角窗口视口裁剪：顶部在标题栏下方保持水平直线，底部两角严格圆角
-                int rx0 = (int)curr->x;
-                int ry0 = (int)(curr->y - 36.0f);
-                int rx1 = (int)(curr->x + curr->w + 1.0f);
-                int ry1 = (int)(curr->y + curr->h + 1.0f);
-                int rd = (int)(curr->radius * 2.0f);
-                HRGN rgn_win = CreateRoundRectRgn(rx0, ry0, rx1, ry1, rd, rd);
-                HRGN rgn_box = CreateRectRgn(rx0, (int)curr->y, rx1, ry1);
-                CombineRgn(rgn_box, rgn_box, rgn_win, RGN_AND);
-                DeleteObject(rgn_win);
-                rgn = rgn_box;
-            } else {
-                rgn = CreateRectRgn((int)curr->x, (int)curr->y, (int)(curr->x + curr->w + 1.0f), (int)(curr->y + curr->h + 1.0f));
-            }
-            HRGN existing = CreateRectRgn(0, 0, 0, 0);
-            if (GetClipRgn(plat->hdc_mem, existing) == 1) {
-                ExtSelectClipRgn(plat->hdc_mem, rgn, RGN_AND);
-            } else {
-                SelectClipRgn(plat->hdc_mem, rgn);
-            }
-            DeleteObject(existing);
+            HRGN rgn = CreateRectRgn((int)curr->x, (int)curr->y, (int)(curr->x + curr->w), (int)(curr->y + curr->h));
+            SelectClipRgn(app->hdc_mem, rgn);
             DeleteObject(rgn);
         }
         else if (curr->type == CMD_SCISSOR_POP) {
-            RestoreDC(plat->hdc_mem, -1);
+            SelectClipRgn(app->hdc_mem, NULL);
         }
         curr = curr->next;
     }
-
-    if (plat->hover_resize_dir > 0) {
-        rife_draw_resize_arrow_hint(plat->hdc_mem, mx, my, plat->hover_resize_dir);
-    }
-
-    BitBlt(hdc_win, 0, 0, plat->win_width, plat->win_height, plat->hdc_mem, 0, 0, SRCCOPY);
-    ReleaseDC(plat->hwnd, hdc_win);
-
-    core->render_head = NULL;
-    core->render_tail = NULL;
-    core->render_cmd_count = 0;
 }
 
-void rife_render_immediate(RifeCore* core) {
-    if (!core) return;
+// -------------------------------------------------------------
+// 核心软件渲染管线 (Core Software Render Pipeline)
+// -------------------------------------------------------------
+static void app_render(AppContext* app, RifeCore* core) {
+    if (!app || !core || app->win_width <= 0 || app->win_height <= 0) return;
+
+    RifeSystemConfig* cfg = rife_get_system_config();
+    bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
+    bool is_zh = (cfg->language == LANG_ZH_CN);
+
+    float ww = (float)app->win_width;
+    float wh = (float)app->win_height;
+
     arena_reset(&core->frame_arena);
     core->render_head = NULL;
     core->render_tail = NULL;
     core->render_cmd_count = 0;
-    rife_render_flush(core);
+
+    // 1. 全局底板 (沉浸式深浅色主题基板)
+    uint32_t bg_main = is_dark ? 0x161122FF : 0xF8FAFCFF;
+    uint32_t bg_side = is_dark ? 0x120C1EFF : 0xF1F5F9FF;
+    uint32_t col_div = is_dark ? 0x2B214488 : 0xE2E8F0AA;
+    uint32_t txt_main = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
+    uint32_t txt_sub  = is_dark ? 0x94A3B8FF : 0x64748BFF;
+
+    rife_draw_rect(core, 0.0f, 0.0f, ww, wh, bg_main);
+    rife_draw_rect(core, 0.0f, 0.0f, SIDEBAR_WIDTH, wh, bg_side);
+    rife_draw_rect(core, SIDEBAR_WIDTH - 1.0f, 0.0f, 1.0f, wh, col_div);
+
+    // 2. 顶部现代一体化标题栏 (Titlebar: 38px)
+    rife_draw_rect(core, 0.0f, TITLEBAR_HEIGHT - 1.0f, ww, 1.0f, col_div);
+
+    // A. 品牌 Logo 与标题 (左上角)
+    rife_draw_round_rect(core, 16.0f, 8.0f, 22.0f, 22.0f, 6.0f, 0x3B82F6FF, 0x60A5FAFF);
+    rife_draw_text_rect(core, 16.0f, 8.0f, 22.0f, 22.0f, "R", 0xFFFFFFFF, 5, 0);
+    rife_draw_text_font(core, 46.0f, 10.0f, "Rife", txt_main, 5);
+    rife_draw_text_font(core, 78.0f, 11.0f, is_zh ? "· 一体化时间工作台" : "· Time Studio", txt_sub, 4);
+
+    // B. 中央动态日期标尺
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    const char* wdays_zh[7] = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" };
+    const char* wdays_en[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    char date_str[64];
+    if (is_zh) {
+        snprintf(date_str, sizeof(date_str), "%d年%d月%d日 %s", st.wYear, st.wMonth, st.wDay, wdays_zh[st.wDayOfWeek]);
+    } else {
+        snprintf(date_str, sizeof(date_str), "%s, %d-%02d-%02d", wdays_en[st.wDayOfWeek], st.wYear, st.wMonth, st.wDay);
+    }
+    rife_draw_text_rect(core, (ww - 240.0f) * 0.5f, 0.0f, 240.0f, TITLEBAR_HEIGHT, date_str, txt_sub, 3, 0);
+
+    // C. 右侧原生三态窗口控制钮 (Min / Max / Close)
+    float btn_w = 45.0f;
+    float btn_h = TITLEBAR_HEIGHT;
+    float btn_min_x = ww - btn_w * 3.0f;
+    float btn_max_x = ww - btn_w * 2.0f;
+    float btn_close_x = ww - btn_w;
+
+    // 最小化
+    if (app->hovered_title_btn == 0) {
+        rife_draw_rect(core, btn_min_x, 0.0f, btn_w, btn_h, is_dark ? 0xFFFFFF18 : 0x00000010);
+    }
+    rife_draw_text_rect(core, btn_min_x, 0.0f, btn_w, btn_h, "—", txt_sub, 3, 0);
+
+    // 最大化/还原
+    if (app->hovered_title_btn == 1) {
+        rife_draw_rect(core, btn_max_x, 0.0f, btn_w, btn_h, is_dark ? 0xFFFFFF18 : 0x00000010);
+    }
+    rife_draw_text_rect(core, btn_max_x, 0.0f, btn_w, btn_h, IsZoomed(app->hwnd) ? "❐" : "□", txt_sub, 1, 0);
+
+    // 关闭
+    if (app->hovered_title_btn == 2) {
+        rife_draw_rect(core, btn_close_x, 0.0f, btn_w, btn_h, 0xEF4444FF);
+        rife_draw_text_rect(core, btn_close_x, 0.0f, btn_w, btn_h, "✕", 0xFFFFFFFF, 1, 0);
+    } else {
+        rife_draw_text_rect(core, btn_close_x, 0.0f, btn_w, btn_h, "✕", txt_sub, 1, 0);
+    }
+
+    // 3. 左侧导航栏项 (Vertical Nav Stack: 42px)
+    const char* nav_labels_zh[3] = { "多维日程", "极简时钟", "偏好设置" };
+    const char* nav_labels_en[3] = { "Schedule", "Clock", "Settings" };
+    const char* nav_icons[3] = { "📅", "⏱️", "⚙️" };
+
+    float nav_y0 = 50.0f;
+    float nav_item_h = 40.0f;
+    float nav_item_w = 166.0f;
+    float nav_item_x = 12.0f;
+    float nav_gap = 6.0f;
+
+    for (int i = 0; i < 3; i++) {
+        float ny = nav_y0 + (float)i * (nav_item_h + nav_gap);
+        bool is_active = (app->active_page == (AppPage)i);
+        bool is_hover = (app->hovered_nav_idx == i && !is_active);
+
+        if (is_active) {
+            uint32_t nav_bg = is_dark ? 0x2D2148FF : 0xEFF6FFFF;
+            uint32_t nav_bd = is_dark ? 0x5D458CFF : 0xBAE6FDFF;
+            uint32_t bar_col = is_dark ? 0xA855F7FF : 0x3B82F6FF;
+            uint32_t label_col = is_dark ? 0xF8FAFCFF : 0x1D4ED8FF;
+            rife_draw_round_rect(core, nav_item_x, ny, nav_item_w, nav_item_h, 8.0f, nav_bg, nav_bd);
+            rife_draw_round_rect(core, nav_item_x + 3.0f, ny + 9.0f, 3.0f, 22.0f, 1.5f, bar_col, bar_col);
+            rife_draw_text_font(core, nav_item_x + 16.0f, ny + 11.0f, nav_icons[i], label_col, 1);
+            rife_draw_text_font(core, nav_item_x + 42.0f, ny + 11.0f, is_zh ? nav_labels_zh[i] : nav_labels_en[i], label_col, 5);
+        } else {
+            if (is_hover) {
+                rife_draw_round_rect(core, nav_item_x, ny, nav_item_w, nav_item_h, 8.0f, is_dark ? 0xFFFFFF10 : 0x00000008, 0x00000000);
+            }
+            rife_draw_text_font(core, nav_item_x + 16.0f, ny + 11.0f, nav_icons[i], txt_sub, 0);
+            rife_draw_text_font(core, nav_item_x + 42.0f, ny + 11.0f, is_zh ? nav_labels_zh[i] : nav_labels_en[i], is_hover ? txt_main : txt_sub, 0);
+        }
+    }
+
+    // 侧边栏底部：主题极简一键切换与版本信息
+    float theme_btn_y = wh - 62.0f;
+    rife_draw_round_rect(core, nav_item_x, theme_btn_y, nav_item_w, 30.0f, 6.0f, is_dark ? 0x221A3688 : 0xE2E8F088, col_div);
+    rife_draw_text_rect(core, nav_item_x, theme_btn_y, nav_item_w, 30.0f, is_dark ? "🌙 黑曜石深色" : "☀️ 明亮模式", txt_sub, 3, 0);
+
+    // 严谨遵守隐私红线：作者署名 Renly，绝不暴露真实中文名
+    rife_draw_text_rect(core, nav_item_x, wh - 22.0f, nav_item_w, 16.0f, "Rife v1.0 · Renly", txt_sub, 4, 0);
+
+    // 4. 右侧全幅视口呈现激活页面 (Viewport: Main Content Area)
+    float client_x = SIDEBAR_WIDTH;
+    float client_y = TITLEBAR_HEIGHT;
+    float client_w = ww - SIDEBAR_WIDTH;
+    float client_h = wh - TITLEBAR_HEIGHT;
+
+    if (client_w > 100.0f && client_h > 100.0f) {
+        rife_push_scissor_round(core, client_x, client_y, client_w, client_h, 0.0f);
+
+        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+            g_calendar_plugin_app.render(app->calendar_inst, core, client_x, client_y, client_w, client_h);
+        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+            g_clock_plugin_app.render(app->clock_inst, core, client_x, client_y, client_w, client_h);
+        } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
+            g_settings_plugin_app.render(app->settings_inst, core, client_x, client_y, client_w, client_h);
+        }
+
+        rife_pop_scissor(core);
+    }
+
+    // 5. 提交刷新 GDI & 像素渲染管线
+    GdiFlush();
+    SetBkMode(app->hdc_mem, TRANSPARENT);
+    SelectObject(app->hdc_mem, GetStockObject(DC_PEN));
+    SelectObject(app->hdc_mem, GetStockObject(DC_BRUSH));
+
+    app_flush_render_commands(app, core);
+
+    HDC hdc_win = GetDC(app->hwnd);
+    BitBlt(hdc_win, 0, 0, app->win_width, app->win_height, app->hdc_mem, 0, 0, SRCCOPY);
+    ReleaseDC(app->hwnd, hdc_win);
+
+    core->render_head = NULL;
+    core->render_tail = NULL;
+    core->render_cmd_count = 0;
     core->needs_redraw = false;
 }
 
-void rife_platform_resize(RifeCore* core, int w, int h) {
-    Win32Platform* plat = (Win32Platform*)core->platform_data;
-    if (!plat || w <= 0 || h <= 0) return;
-    plat->win_width = w;
-    plat->win_height = h;
-    update_horiz_lookup(plat, w);
-
-    if (plat->hdc_mem) {
-        SelectObject(plat->hdc_mem, plat->hbm_old);
-        if (plat->hbm_mem) {
-            DeleteObject(plat->hbm_mem);
-            plat->hbm_mem = NULL;
-        }
-        HDC hdc_win = GetDC(plat->hwnd);
-        BITMAPINFO bmi = { 0 };
-        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = w;
-        bmi.bmiHeader.biHeight = -h;
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = BI_RGB;
-        plat->hbm_mem = CreateDIBSection(hdc_win, &bmi, DIB_RGB_COLORS, (void**)&plat->pixels, NULL, 0);
-        if (plat->hbm_mem) {
-            plat->hbm_old = (HBITMAP)SelectObject(plat->hdc_mem, plat->hbm_mem);
-        }
-        ReleaseDC(plat->hwnd, hdc_win);
-    }
-    if (plat->pixels) {
-        rife_render_immediate(core);
+void rife_render_flush(RifeCore* core) {
+    if (s_app && core) {
+        app_render(s_app, core);
     }
 }
 
-LRESULT CALLBACK rife_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-    RifeCore* core = (RifeCore*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-    if (!core) return DefWindowProc(hwnd, msg, wparam, lparam);
-    Win32Platform* plat = (Win32Platform*)core->platform_data;
+// -------------------------------------------------------------
+// 原生 Win32 消息循环与事件调度 (Window Procedure)
+// -------------------------------------------------------------
+static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    AppContext* app = s_app;
+    RifeCore* core = s_core;
 
     switch (msg) {
-    case WM_ERASEBKGND: return 1;
-    case WM_NCCALCSIZE: if (wparam == TRUE) return 0; break;
-    case WM_NCACTIVATE: return TRUE;
-    case WM_SYSCOMMAND: {
-        if ((wparam & 0xFFF0) == SC_MAXIMIZE) {
-            toggle_immersion_fullscreen(plat);
-            return 0;
-        }
-        break;
-    }
-    case WM_CHAR: {
-        wchar_t wch = (wchar_t)wparam;
-        if (wch >= 32 || wch == '\r' || wch == '\t') {
-            char utf8[8] = { 0 };
-            WideCharToMultiByte(CP_UTF8, 0, &wch, 1, utf8, sizeof(utf8), NULL, NULL);
-            size_t len = strlen(core->input.text_input);
-            if (len + strlen(utf8) < sizeof(core->input.text_input) - 1) {
-                strcat(core->input.text_input, utf8);
+    case WM_NCCALCSIZE: {
+        // 彻底移除 Windows 传统粗糙边框与默认标题栏，实现现代沉浸式无边框
+        if (wParam) {
+            if (IsZoomed(hwnd)) {
+                NCCALCSIZE_PARAMS* params = (NCCALCSIZE_PARAMS*)lParam;
+                HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                MONITORINFO mi = { sizeof(mi) };
+                if (GetMonitorInfoW(hMon, &mi)) {
+                    params->rgrc[0] = mi.rcWork;
+                }
             }
-            rife_request_redraw(core);
+            return 0;
         }
         return 0;
     }
-    case WM_KEYDOWN: {
-        if (wparam < 256) {
-            core->input.key_down[wparam] = 1;
-            core->input.key_pressed[wparam] = 1;
+
+    case WM_NCHITTEST: {
+        if (!app) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        ScreenToClient(hwnd, &pt);
+        int w = app->win_width;
+        int h = app->win_height;
+        int border = 6;
+        bool is_max = IsZoomed(hwnd);
+
+        // 1. 非最大化时边缘缩放手柄
+        if (!is_max) {
+            if (pt.y < border && pt.x < border) return HTTOPLEFT;
+            if (pt.y < border && pt.x >= w - border) return HTTOPRIGHT;
+            if (pt.y >= h - border && pt.x < border) return HTBOTTOMLEFT;
+            if (pt.y >= h - border && pt.x >= w - border) return HTBOTTOMRIGHT;
+            if (pt.y < border) return HTTOP;
+            if (pt.y >= h - border) return HTBOTTOM;
+            if (pt.x < border) return HTLEFT;
+            if (pt.x >= w - border) return HTRIGHT;
         }
-        // Ctrl+V 剪贴板文本粘贴支持
-        if (wparam == 'V' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+
+        // 2. 标题栏区域判定
+        if (pt.y >= 0 && pt.y < (int)TITLEBAR_HEIGHT) {
+            // 右侧三态按钮区域：交给客户区处理点击
+            if (pt.x >= w - 135) return HTCLIENT;
+            // 其余标题栏空间：允许原生拖拽与双击最大化
+            return HTCAPTION;
+        }
+
+        return HTCLIENT;
+    }
+
+    case WM_SIZE: {
+        int w = LOWORD(lParam);
+        int h = HIWORD(lParam);
+        if (app && w > 0 && h > 0) {
+            recreate_backbuffer(app, w, h);
+            if (core) rife_request_redraw(core);
+        }
+        return 0;
+    }
+
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+        mmi->ptMinTrackSize.x = MIN_WINDOW_W;
+        mmi->ptMinTrackSize.y = MIN_WINDOW_H;
+        return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+        if (!app || !core) break;
+        float mx = (float)GET_X_LPARAM(lParam);
+        float my = (float)GET_Y_LPARAM(lParam);
+        app->input.mouse_x = mx;
+        app->input.mouse_y = my;
+
+        if (!app->mouse_in_window) {
+            app->mouse_in_window = true;
+            TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
+            TrackMouseEvent(&tme);
+        }
+
+        // 标题栏按钮悬停检测
+        int prev_btn = app->hovered_title_btn;
+        float btn_w = 45.0f;
+        float ww = (float)app->win_width;
+        if (my >= 0.0f && my < TITLEBAR_HEIGHT) {
+            if (mx >= ww - btn_w * 3.0f && mx < ww - btn_w * 2.0f) app->hovered_title_btn = 0;
+            else if (mx >= ww - btn_w * 2.0f && mx < ww - btn_w)   app->hovered_title_btn = 1;
+            else if (mx >= ww - btn_w && mx <= ww)                  app->hovered_title_btn = 2;
+            else app->hovered_title_btn = -1;
+        } else {
+            app->hovered_title_btn = -1;
+        }
+
+        // 侧边栏项悬停检测
+        int prev_nav = app->hovered_nav_idx;
+        if (mx >= 12.0f && mx <= 12.0f + 166.0f) {
+            float nav_y0 = 50.0f;
+            float nav_h = 40.0f;
+            float nav_gap = 6.0f;
+            app->hovered_nav_idx = -1;
+            for (int i = 0; i < 3; i++) {
+                float ny = nav_y0 + (float)i * (nav_h + nav_gap);
+                if (my >= ny && my <= ny + nav_h) {
+                    app->hovered_nav_idx = i;
+                    break;
+                }
+            }
+        } else {
+            app->hovered_nav_idx = -1;
+        }
+
+        if (prev_btn != app->hovered_title_btn || prev_nav != app->hovered_nav_idx) {
+            rife_request_redraw(core);
+        }
+
+        // 转发至当前激活页面 (视口相对坐标)
+        float client_x = SIDEBAR_WIDTH;
+        float client_y = TITLEBAR_HEIGHT;
+        float client_w = ww - SIDEBAR_WIDTH;
+        float client_h = (float)app->win_height - TITLEBAR_HEIGHT;
+
+        RifeInput page_in = app->input;
+        page_in.mouse_x -= client_x;
+        page_in.mouse_y -= client_y;
+
+        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+            g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+            g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
+            g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
+        }
+        return 0;
+    }
+
+    case WM_MOUSELEAVE: {
+        if (!app || !core) break;
+        app->mouse_in_window = false;
+        app->hovered_title_btn = -1;
+        app->hovered_nav_idx = -1;
+        rife_request_redraw(core);
+        return 0;
+    }
+
+    case WM_LBUTTONDOWN: {
+        if (!app || !core) break;
+        SetFocus(hwnd);
+        float mx = (float)GET_X_LPARAM(lParam);
+        float my = (float)GET_Y_LPARAM(lParam);
+        app->input.mouse_pressed[0] = true;
+        app->input.mouse_down[0] = true;
+
+        float ww = (float)app->win_width;
+        float wh = (float)app->win_height;
+
+        // 1. 标题栏按钮点击响应
+        if (my >= 0.0f && my < TITLEBAR_HEIGHT) {
+            float btn_w = 45.0f;
+            if (mx >= ww - btn_w * 3.0f && mx < ww - btn_w * 2.0f) {
+                ShowWindow(hwnd, SW_MINIMIZE);
+                return 0;
+            }
+            if (mx >= ww - btn_w * 2.0f && mx < ww - btn_w) {
+                ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+                return 0;
+            }
+            if (mx >= ww - btn_w && mx <= ww) {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+        }
+
+        // 2. 侧边栏导航点击响应
+        if (mx >= 12.0f && mx <= 12.0f + 166.0f) {
+            float nav_y0 = 50.0f;
+            float nav_h = 40.0f;
+            float nav_gap = 6.0f;
+            for (int i = 0; i < 3; i++) {
+                float ny = nav_y0 + (float)i * (nav_h + nav_gap);
+                if (my >= ny && my <= ny + nav_h) {
+                    if (app->active_page != (AppPage)i) {
+                        app->active_page = (AppPage)i;
+                        rife_reclaim_physical_memory();
+                        rife_request_redraw(core);
+                    }
+                    return 0;
+                }
+            }
+
+            // 主题极简切换
+            float theme_btn_y = wh - 62.0f;
+            if (my >= theme_btn_y && my <= theme_btn_y + 30.0f) {
+                RifeSystemConfig* cfg = rife_get_system_config();
+                cfg->palette = (cfg->palette == PALETTE_OBSIDIAN) ? PALETTE_GEMINI : PALETTE_OBSIDIAN;
+                rife_save_system_config();
+                rife_request_redraw(core);
+                return 0;
+            }
+        }
+
+        // 3. 转发至当前激活页面
+        float client_x = SIDEBAR_WIDTH;
+        float client_y = TITLEBAR_HEIGHT;
+        float client_w = ww - SIDEBAR_WIDTH;
+        float client_h = wh - TITLEBAR_HEIGHT;
+
+        RifeInput page_in = app->input;
+        page_in.mouse_x -= client_x;
+        page_in.mouse_y -= client_y;
+
+        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+            g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+            g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
+            g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
+        }
+        rife_request_redraw(core);
+        return 0;
+    }
+
+    case WM_LBUTTONUP: {
+        if (!app || !core) break;
+        app->input.mouse_down[0] = false;
+        app->input.mouse_released[0] = true;
+
+        float client_x = SIDEBAR_WIDTH;
+        float client_y = TITLEBAR_HEIGHT;
+        float client_w = (float)app->win_width - SIDEBAR_WIDTH;
+        float client_h = (float)app->win_height - TITLEBAR_HEIGHT;
+
+        RifeInput page_in = app->input;
+        page_in.mouse_x -= client_x;
+        page_in.mouse_y -= client_y;
+
+        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+            g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+            g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
+            g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
+        }
+        rife_request_redraw(core);
+        return 0;
+    }
+
+    case WM_MOUSEWHEEL: {
+        if (!app || !core) break;
+        short delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        app->input.scroll_delta = (float)delta / 120.0f;
+
+        float client_x = SIDEBAR_WIDTH;
+        float client_y = TITLEBAR_HEIGHT;
+        float client_w = (float)app->win_width - SIDEBAR_WIDTH;
+        float client_h = (float)app->win_height - TITLEBAR_HEIGHT;
+
+        RifeInput page_in = app->input;
+        page_in.mouse_x -= client_x;
+        page_in.mouse_y -= client_y;
+
+        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+            g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+            g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
+            g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
+        }
+        rife_request_redraw(core);
+        return 0;
+    }
+
+    case WM_KEYDOWN: {
+        if (!app || !core) break;
+        int vk = (int)wParam;
+        if (vk >= 0 && vk < 256) {
+            app->input.key_down[vk] = true;
+            app->input.key_pressed[vk] = true;
+        }
+
+        // Ctrl+V 剪贴板文本粘贴
+        if (vk == 'V' && (GetKeyState(VK_CONTROL) & 0x8000)) {
             if (OpenClipboard(hwnd)) {
                 HANDLE hData = GetClipboardData(CF_UNICODETEXT);
                 if (hData) {
-                    wchar_t* wtext = (wchar_t*)GlobalLock(hData);
-                    if (wtext) {
-                        char utf8[128] = { 0 };
-                        WideCharToMultiByte(CP_UTF8, 0, wtext, -1, utf8, sizeof(utf8) - 1, NULL, NULL);
-                        size_t len = strlen(core->input.text_input);
-                        if (len + strlen(utf8) < sizeof(core->input.text_input) - 1) {
-                            strcat(core->input.text_input, utf8);
-                        }
+                    wchar_t* wstr = (wchar_t*)GlobalLock(hData);
+                    if (wstr) {
+                        WideCharToMultiByte(CP_UTF8, 0, wstr, -1, app->input.text_input, sizeof(app->input.text_input), NULL, NULL);
                         GlobalUnlock(hData);
                     }
                 }
                 CloseClipboard();
-                rife_request_redraw(core);
             }
-            return 0;
         }
-        if (wparam == VK_ESCAPE) {
-            if (plat->is_fullscreen) {
-                toggle_immersion_fullscreen(plat);
-            }
-            plat->cloud_expanded = false;
-            plat->drawer_open = false;
-            rife_request_redraw(core);
-            return 0;
+
+        float client_x = SIDEBAR_WIDTH;
+        float client_y = TITLEBAR_HEIGHT;
+        float client_w = (float)app->win_width - SIDEBAR_WIDTH;
+        float client_h = (float)app->win_height - TITLEBAR_HEIGHT;
+
+        RifeInput page_in = app->input;
+        page_in.mouse_x -= client_x;
+        page_in.mouse_y -= client_y;
+
+        if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+            g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+            g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
+        } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
+            g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
         }
         rife_request_redraw(core);
-        break;
+        return 0;
     }
+
     case WM_KEYUP: {
-        if (wparam < 256) {
-            core->input.key_down[wparam] = 0;
-            core->input.key_released[wparam] = 1;
-            rife_request_redraw(core);
-        }
+        if (!app) break;
+        int vk = (int)wParam;
+        if (vk >= 0 && vk < 256) app->input.key_down[vk] = false;
         return 0;
     }
-    case WM_DROPFILES: {
-        HDROP hDrop = (HDROP)wparam;
-        UINT count = DragQueryFileA(hDrop, 0xFFFFFFFF, NULL, 0);
-        RifeSystemConfig* cfg = rife_get_system_config();
-        bool grid_align = cfg->shortcut_grid_align;
-        for (UINT i = 0; i < count; i++) {
-            char path[MAX_PATH];
-            if (DragQueryFileA(hDrop, i, path, MAX_PATH)) {
-                desktop_add_shortcut(plat, path, grid_align);
-            }
-        }
-        DragFinish(hDrop);
-        rife_request_redraw(core);
-        return 0;
-    }
-    case WM_NCHITTEST: {
-        if (plat->current_mode == DESKTOP_MODE_WALLPAPER || plat->is_fullscreen) return HTCLIENT;
-        POINT pt = { (short)LOWORD(lparam), (short)HIWORD(lparam) };
-        ScreenToClient(hwnd, &pt);
-        RECT rc;
-        GetClientRect(hwnd, &rc);
 
-        int b = 8;
-        bool l = pt.x < b;
-        bool r = pt.x >= rc.right - b;
-        bool t = pt.y < b;
-        bool u = pt.y >= rc.bottom - b;
-        if (t && l) return HTTOPLEFT;
-        if (t && r) return HTTOPRIGHT;
-        if (u && l) return HTBOTTOMLEFT;
-        if (u && r) return HTBOTTOMRIGHT;
-        if (l) return HTLEFT;
-        if (r) return HTRIGHT;
-        if (t) return HTTOP;
-        if (u) return HTBOTTOM;
-
-        int bg_cnt = 0;
-        for (size_t i = 0; i < g_installed_app_count; i++) {
-            if (plat->windows[i].inst && !plat->windows[i].is_open && plat->windows[i].is_minimized) bg_cnt++;
-        }
-        float tasks_w = (bg_cnt > 0) ? ((float)bg_cnt * 38.0f + (float)(bg_cnt - 1) * 6.0f) : 0.0f;
-        if (bg_cnt >= 2) tasks_w += 32.0f;
-        float needed_w = 110.0f + tasks_w + 24.0f;
-        float exp_w = (float)plat->win_width * 0.36f;
-        if (exp_w < needed_w) exp_w = needed_w;
-        if (exp_w > (float)plat->win_width - 32.0f) exp_w = (float)plat->win_width - 32.0f;
-        float col_size = 22.0f;
-        float col_h = 22.0f;
-        float cur_cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
-        float cur_cloud_h = rife_lerpf(col_h, 42.0f, plat->cloud_anim);
-        float cur_cloud_x = ((float)plat->win_width - cur_cloud_w) * 0.5f;
-
-        if (pt.y >= 6 && pt.y <= 10 + cur_cloud_h + 4 && pt.x >= cur_cloud_x - 4 && pt.x <= cur_cloud_x + cur_cloud_w + 4) {
-            return HTCLIENT;
-        }
-
-        if (pt.y <= 30) {
-            return HTCAPTION;
-        }
-        return HTCLIENT;
-    }
-    case WM_SIZE: {
-        int w = LOWORD(lparam);
-        int h = HIWORD(lparam);
-        rife_platform_resize(core, w, h);
-        return 0;
-    }
-    case WM_CLOSE:
-        set_system_taskbar_visible(true);
-        core->running = false;
-        DestroyWindow(hwnd);
-        return 0;
-    case WM_DESTROY:
-        set_system_taskbar_visible(true);
-        PostQuitMessage(0);
-        return 0;
-    case WM_MOUSEMOVE:
-        core->input.mouse_x = (float)LOWORD(lparam);
-        core->input.mouse_y = (float)HIWORD(lparam);
-        rife_request_redraw(core);
-        return 0;
-    case WM_MOUSEWHEEL: {
-        POINT pt;
-        pt.x = (short)LOWORD(lparam);
-        pt.y = (short)HIWORD(lparam);
-        ScreenToClient(hwnd, &pt);
-        core->input.mouse_x = (float)pt.x;
-        core->input.mouse_y = (float)pt.y;
-        short delta = GET_WHEEL_DELTA_WPARAM(wparam);
-        core->input.scroll_delta += (float)delta / (float)WHEEL_DELTA;
-        rife_request_redraw(core);
-        return 0;
-    }
-    case WM_LBUTTONDOWN: {
-        core->input.mouse_down[0] = 1;
-        SetCapture(hwnd);
-        return 0;
-    }
-    case WM_LBUTTONUP: {
-        core->input.mouse_down[0] = 0;
-
-        if ((plat->drag_mode == 1 || plat->drag_mode == 2) && plat->active_win_idx >= 0) {
-            ActiveWindow* win = &plat->windows[plat->active_win_idx];
-            if (win->inst) {
-                float my = core->input.mouse_y;
-                float ww = (float)plat->win_width;
-                float wh = (float)plat->win_height;
-                bool to_top = (plat->drag_mode == 1 && my <= 22.0f);
-                bool cover_desktop = (win->w >= ww * 0.80f && win->h >= wh * 0.80f && win->x <= 50.0f && win->y <= 50.0f);
-
-                if (to_top || cover_desktop) {
-                    if (!win->is_maximized) {
-                        win->restore_x = win->x;
-                        win->restore_y = win->y;
-                        win->restore_w = win->w;
-                        win->restore_h = win->h;
-                        win->is_maximized = true;
-                    }
-                    if (!plat->is_fullscreen) {
-                        toggle_immersion_fullscreen(plat);
-                    }
-                    rife_request_redraw(core);
+    case WM_CHAR: {
+        if (!app || !core) break;
+        wchar_t wch = (wchar_t)wParam;
+        if (wch >= 32) {
+            wchar_t wbuf[2] = { wch, 0 };
+            char utf8[8] = { 0 };
+            int len = WideCharToMultiByte(CP_UTF8, 0, wbuf, 1, utf8, sizeof(utf8), NULL, NULL);
+            if (len > 0) {
+                size_t cur_len = strlen(app->input.text_input);
+                if (cur_len + (size_t)len < sizeof(app->input.text_input) - 1) {
+                    memcpy(app->input.text_input + cur_len, utf8, (size_t)len);
+                    app->input.text_input[cur_len + len] = '\0';
                 }
             }
-        }
 
-        plat->drag_mode = 0;
-        plat->snap_preview = false;
-        ReleaseCapture();
+            float client_x = SIDEBAR_WIDTH;
+            float client_y = TITLEBAR_HEIGHT;
+            float client_w = (float)app->win_width - SIDEBAR_WIDTH;
+            float client_h = (float)app->win_height - TITLEBAR_HEIGHT;
+
+            RifeInput page_in = app->input;
+            page_in.mouse_x -= client_x;
+            page_in.mouse_y -= client_y;
+
+            if (app->active_page == PAGE_SCHEDULE && app->calendar_inst) {
+                g_calendar_plugin_app.update(app->calendar_inst, core, &page_in, client_w, client_h);
+            } else if (app->active_page == PAGE_CLOCK && app->clock_inst) {
+                g_clock_plugin_app.update(app->clock_inst, core, &page_in, client_w, client_h);
+            } else if (app->active_page == PAGE_SETTINGS && app->settings_inst) {
+                g_settings_plugin_app.update(app->settings_inst, core, &page_in, client_w, client_h);
+            }
+            rife_request_redraw(core);
+        }
         return 0;
     }
+
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
-        if (plat && plat->hdc_mem) {
-            BitBlt(hdc, 0, 0, plat->win_width, plat->win_height, plat->hdc_mem, 0, 0, SRCCOPY);
+        if (app && app->hdc_mem) {
+            BitBlt(hdc, 0, 0, app->win_width, app->win_height, app->hdc_mem, 0, 0, SRCCOPY);
         }
         EndPaint(hwnd, &ps);
         return 0;
     }
+
+    case WM_DESTROY: {
+        PostQuitMessage(0);
+        return 0;
     }
-    return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-bool rife_platform_init(RifeCore* core, Win32Platform* plat, const char* title, int width, int height) {
-    plat->win_width = width;
-    plat->win_height = height;
-    plat->pixels = NULL;
-    plat->dock_anim = 0.0f;
-    plat->drawer_anim = 0.0f;
-    plat->drawer_open = false;
-    plat->shortcut_count = 0;
-    plat->aura_time = 0.0f;
-    plat->breath_t = 0.0f;
-    plat->current_mode = DESKTOP_MODE_FLOATING;
-    plat->is_fullscreen = false;
-    plat->prev_rect.left = 100;
-    plat->prev_rect.top = 100;
-    plat->prev_rect.right = 100 + width;
-    plat->prev_rect.bottom = 100 + height;
-
-    plat->cloud_expanded = false;
-    plat->cloud_anim = 0.0f;
-    plat->absorption_ripple_t = 0.0f;
-    plat->active_win_idx = -1;
-    plat->drag_mode = 0;
-    plat->resize_dir = 0;
-    plat->hover_resize_dir = 0;
-    plat->snap_preview = false;
-
-    for (size_t i = 0; i < MAX_PLUGIN_WINDOWS; i++) {
-        plat->windows[i].plugin = (i < g_installed_app_count) ? g_installed_apps[i] : NULL;
-        plat->windows[i].inst = NULL;
-        plat->windows[i].is_open = false;
-        plat->windows[i].is_minimized = false;
-        plat->windows[i].is_maximized = false;
-        plat->windows[i].anim = 0.0f;
-        plat->windows[i].inited = false;
-    }
-
-    plat->hlook = (HorizLookup*)arena_alloc(&core->persistent_arena, sizeof(HorizLookup) * 7680);
-    if (!plat->hlook) return false;
-
-    update_horiz_lookup(plat, width);
-
-    core->platform_data = plat;
-    WNDCLASSW wc = { 0 };
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = rife_wnd_proc;
-    wc.hInstance = GetModuleHandle(NULL);
-    wc.lpszClassName = L"RifeDesktopHostClass";
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClassW(&wc);
-
-    int screen_w = GetSystemMetrics(SM_CXSCREEN);
-    int screen_h = GetSystemMetrics(SM_CYSCREEN);
-    if (width > screen_w - 40) width = screen_w - 40;
-    if (height > screen_h - 70) height = screen_h - 70;
-    plat->win_width = width;
-    plat->win_height = height;
-
-    int init_x = (screen_w > width) ? (screen_w - width) / 2 : 20;
-    int init_y = (screen_h > height) ? (screen_h - height) / 2 : 35;
-
-    wchar_t wtitle[128] = { 0 };
-    MultiByteToWideChar(CP_UTF8, 0, title, -1, wtitle, 128);
-
-    plat->hwnd = CreateWindowExW(WS_EX_APPWINDOW | WS_EX_ACCEPTFILES, wc.lpszClassName, wtitle,
-        WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_POPUP,
-        init_x, init_y, width, height, NULL, NULL, wc.hInstance, NULL);
-    if (!plat->hwnd) return false;
-
-    DragAcceptFiles(plat->hwnd, TRUE);
-    int corner_preference = 2;
-    DwmSetWindowAttribute(plat->hwnd, 33, &corner_preference, sizeof(corner_preference));
-    MARGINS margins = { 1, 1, 1, 1 };
-    DwmExtendFrameIntoClientArea(plat->hwnd, &margins);
-    SetWindowLongPtr(plat->hwnd, GWLP_USERDATA, (LONG_PTR)core);
-
-    HDC hdc = GetDC(plat->hwnd);
-    plat->hdc_mem = CreateCompatibleDC(hdc);
-    BITMAPINFO bmi = { 0 };
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    plat->hbm_mem = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, (void**)&plat->pixels, NULL, 0);
-    if (plat->hbm_mem) {
-        plat->hbm_old = (HBITMAP)SelectObject(plat->hdc_mem, plat->hbm_mem);
-    }
-    ReleaseDC(plat->hwnd, hdc);
-
-    plat->hfont_panel_title = NULL;
-    plat->hfont_display = NULL;
-    plat->hfont_title = NULL;
-    plat->hfont_body = NULL;
-    plat->hfont_bold = NULL;
-    plat->hfont_sm = NULL;
-    plat->hfont_caption = NULL;
-    update_system_fonts(plat, FONT_SCALE_125);
-
-    SetWindowPos(plat->hwnd, HWND_TOP, init_x, init_y, width, height, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    ShowWindow(plat->hwnd, SW_SHOWNORMAL);
-    UpdateWindow(plat->hwnd);
-    SetForegroundWindow(plat->hwnd);
-    return true;
-}
-
-void rife_platform_shutdown(Win32Platform* plat) {
-    if (!plat) return;
-    set_system_taskbar_visible(true);
-    for (size_t i = 0; i < plat->shortcut_count; i++) {
-        if (plat->shortcuts[i].custom_icon) DestroyIcon(plat->shortcuts[i].custom_icon);
-    }
-
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        if (plat->windows[i].inst && plat->windows[i].plugin->destroy) {
-            plat->windows[i].plugin->destroy(plat->windows[i].inst);
-            plat->windows[i].inst = NULL;
-        }
-    }
-
-    if (plat->hdc_mem) {
-        SelectObject(plat->hdc_mem, plat->hbm_old);
-        if (plat->hbm_mem) DeleteObject(plat->hbm_mem);
-        DeleteDC(plat->hdc_mem);
-    }
-    if (plat->hfont_panel_title) DeleteObject(plat->hfont_panel_title);
-    if (plat->hfont_display) DeleteObject(plat->hfont_display);
-    if (plat->hfont_title) DeleteObject(plat->hfont_title);
-    if (plat->hfont_body) DeleteObject(plat->hfont_body);
-    if (plat->hfont_bold) DeleteObject(plat->hfont_bold);
-    if (plat->hfont_sm) DeleteObject(plat->hfont_sm);
-    if (plat->hfont_caption) DeleteObject(plat->hfont_caption);
-}
-
-bool desktop_launcher_init(RifeApp* self, RifeCore* core) {
-    (void)self;
-    Win32Platform* plat = (Win32Platform*)core->platform_data;
-    if (plat) plat->preview_win_idx = -1;
-    return true;
-}
-
-void desktop_launcher_update(RifeApp* self, RifeCore* core, const RifeInput* input, bool is_focused, uint64_t dt_ns) {
-    (void)self;
-    Win32Platform* plat = (Win32Platform*)core->platform_data;
-    if (!plat) return;
-
-    RifeSystemConfig* cfg = rife_get_system_config();
-
-    float breath_period = 6.0f;
-    if (cfg->breath_speed == BREATH_SPEED_SLOW) breath_period = 4.0f;
-    else if (cfg->breath_speed == BREATH_SPEED_NORMAL) breath_period = 2.5f;
-
-    float dt_sec = (float)(dt_ns / 1000000ULL) * 0.001f;
-    plat->breath_t += dt_sec * (6.2831853f / breath_period);
-    if (plat->breath_t > 62831.0f) plat->breath_t -= 62831.0f;
-
-    float step = 0.0016f * (float)(dt_ns / 1000000ULL);
-    plat->aura_time += step;
-    if (plat->aura_time > 10000.0f) plat->aura_time -= 10000.0f;
-
-    float ww = (float)plat->win_width;
-    float wh = (float)plat->win_height;
-    float mx = input->mouse_x;
-    float my = input->mouse_y;
-
-    // 1. 流体云展开动力学
-    float target_cloud = plat->cloud_expanded ? 1.0f : 0.0f;
-    plat->cloud_anim = rife_fluid_decay(plat->cloud_anim, target_cloud, 14.0f, dt_sec);
-    if (fabsf(plat->cloud_anim - target_cloud) < 0.001f) plat->cloud_anim = target_cloud;
-
-    // 1.5 鼠标悬停后台程序胶囊时触发桌面实时窗口预览
-    int hovered_bg_win = -1;
-    if (plat->cloud_expanded && plat->cloud_anim > 0.35f) {
-        int bg_cnt = 0;
-        for (size_t k = 0; k < g_installed_app_count; k++) {
-            if (plat->windows[k].inst && !plat->windows[k].is_open && plat->windows[k].is_minimized) bg_cnt++;
-        }
-        if (bg_cnt > 0) {
-            float tasks_w = ((float)bg_cnt * 38.0f + (float)(bg_cnt - 1) * 6.0f);
-            if (bg_cnt >= 2) tasks_w += 32.0f;
-            float needed_w = 110.0f + tasks_w + 24.0f;
-            float exp_w = ww * 0.36f;
-            if (exp_w < needed_w) exp_w = needed_w;
-            if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
-
-            float cur_cloud_w = rife_lerpf(22.0f, exp_w, plat->cloud_anim);
-            float cur_cloud_h = rife_lerpf(22.0f, 42.0f, plat->cloud_anim);
-            float cur_cloud_x = (ww - cur_cloud_w) * 0.5f;
-            float cur_cloud_y = 10.0f;
-
-            float cur_right = cur_cloud_x + cur_cloud_w - 10.0f;
-            for (size_t k = 0; k < g_installed_app_count; k++) {
-                ActiveWindow* win_k = &plat->windows[k];
-                if (!win_k->inst || win_k->is_open || !win_k->is_minimized) continue;
-
-                float task_w = 38.0f;
-                float task_h = 28.0f;
-                float task_x = cur_right - task_w;
-                float task_y = cur_cloud_y + (cur_cloud_h - task_h) * 0.5f;
-
-                if (mx >= task_x && mx <= task_x + task_w && my >= task_y && my <= task_y + task_h) {
-                    hovered_bg_win = (int)k;
-                    break;
-                }
-
-                cur_right -= (task_w + 6.0f);
-            }
-        }
-    }
-    if (plat->preview_win_idx != hovered_bg_win) {
-        plat->preview_win_idx = hovered_bg_win;
-        rife_request_redraw(core);
-    }
-
-    // 微球吞噬光子扩散衰减
-    if (plat->absorption_ripple_t > 0.0f) {
-        plat->absorption_ripple_t -= dt_sec * 4.5f;
-        if (plat->absorption_ripple_t < 0.0f) plat->absorption_ripple_t = 0.0f;
-    }
-
-    // 2. 抽屉自顶部流体云展开动画
-    float target_drawer = plat->drawer_open ? 1.0f : 0.0f;
-    plat->drawer_anim = rife_fluid_decay(plat->drawer_anim, target_drawer, 12.0f, dt_sec);
-    if (fabsf(plat->drawer_anim - target_drawer) < 0.001f) plat->drawer_anim = target_drawer;
-
-    // 3. 悬停手柄检测
-    int hover_dir = 0;
-    if (plat->drag_mode == 2) {
-        hover_dir = plat->resize_dir;
-    }
-    else if (plat->drag_mode == 0) {
-        for (int i = (int)g_installed_app_count - 1; i >= 0; i--) {
-            ActiveWindow* win = &plat->windows[i];
-            if (!win->inst || win->anim < 0.90f || win->is_maximized) continue;
-            float cur_x = win->x;
-            float cur_y = win->y;
-            float cur_w = win->w;
-            float cur_h = win->h;
-
-            if (mx >= cur_x - 6.0f && mx <= cur_x + cur_w + 6.0f &&
-                my >= cur_y - 6.0f && my <= cur_y + cur_h + 6.0f) {
-                int dir = 0;
-                if (mx >= cur_x - 6.0f && mx <= cur_x + 6.0f) dir |= 1;
-                if (mx >= cur_x + cur_w - 6.0f && mx <= cur_x + cur_w + 6.0f) dir |= 2;
-                if (my >= cur_y - 6.0f && my <= cur_y + 6.0f) dir |= 4;
-                if (my >= cur_y + cur_h - 6.0f && my <= cur_y + cur_h + 6.0f) dir |= 8;
-                if (dir != 0) {
-                    hover_dir = dir;
-                    break;
-                }
-            }
-        }
-    }
-    plat->hover_resize_dir = hover_dir;
-
-    // 4. 活动窗口拖动与拉伸
-    if (input->mouse_down[0] && plat->drag_mode != 0 && plat->active_win_idx >= 0) {
-        ActiveWindow* win = &plat->windows[plat->active_win_idx];
-        if (win->inst && win->anim > 0.90f) {
-            float dx = mx - plat->drag_start_mx;
-            float dy = my - plat->drag_start_my;
-
-            if (win->is_maximized && plat->drag_mode == 1 && dy > 10.0f) {
-                win->is_maximized = false;
-                win->w = (win->restore_w >= 360.0f) ? win->restore_w : win->plugin->default_w;
-                win->h = (win->restore_h >= 240.0f) ? win->restore_h : win->plugin->default_h;
-                win->x = mx - win->w * 0.5f;
-                win->y = my - 16.0f;
-                plat->drag_start_wx = win->x;
-                plat->drag_start_wy = win->y;
-                plat->drag_start_mx = mx;
-                plat->drag_start_my = my;
-            }
-            else if (!win->is_maximized) {
-                if (plat->drag_mode == 1) {
-                    win->x = plat->drag_start_wx + dx;
-                    win->y = plat->drag_start_wy + dy;
-
-                    bool to_top = (my <= 22.0f);
-                    bool cover_desktop = (win->w >= ww * 0.80f && win->h >= wh * 0.80f && win->x <= 50.0f && win->y <= 50.0f);
-                    plat->snap_preview = (to_top || cover_desktop);
-                }
-                else if (plat->drag_mode == 2) {
-                    if (plat->resize_dir & 1) {
-                        float new_w = plat->drag_start_ww - dx;
-                        if (new_w >= 360.0f) {
-                            win->x = plat->drag_start_wx + dx;
-                            win->w = new_w;
-                        }
-                    }
-                    if (plat->resize_dir & 2) {
-                        float new_w = plat->drag_start_ww + dx;
-                        if (new_w >= 360.0f) win->w = new_w;
-                    }
-                    if (plat->resize_dir & 4) {
-                        float new_h = plat->drag_start_wh - dy;
-                        if (new_h >= 240.0f) {
-                            win->y = plat->drag_start_wy + dy;
-                            win->h = new_h;
-                        }
-                    }
-                    if (plat->resize_dir & 8) {
-                        float new_h = plat->drag_start_wh + dy;
-                        if (new_h >= 240.0f) win->h = new_h;
-                    }
-                    bool cover_desktop = (win->w >= ww * 0.80f && win->h >= wh * 0.80f && win->x <= 50.0f && win->y <= 50.0f);
-                    plat->snap_preview = cover_desktop;
-                }
-            }
-            rife_request_redraw(core);
-        }
-    }
-
-    // 5. 应用窗口折叠与物理析构
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        ActiveWindow* win = &plat->windows[i];
-        if (!win->inst) continue;
-
-        float target = win->is_open ? 1.0f : 0.0f;
-        win->anim = rife_fluid_decay(win->anim, target, 22.0f, dt_sec);
-        if (win->is_open && win->anim >= 0.985f) {
-            win->anim = 1.0f;
-        }
-
-        if (!win->is_open && win->anim < 0.015f) {
-            win->anim = 0.0f;
-            if (!win->is_minimized) {
-                // 彻底关闭窗口：触发插件物理析构与内存回收！
-                if (win->plugin && win->plugin->destroy && win->inst) {
-                    win->plugin->destroy(win->inst);
-                }
-                win->inst = NULL;
-                rife_reclaim_physical_memory();
-            }
-            if (plat->active_win_idx == (int)i) plat->active_win_idx = -1;
-            plat->absorption_ripple_t = 1.0f; // 触发微球吞噬光子扩散波
-            rife_request_redraw(core);
-            continue;
-        }
-
-        float cur_x = win->is_maximized ? 0.0f : win->x;
-        float cur_y = win->is_maximized ? 0.0f : win->y;
-        float cur_w = win->is_maximized ? ww : win->w;
-        float cur_h = win->is_maximized ? wh : win->h;
-
-        if (input->mouse_pressed[0] && win->anim > 0.85f) {
-            if (my >= cur_y + 6.0f && my <= cur_y + 30.0f) {
-                // 红灯：彻底关闭窗口，回收内存
-                if (mx >= cur_x + 10.0f && mx <= cur_x + 28.0f) {
-                    win->is_open = false;
-                    win->is_minimized = false;
-                    rife_request_redraw(core);
-                    return;
-                }
-                // 黄灯：最小化并收进流体云后台，内存不回收，保持活跃
-                if (mx >= cur_x + 29.0f && mx <= cur_x + 47.0f) {
-                    win->is_open = false;
-                    win->is_minimized = true;
-                    rife_request_redraw(core);
-                    return;
-                }
-                if (mx >= cur_x + 48.0f && mx <= cur_x + 68.0f) {
-                    if (!win->is_maximized) {
-                        win->restore_x = win->x;
-                        win->restore_y = win->y;
-                        win->restore_w = win->w;
-                        win->restore_h = win->h;
-                    }
-                    win->is_maximized = !win->is_maximized;
-                    rife_request_redraw(core);
-                    return;
-                }
-            }
-
-            if (!win->is_maximized) {
-                int dir = 0;
-                if (mx >= cur_x - 5.0f && mx <= cur_x + 7.0f) dir |= 1;
-                if (mx >= cur_x + cur_w - 7.0f && mx <= cur_x + cur_w + 5.0f) dir |= 2;
-                if (my >= cur_y - 5.0f && my <= cur_y + 7.0f) dir |= 4;
-                if (my >= cur_y + cur_h - 7.0f && my <= cur_y + cur_h + 5.0f) dir |= 8;
-
-                if (dir != 0 && mx >= cur_x - 6.0f && mx <= cur_x + cur_w + 6.0f &&
-                    my >= cur_y - 6.0f && my <= cur_y + cur_h + 6.0f) {
-                    plat->active_win_idx = (int)i;
-                    plat->drag_mode = 2;
-                    plat->resize_dir = dir;
-                    plat->drag_start_mx = mx;
-                    plat->drag_start_my = my;
-                    plat->drag_start_wx = win->x;
-                    plat->drag_start_wy = win->y;
-                    plat->drag_start_ww = win->w;
-                    plat->drag_start_wh = win->h;
-                    return;
-                }
-            }
-
-            if (my >= cur_y && my <= cur_y + 36.0f && mx >= cur_x && mx <= cur_x + cur_w) {
-                plat->active_win_idx = (int)i;
-                plat->drag_mode = 1;
-                plat->drag_start_mx = mx;
-                plat->drag_start_my = my;
-                plat->drag_start_wx = win->is_maximized ? 0.0f : win->x;
-                plat->drag_start_wy = win->is_maximized ? 0.0f : win->y;
-                return;
-            }
-
-            if (win->plugin->update && mx >= cur_x && mx <= cur_x + cur_w && my >= cur_y + 36.0f && my <= cur_y + cur_h) {
-                plat->active_win_idx = (int)i;
-                RifeInput client_input = *input;
-                client_input.mouse_x = mx - cur_x;
-                client_input.mouse_y = my - (cur_y + 36.0f);
-                win->plugin->update(win->inst, core, &client_input, cur_w, cur_h - 36.0f);
-                return;
-            }
-        }
-
-        // 鼠标滚轮事件分发至应用窗口
-        if (input->scroll_delta != 0.0f && win->anim > 0.85f && win->is_open) {
-            if (win->plugin->update && mx >= cur_x && mx <= cur_x + cur_w && my >= cur_y + 36.0f && my <= cur_y + cur_h) {
-                plat->active_win_idx = (int)i;
-                RifeInput client_input = *input;
-                client_input.mouse_x = mx - cur_x;
-                client_input.mouse_y = my - (cur_y + 36.0f);
-                win->plugin->update(win->inst, core, &client_input, cur_w, cur_h - 36.0f);
-                rife_request_redraw(core);
-            }
-        }
-    }
-
-    // 键盘按键与文本输入事件分发至当前聚焦应用窗口
-    bool has_key_event = (input->text_input[0] != '\0');
-    if (!has_key_event) {
-        for (int k = 0; k < 256; k++) {
-            if (input->key_pressed[k] || input->key_down[k]) {
-                has_key_event = true;
-                break;
-            }
-        }
-    }
-    if (plat->active_win_idx >= 0 && has_key_event) {
-        ActiveWindow* win_act = &plat->windows[plat->active_win_idx];
-        if (win_act->inst && win_act->anim > 0.85f && win_act->is_open && win_act->plugin->update) {
-            float cur_x = win_act->is_maximized ? 0.0f : win_act->x;
-            float cur_y = win_act->is_maximized ? 0.0f : win_act->y;
-            float cur_w = win_act->is_maximized ? ww : win_act->w;
-            float cur_h = win_act->is_maximized ? wh : win_act->h;
-            RifeInput client_input = *input;
-            client_input.mouse_x = mx - cur_x;
-            client_input.mouse_y = my - (cur_y + 36.0f);
-            win_act->plugin->update(win_act->inst, core, &client_input, cur_w, cur_h - 36.0f);
-            rife_request_redraw(core);
-        }
-    }
-
-    // 鼠标按住拖动 (mouse_down) 与释放 (mouse_released) 分发至当前活动应用窗口 (用于时间网格框选等交互)
-    if (plat->active_win_idx >= 0 && plat->drag_mode == 0) {
-        ActiveWindow* win_act = &plat->windows[plat->active_win_idx];
-        if (win_act->inst && win_act->anim > 0.85f && win_act->is_open && win_act->plugin->update) {
-            if ((input->mouse_down[0] && !input->mouse_pressed[0]) || input->mouse_released[0]) {
-                float cur_x = win_act->is_maximized ? 0.0f : win_act->x;
-                float cur_y = win_act->is_maximized ? 0.0f : win_act->y;
-                float cur_w = win_act->is_maximized ? ww : win_act->w;
-                float cur_h = win_act->is_maximized ? wh : win_act->h;
-                RifeInput client_input = *input;
-                client_input.mouse_x = mx - cur_x;
-                client_input.mouse_y = my - (cur_y + 36.0f);
-                win_act->plugin->update(win_act->inst, core, &client_input, cur_w, cur_h - 36.0f);
-            }
-        }
-    }
-
-    // 6. 底部纤细 Dock 浮动与插值判定 (44px)
-    float dock_w = ww * (2.0f / 3.0f);
-    if (dock_w < 280.0f) dock_w = 280.0f;
-    float dock_x = (cfg->dock_align == DOCK_ALIGN_RIGHT) ? (ww - dock_w - 24.0f) : ((ww - dock_w) * 0.5f);
-    float resting_y = wh - 52.0f;
-    float active_y = wh - 58.0f;
-    float dock_y = rife_lerpf(resting_y, active_y, plat->dock_anim); // 已补齐定义！
-
-    bool in_dock_zone = (my >= wh - 62.0f && mx >= dock_x && mx <= dock_x + dock_w);
-    float target_dock = (in_dock_zone || cfg->dock_always_visible) ? 1.0f : 0.0f;
-    plat->dock_anim = rife_fluid_decay(plat->dock_anim, target_dock, 15.0f, dt_sec);
-    if (fabsf(plat->dock_anim - target_dock) < 0.001f) plat->dock_anim = target_dock;
-
-    bool is_animating = (fabsf(plat->dock_anim - target_dock) > 0.001f) ||
-        (fabsf(plat->drawer_anim - target_drawer) > 0.001f) ||
-        (fabsf(plat->cloud_anim - target_cloud) > 0.001f) ||
-        (plat->absorption_ripple_t > 0.001f) ||
-        (plat->preview_win_idx >= 0) ||
-        (plat->cloud_anim < 0.25f) ||
-        (plat->hover_resize_dir > 0) ||
-        cfg->aura_animated || plat->drag_mode != 0;
-    for (size_t i = 0; i < g_installed_app_count; i++) {
-        if (plat->windows[i].inst) {
-            float target = plat->windows[i].is_open ? 1.0f : 0.0f;
-            if (fabsf(plat->windows[i].anim - target) > 0.001f) {
-                is_animating = true;
-                break;
-            }
-        }
-    }
-    if (is_animating || input->mouse_pressed[0] || input->mouse_down[0] || input->scroll_delta != 0.0f || has_key_event) {
-        rife_request_redraw(core);
-    }
-
-    // 7. 点击调度与分发
-    if (is_focused && input->mouse_pressed[0]) {
-        // A. 顶部流体云自身点击 (经典 42px 横向流体云)
-        int bg_count = 0;
-        for (size_t k = 0; k < g_installed_app_count; k++) {
-            if (plat->windows[k].inst && !plat->windows[k].is_open && plat->windows[k].is_minimized) {
-                bg_count++;
-            }
-        }
-        float tasks_w = (bg_count > 0) ? ((float)bg_count * 38.0f + (float)(bg_count - 1) * 6.0f) : 0.0f;
-        if (bg_count >= 2) tasks_w += 32.0f;
-        float needed_w = 110.0f + tasks_w + 24.0f;
-        float exp_w = ww * 0.36f;
-        if (exp_w < needed_w) exp_w = needed_w;
-        if (exp_w > ww - 32.0f) exp_w = ww - 32.0f;
-
-        float col_size = 22.0f;
-        float col_h = 22.0f;
-        float exp_h = 42.0f; // 始终固定 42px 高度！
-
-        float cur_cloud_w = rife_lerpf(col_size, exp_w, plat->cloud_anim);
-        float cur_cloud_h = rife_lerpf(col_h, exp_h, plat->cloud_anim);
-        float cur_cloud_x = (ww - cur_cloud_w) * 0.5f;
-        float cur_cloud_y = 10.0f;
-
-        if (mx >= cur_cloud_x && mx <= cur_cloud_x + cur_cloud_w && my >= cur_cloud_y && my <= cur_cloud_y + cur_cloud_h) {
-            if (plat->cloud_expanded) {
-                // 1. 左侧三色控制圆钮点击 (与之前流体云完全一致)
-                if (mx >= cur_cloud_x + 14.0f && mx <= cur_cloud_x + 34.0f) {
-                    set_system_taskbar_visible(true);
-                    core->running = false;
-                    DestroyWindow(plat->hwnd);
-                    return;
-                }
-                if (mx >= cur_cloud_x + 35.0f && mx <= cur_cloud_x + 54.0f) {
-                    set_system_taskbar_visible(true);
-                    ShowWindow(plat->hwnd, SW_MINIMIZE);
-                    return;
-                }
-                if (mx >= cur_cloud_x + 55.0f && mx <= cur_cloud_x + 75.0f) {
-                    toggle_immersion_fullscreen(plat);
-                    return;
-                }
-
-                // 2. 右侧后台任务点击 (从右往左依次判定)
-                if (bg_count > 0) {
-                    float cur_right = cur_cloud_x + cur_cloud_w - 10.0f;
-                    for (size_t k = 0; k < g_installed_app_count; k++) {
-                        ActiveWindow* win_k = &plat->windows[k];
-                        if (!win_k->inst || win_k->is_open || !win_k->is_minimized) continue;
-
-                        float task_w = 38.0f;
-                        float task_h = 28.0f;
-                        float task_x = cur_right - task_w;
-                        float task_y = cur_cloud_y + (cur_cloud_h - task_h) * 0.5f;
-
-                        if (mx >= task_x && mx <= task_x + task_w && my >= task_y && my <= task_y + task_h) {
-                            // 单个卡片点击 [ × ] 结束任务并物理回收内存
-                            if (mx >= task_x + task_w - 14.0f) {
-                                if (win_k->plugin && win_k->plugin->destroy) {
-                                    win_k->plugin->destroy(win_k->inst);
-                                }
-                                win_k->inst = NULL;
-                                win_k->is_minimized = false;
-                                plat->preview_win_idx = -1;
-                                plat->absorption_ripple_t = 1.0f;
-                                rife_reclaim_physical_memory();
-                                rife_request_redraw(core);
-                                return;
-                            }
-
-                            // 恢复卡片对应应用至前台（其它开着的窗口转入后台）
-                            for (size_t m = 0; m < g_installed_app_count; m++) {
-                                if (m != k && plat->windows[m].is_open) {
-                                    plat->windows[m].is_open = false;
-                                    plat->windows[m].is_minimized = true;
-                                }
-                            }
-                            win_k->is_open = true;
-                            win_k->is_minimized = false;
-                            win_k->anim = 0.0f;
-                            plat->active_win_idx = (int)k;
-                            plat->preview_win_idx = -1;
-                            plat->cloud_expanded = false;
-                            rife_request_redraw(core);
-                            return;
-                        }
-
-                        cur_right -= (task_w + 6.0f);
-                    }
-
-                    // 3. 点击一键清理 (当 >= 2 个任务时)
-                    if (bg_count >= 2) {
-                        float clr_w = 26.0f;
-                        float clr_h = 28.0f;
-                        float clr_x = cur_right - clr_w;
-                        float clr_y = cur_cloud_y + (cur_cloud_h - clr_h) * 0.5f;
-                        if (mx >= clr_x && mx <= clr_x + clr_w && my >= clr_y && my <= clr_y + clr_h) {
-                            for (size_t k = 0; k < g_installed_app_count; k++) {
-                                ActiveWindow* win_k = &plat->windows[k];
-                                if (win_k->inst && !win_k->is_open && win_k->is_minimized) {
-                                    if (win_k->plugin && win_k->plugin->destroy) {
-                                        win_k->plugin->destroy(win_k->inst);
-                                    }
-                                    win_k->inst = NULL;
-                                    win_k->is_minimized = false;
-                                }
-                            }
-                            plat->preview_win_idx = -1;
-                            plat->absorption_ripple_t = 1.0f;
-                            plat->cloud_expanded = false;
-                            rife_reclaim_physical_memory();
-                            rife_request_redraw(core);
-                            return;
-                        }
-                    }
-                }
-
-                // 点击其他空白区域 -> 收起流体云
-                plat->preview_win_idx = -1;
-                plat->cloud_expanded = false;
-            }
-            else {
-                plat->cloud_expanded = true;
-            }
-            rife_request_redraw(core);
-            return;
-        }
-        else {
-            if (plat->cloud_expanded) {
-                plat->preview_win_idx = -1;
-                plat->cloud_expanded = false;
-                rife_request_redraw(core);
-            }
-        }
-
-        // B. 点击由流体云展开的应用程序抽屉
-        if (plat->drawer_open && plat->drawer_anim > 0.35f) {
-            float dw_w = ww * 0.60f;
-            if (dw_w < 360.0f) dw_w = 360.0f;
-            float dw_h = wh * 0.56f;
-            if (dw_h < 240.0f) dw_h = 240.0f;
-            float cur_dw_x = (ww - dw_w) * 0.5f;
-            float cur_dw_y = (wh - dw_h) * 0.44f;
-
-            int cols = 3;
-            float card_w = 110.0f;
-            float card_h = 76.0f;
-            float gap_x = (dw_w - 48.0f - (float)cols * card_w) / (float)(cols - 1);
-
-            for (size_t i = 0; i < g_installed_app_count; i++) {
-                int col = (int)(i % cols);
-                int row = (int)(i / cols);
-                float ax = cur_dw_x + 24.0f + (float)col * (card_w + gap_x);
-                float ay = cur_dw_y + 54.0f + (float)row * (card_h + 16.0f);
-
-                if (mx >= ax && mx <= ax + card_w && my >= ay && my <= ay + card_h) {
-                    ActiveWindow* win = &plat->windows[i];
-                    if (win->is_open && win->anim > 0.5f) {
-                        win->is_open = false;
-                        win->is_minimized = true;
-                    } else {
-                        for (size_t k = 0; k < g_installed_app_count; k++) {
-                            if (k != i && plat->windows[k].is_open) {
-                                plat->windows[k].is_open = false;
-                                plat->windows[k].is_minimized = true;
-                            }
-                        }
-                        if (!win->inst) {
-                            win->inst = win->plugin->create(core);
-                        }
-                        win->is_open = true;
-                        win->is_minimized = false;
-                        win->anim = 0.0f;
-                        if (!win->inited) {
-                            win->w = win->plugin->default_w;
-                            win->h = win->plugin->default_h;
-                            if (win->w > ww - 48.0f) win->w = ww - 48.0f;
-                            if (win->h > wh - 110.0f) win->h = wh - 110.0f;
-                            if (win->w < 360.0f) win->w = 360.0f;
-                            if (win->h < 260.0f) win->h = 260.0f;
-                            win->x = (ww - win->w) * 0.5f;
-                            if (win->x < 16.0f) win->x = 16.0f;
-                            win->y = (wh - win->h) * 0.44f;
-                            if (win->y < 46.0f) win->y = 46.0f;
-                            win->restore_x = win->x;
-                            win->restore_y = win->y;
-                            win->restore_w = win->w;
-                            win->restore_h = win->h;
-                            win->inited = true;
-                        }
-                        plat->active_win_idx = (int)i;
-                    }
-                    plat->drawer_open = false;
-                    rife_request_redraw(core);
-                    return;
-                }
-            }
-
-            if (mx < cur_dw_x || mx > cur_dw_x + dw_w || my < cur_dw_y || my > cur_dw_y + dw_h) {
-                plat->drawer_open = false;
-                return;
-            }
-            return;
-        }
-
-        // C. 活动应用窗口阻断桌面穿透
-        for (size_t i = 0; i < g_installed_app_count; i++) {
-            ActiveWindow* win = &plat->windows[i];
-            if (!win->inst || win->anim < 0.05f) continue;
-            float cur_x = win->is_maximized ? 0.0f : win->x;
-            float cur_y = win->is_maximized ? 0.0f : win->y;
-            float cur_w = win->is_maximized ? ww : win->w;
-            float cur_h = win->is_maximized ? wh : win->h;
-            if (mx >= cur_x && mx <= cur_x + cur_w && my >= cur_y && my <= cur_y + cur_h) {
-                return;
-            }
-        }
-
-        // D. 底部纤细 Dock 点击
-        int dock_pinned_count = 0;
-        for (size_t i = 0; i < g_installed_app_count; i++) {
-            if (g_installed_apps[i]->pin_to_dock) dock_pinned_count++;
-        }
-        int total_dock_items = dock_pinned_count + 1;
-        float item_size = 32.0f;
-        float item_gap = 16.0f;
-        float total_items_w = (float)total_dock_items * item_size + (float)(total_dock_items - 1) * item_gap;
-        float items_start_x = dock_x + (dock_w - total_items_w) * 0.5f;
-
-        int dock_idx = 0;
-        for (size_t i = 0; i < g_installed_app_count; i++) {
-            const RifePluginApp* app = g_installed_apps[i];
-            if (!app->pin_to_dock) continue;
-
-            float btn_x = items_start_x + (float)dock_idx * (item_size + item_gap);
-            float btn_y = dock_y + 6.0f; // 正确引用已声明的 dock_y
-
-            if (mx >= btn_x && mx <= btn_x + item_size && my >= btn_y - 3.0f && my <= btn_y + item_size + 3.0f) {
-                ActiveWindow* win = &plat->windows[i];
-                if (win->is_open && win->anim > 0.5f) {
-                    win->is_open = false;
-                    win->is_minimized = true;
-                } else {
-                    for (size_t k = 0; k < g_installed_app_count; k++) {
-                        if (k != i && plat->windows[k].is_open) {
-                            plat->windows[k].is_open = false;
-                            plat->windows[k].is_minimized = true;
-                        }
-                    }
-                    if (!win->inst) {
-                        win->inst = win->plugin->create(core);
-                    }
-                    win->is_open = true;
-                    win->is_minimized = false;
-                    win->anim = 0.0f;
-                    if (!win->inited) {
-                        win->w = win->plugin->default_w;
-                        win->h = win->plugin->default_h;
-                        if (win->w > ww - 48.0f) win->w = ww - 48.0f;
-                        if (win->h > wh - 110.0f) win->h = wh - 110.0f;
-                        if (win->w < 360.0f) win->w = 360.0f;
-                        if (win->h < 260.0f) win->h = 260.0f;
-                        win->x = (ww - win->w) * 0.5f;
-                        if (win->x < 16.0f) win->x = 16.0f;
-                        win->y = (wh - win->h) * 0.44f;
-                        if (win->y < 46.0f) win->y = 46.0f;
-                        win->restore_x = win->x;
-                        win->restore_y = win->y;
-                        win->restore_w = win->w;
-                        win->restore_h = win->h;
-                        win->inited = true;
-                    }
-                    plat->active_win_idx = (int)i;
-                }
-                rife_request_redraw(core);
-                return;
-            }
-            dock_idx++;
-        }
-
-        // 九宫格按钮：触发顶部流体云展开为应用抽屉
-        float all_btn_x = items_start_x + (float)dock_pinned_count * (item_size + item_gap);
-        float all_btn_y = dock_y + 6.0f; // 正确引用已声明的 dock_y
-        if (mx >= all_btn_x && mx <= all_btn_x + item_size && my >= all_btn_y - 3.0f && my <= all_btn_y + item_size + 3.0f) {
-            plat->drawer_open = !plat->drawer_open;
-            return;
-        }
-
-        // E. 桌面快捷方式点击
-        for (size_t i = 0; i < plat->shortcut_count; i++) {
-            DesktopShortcut* sc = &plat->shortcuts[i];
-            if (mx >= sc->x && mx <= sc->x + 76.0f && my >= sc->y && my <= sc->y + 80.0f) {
-                ShellExecuteA(NULL, "open", sc->path, NULL, NULL, SW_SHOWNORMAL);
-                return;
-            }
-        }
-
-        // F. 点击桌面纯粹空白底板：解除当前应用焦点
-        plat->active_win_idx = -1;
-        rife_request_redraw(core);
-    }
-}
-
-void desktop_launcher_render(RifeApp* self, RifeCore* core) {
-    (void)self; (void)core;
-}
-void desktop_launcher_on_event(RifeApp* self, const RifeEvent* event) {
-    (void)self; (void)event;
-}
-void desktop_launcher_shutdown(RifeApp* self, RifeCore* core) {
-    (void)self; (void)core;
-}
-
+// -------------------------------------------------------------
+// 主入口与生命周期 (Application Main Entry)
+// -------------------------------------------------------------
 int main(void) {
     timeBeginPeriod(1);
+
+    // 1. 初始化系统配置
     rife_load_system_config();
-    static RifeCore core;
-    static Win32Platform plat;
+    RifeSystemConfig* cfg = rife_get_system_config();
 
-    if (!rife_core_init(&core, 1024 * 1024, 256 * 1024, 60)) return 1;
-    if (!rife_platform_init(&core, &plat, "RifeOS Workspace Host", 1240, 780)) {
+    // 2. 初始化微内核渲染与内存调度 (常驻 1MB, 帧缓冲 256KB)
+    RifeCore core;
+    if (!rife_core_init(&core, 1024 * 1024, 256 * 1024, 60)) {
+        return 1;
+    }
+    s_core = &core;
+
+    // 3. 构建应用上下文
+    AppContext app;
+    memset(&app, 0, sizeof(AppContext));
+    s_app = &app;
+
+    app.active_page = PAGE_SCHEDULE; // 默认展开多维日程工作台
+    app.hovered_nav_idx = -1;
+    app.hovered_title_btn = -1;
+
+    // 4. 初始化三大核心模块实例 (直接挂载，零虚拟窗口，零中间总线)
+    app.calendar_inst = g_calendar_plugin_app.create(&core);
+    app.clock_inst    = g_clock_plugin_app.create(&core);
+    app.settings_inst = g_settings_plugin_app.create(&core);
+
+    // 5. 注册原生无边框窗口类
+    HINSTANCE hInstance = GetModuleHandleW(NULL);
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc   = WndProc;
+    wc.hInstance     = hInstance;
+    wc.hIcon         = LoadIconW(hInstance, MAKEINTRESOURCEW(101));
+    wc.hCursor       = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    wc.lpszClassName = L"RifeWindowClass";
+    RegisterClassW(&wc);
+
+    // 6. 计算屏幕居中几何参数
+    int screen_w = GetSystemMetrics(SM_CXSCREEN);
+    int screen_h = GetSystemMetrics(SM_CYSCREEN);
+    int init_w = 1200;
+    int init_h = 760;
+    if (init_w > screen_w - 60) init_w = screen_w - 60;
+    if (init_h > screen_h - 80) init_h = screen_h - 80;
+    int init_x = (screen_w - init_w) / 2;
+    int init_y = (screen_h - init_h) / 2;
+
+    // 使用 WS_THICKFRAME 与 WS_CAPTION 结合 WM_NCCALCSIZE，原生获得 DWM 阴影与平滑吸附
+    DWORD style = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CAPTION;
+    HWND hwnd = CreateWindowExW(
+        WS_EX_APPWINDOW,
+        L"RifeWindowClass",
+        L"Rife",
+        style,
+        init_x, init_y, init_w, init_h,
+        NULL, NULL, hInstance, NULL
+    );
+
+    if (!hwnd) {
         rife_core_shutdown(&core);
         return 1;
     }
-    s_global_plat = &plat;
-    s_global_core = &core;
+    app.hwnd = hwnd;
 
-    RifeApp launcher_app;
-    launcher_app.app_id = 1000;
-    launcher_app.is_visible = true;
-    snprintf(launcher_app.name, sizeof(launcher_app.name), "%s", "DesktopHost");
-    launcher_app.init = desktop_launcher_init;
-    launcher_app.update = desktop_launcher_update;
-    launcher_app.render = desktop_launcher_render;
-    launcher_app.on_event = desktop_launcher_on_event;
-    launcher_app.shutdown = desktop_launcher_shutdown;
-    launcher_app.user_data = NULL;
+    // 7. 初始化内存 DC 与清晰字体
+    HDC hdc_win = GetDC(hwnd);
+    app.hdc_mem = CreateCompatibleDC(hdc_win);
+    ReleaseDC(hwnd, hdc_win);
 
-    if (!rife_register_app(&core, launcher_app)) {
-        rife_platform_shutdown(&plat);
-        rife_core_shutdown(&core);
-        return 1;
-    }
+    recreate_backbuffer(&app, init_w, init_h);
+    update_system_fonts(&app, cfg->font_scale);
 
-    int initial_trim_frames = 0;
-    while (core.running) {
+    // 8. 呈现窗口并强制首次工作集物理紧凑
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+    app_render(&app, &core);
+    rife_reclaim_physical_memory();
+
+    // 9. 现代 60FPS 极低能耗主循环 (Smart Idle Gating)
+    bool running = true;
+    int startup_trim_frames = 0;
+
+    while (running) {
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                running = false;
+                break;
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        if (!running) break;
 
-        if (initial_trim_frames < 30) {
-            initial_trim_frames++;
-            if (initial_trim_frames == 30) {
+        // 启动后 30 帧再次执行一次物理内存深度紧凑，锁死在 ~5MB
+        if (startup_trim_frames < 30) {
+            startup_trim_frames++;
+            if (startup_trim_frames == 30) {
                 rife_reclaim_physical_memory();
             }
         }
 
-        RifeSystemConfig* cfg = rife_get_system_config();
-        if (IsIconic(plat.hwnd)) {
-            Sleep(25);
-            continue;
-        }
-        if (cfg->background_throttle && GetForegroundWindow() != plat.hwnd && plat.current_mode != DESKTOP_MODE_WALLPAPER) {
-            Sleep(16);
+        // 字体配置动态热更新检测
+        if (cfg->font_scale != app.current_font_scale) {
+            update_system_fonts(&app, cfg->font_scale);
+            rife_request_redraw(&core);
         }
 
-        rife_core_tick(&core);
+        // 渲染与重绘请求
+        if (core.needs_redraw) {
+            app_render(&app, &core);
+        }
 
-        if (!core.needs_redraw && !cfg->aura_animated && plat.drag_mode == 0 && plat.cloud_anim > 0.3f && plat.hover_resize_dir == 0) {
-            Sleep(8);
+        // 帧末尾清理单次按键与输入状态
+        memset(app.input.mouse_pressed, 0, sizeof(app.input.mouse_pressed));
+        memset(app.input.mouse_released, 0, sizeof(app.input.mouse_released));
+        memset(app.input.key_pressed, 0, sizeof(app.input.key_pressed));
+        app.input.text_input[0] = '\0';
+        app.input.scroll_delta = 0.0f;
+
+        // 智能静止休眠：无重绘请求且无键盘鼠标输入时轻度挂起 CPU，功耗压制至 ~0.0%
+        if (!core.needs_redraw) {
+            WaitMessage();
         }
     }
 
-    rife_platform_shutdown(&plat);
+    // 10. 资源回收与正常退出
+    if (app.calendar_inst) g_calendar_plugin_app.destroy(app.calendar_inst);
+    if (app.clock_inst)    g_clock_plugin_app.destroy(app.clock_inst);
+    if (app.settings_inst) g_settings_plugin_app.destroy(app.settings_inst);
+
+    destroy_fonts(&app);
+    if (app.hdc_mem) {
+        if (app.hbm_old) SelectObject(app.hdc_mem, app.hbm_old);
+        if (app.hbm_mem) DeleteObject(app.hbm_mem);
+        DeleteDC(app.hdc_mem);
+    }
+
     rife_core_shutdown(&core);
     timeEndPeriod(1);
     return 0;
