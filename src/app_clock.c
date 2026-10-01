@@ -419,8 +419,8 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     uint32_t col_txt_main = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
     uint32_t col_txt_sub  = is_dark ? 0x94A3B8FF : 0x64748BFF;
     uint32_t col_txt_mute = is_dark ? 0x64748BFF : 0x94A3B8FF;
-    uint32_t col_border   = is_dark ? 0x38285555 : 0xE2E8F088;
-    uint32_t col_card_bg  = is_dark ? 0x1E1730AA : 0xFFFFFFCC;
+    uint32_t col_border   = is_dark ? 0x1E223588 : 0xE2E8F0AA;
+    uint32_t col_card_bg  = is_dark ? 0x141824DD : 0xFFFFFFEE;
 
     ClockAnalytics an;
     clock_compute_analytics(state, &an);
@@ -428,7 +428,7 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
     // ---------------------------------------------------------
     // 1. 顶栏 (Top Bar: 44px)
     // ---------------------------------------------------------
-    rife_draw_rect(core, client_x, client_y, client_w, 44.0f, is_dark ? 0x140E2288 : 0xF8FAFC88);
+    rife_draw_rect(core, client_x, client_y, client_w, 44.0f, is_dark ? 0x0E111AFF : 0xF8FAFCFF);
     rife_draw_rect(core, client_x, client_y + 43.0f, client_w, 1.0f, col_border);
 
     // 应用标题与图标
@@ -484,7 +484,7 @@ static void clock_render(void* inst, RifeCore* core, float client_x, float clien
 
     // B. 表盘环形轨道底色 (Dial Ring Track)
     rife_draw_arc_sector(core, dial_cx, dial_cy, dial_r_in, dial_r_out, 0.0f, 360.0f,
-                         is_dark ? 0x1F163533 : 0xF8FAFC66, is_dark ? 0x38285555 : 0xE2E8F088);
+                         is_dark ? 0x14182499 : 0xF1F5F9AA, is_dark ? 0x1E223588 : 0xE2E8F0AA);
 
     // C. 刻度线与时钟标注 (Ticks & Hour Markings)
     int total_hours = (state->dial_mode == CLOCK_DIAL_24H) ? 24 : 12;

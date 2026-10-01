@@ -1829,11 +1829,11 @@ static void calendar_render(void* inst, RifeCore* core, float client_x, float cl
     bool is_dark = (cfg->palette == PALETTE_OBSIDIAN || cfg->cloud_color == CLOUD_COLOR_OBSIDIAN);
 
     // 主色与背景令牌 (液态玻璃全景透光)
-    uint32_t bg_sidebar = is_dark ? 0x16112235 : 0xFFFFFF28;
-    uint32_t border_col = is_dark ? 0x47346A55 : 0x00000014;
+    uint32_t bg_sidebar = is_dark ? 0x090B1266 : 0xF1F5F966;
+    uint32_t border_col = is_dark ? 0x1E223588 : 0xE2E8F0AA;
     uint32_t text_title = is_dark ? 0xF8FAFCFF : 0x0F172AFF;
     uint32_t text_muted = is_dark ? 0x94A3B8FF : 0x64748BFF;
-    uint32_t rtodo_blue = 0x3370FFFF;
+    uint32_t rtodo_blue = is_dark ? 0x6366F1FF : 0x4F46E5FF;
 
     if (state->active_field > 0) {
         state->cursor_blink_t += 0.035f;
